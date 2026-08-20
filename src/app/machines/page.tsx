@@ -97,29 +97,71 @@ export default function Machines() {
     }
   }, [tc]);
 
+  /**
+   * Applique un état poussé en **ne remplaçant que les machines qui ont changé**.
+   *
+   * C'est là que se joue la réactivité fine : une machine inchangée garde son identité d'objet,
+   * donc React ne redessine pas sa carte. Sans ça, chaque évènement reconstruirait toutes les
+   * cartes — ce qui ramènerait le défaut qu'on voulait corriger, en poussé au lieu de sondé.
+   *
+   * La comparaison est faite sur la sérialisation : les résumés sont petits et entièrement
+   * sérialisables, et une comparaison champ par champ serait à re-écrire à chaque nouveau champ.
+   */
+  const applyPush = useCallback((p: { machines: MachineSummary[]; defaultId: string }) => {
+    setD((cur) => {
+      if (!cur) return { ...p, server: { ip: null, port: 0, problem: null }, discovery: { missingConfig: [] } };
+      const machines = p.machines.map((m) => {
+        const avant = cur.machines.find((x) => x.id === m.id);
+        return avant && JSON.stringify(avant) === JSON.stringify(m) ? avant : m;
+      });
+      // `server` et `discovery` ne changent pas en cours de route : on garde ceux du chargement.
+      return { ...cur, defaultId: p.defaultId, machines };
+    });
+  }, []);
+
   useEffect(() => {
     setSelected(currentMachine());
     load();
   }, [load]);
 
   /**
-   * Tant qu'une lecture tourne, on rafraîchit tout seul.
+   * L'état arrive **poussé** par le serveur (`/api/events`, Server-Sent Events).
    *
-   * Une lecture de propriété n'est pas synchrone : le POST rend la main dès que l'annonce est
-   * faite, et c'est la **machine** qui se connecte ensuite pour pousser la valeur — deux secondes
-   * plus tard en pratique. Le `load()` qui suit l'action arrive donc systématiquement trop tôt, et
-   * la carte affichait « Modèle : inconnu, 0 propriétés » alors que le serveur venait de tout
-   * enregistrer. Demander à l'utilisateur de rafraîchir était lui refiler le travail.
+   * Une lecture de propriété n'est pas synchrone : le POST rend la main dès l'annonce, et c'est la
+   * machine qui pousse la valeur deux secondes plus tard. Sonder, c'était re-télécharger la liste
+   * entière toutes les deux secondes pour voir un champ changer — et se tromper de toute façon sur
+   * le moment. Ici la page ne demande rien : elle est prévenue.
    *
-   * Pas de borne ici : `reading` est déjà borné côté serveur par la fenêtre de l'import, donc la
-   * scrutation s'arrête d'elle-même même si la machine ne se connecte jamais.
+   * Le repli n'est pas oublié : si le flux échoue (proxy qui ne le laisse pas passer, navigateur
+   * sans EventSource), on retombe sur une scrutation, et seulement pendant qu'une lecture tourne.
    */
+  const [flux, setFlux] = useState(true);
+  useEffect(() => {
+    if (typeof EventSource === "undefined") {
+      setFlux(false);
+      return;
+    }
+    const es = new EventSource("/api/events");
+    es.onmessage = (e) => {
+      try {
+        applyPush(JSON.parse(e.data));
+        setFlux(true);
+      } catch {
+        /* une trame illisible ne doit pas casser l'abonnement */
+      }
+    };
+    es.onerror = () => setFlux(false);
+    return () => es.close();
+  }, [applyPush]);
+
   const enCours = d?.machines.some((m) => m.reading || m.running) ?? false;
   useEffect(() => {
-    if (!enCours) return;
+    // Uniquement en repli, et uniquement tant qu'une lecture tourne. `reading` est borné côté
+    // serveur par la fenêtre de l'import : la scrutation s'arrête donc d'elle-même.
+    if (flux || !enCours) return;
     const t = setInterval(load, 2000);
     return () => clearInterval(t);
-  }, [enCours, load]);
+  }, [flux, enCours, load]);
 
   const cred = (id: string) => creds[id] ?? { email: "", password: "" };
 
@@ -344,6 +386,10 @@ export default function Machines() {
       <p className="sub">{t("intro")}</p>
 
       {msg && <div className="warn">{msg}</div>}
+
+      {/* Le repli fonctionne, mais il vaut mieux le dire : sans ça, une page qui met deux secondes
+          à se mettre à jour au lieu d'être instantanée passerait pour une lenteur. */}
+      {!flux && enCours && <p className="sub">{t("liveOff")}</p>}
 
       {d?.machines.map((m) => {
         const occupe = busy === m.id;

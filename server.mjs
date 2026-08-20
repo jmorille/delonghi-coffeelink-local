@@ -112,6 +112,9 @@ const LOG = [];
 function L(dir, msg, m = null) {
   LOG.unshift({ t: Date.now(), dir, msg, m: m?.id ?? null });
   if (LOG.length > 400) LOG.pop();
+  // Tout changement d'état significatif passe par ici : c'est donc d'ici qu'on prévient les
+  // navigateurs abonnés. Voir sseTouch().
+  sseTouch();
   // Le préfixe n'apparaît que s'il y a de quoi confondre : en mono-machine, la sortie du
   // terminal reste exactement celle qu'elle était.
   console.log(now(), dir.toUpperCase(), (m && MACHINES.size > 1 ? `[${m.id}] ` : "") + msg);
@@ -547,7 +550,7 @@ function nextProgramData(m) {
   }
   return { data: JSON.stringify({ properties: [prop(m, m.send, datapointValue(frameMonitorRequest()), true)] }), label: "sustain(monitor)" };
 }
-function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor") { m.program = { active: true, ecamB64, label, startedAt: Date.now(), durationMs, counter: 0, sustain }; L("sys", `programme « ${label} » démarré (présence : ${sustain})`, m); ensureKeepalive(m); }
+function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor") { m.program = { active: true, ecamB64, label, startedAt: Date.now(), durationMs, counter: 0, sustain }; L("sys", `programme « ${label} » démarré (présence : ${sustain})`, m); ensureKeepalive(m); sseWatch(); }
 
 // --- import des recettes : lecture de propriétés Ayla en LAN (100 % local) ---
 // Port de AylaLanCommand.newGetPropertyCommand : on sert une commande GET dans
@@ -560,6 +563,8 @@ function startImport(m, queue, durationMs = 120000) {
   m.import = { active: true, queue: [...queue], pending: null, ok: [], fail: [], startedAt: Date.now(), durationMs, counter: 0 };
   L("sys", `import démarré : ${queue.length} propriétés à lire`, m);
   ensureKeepalive(m);
+  // La fin d'une fenêtre expirée n'écrit aucune ligne de journal : voir sseWatch().
+  sseWatch();
 }
 function nextImportData(m) {
   const im = m.import;
@@ -1684,18 +1689,12 @@ function machineSummary(m) {
     lastRegisterAt: m.lastRegisterAt,
     /**
      * Lecture en cours, pour que l'interface puisse attendre le résultat au lieu de demander un
-     * rafraîchissement.
-     *
-     * La fenêtre est vérifiée ici, et pas seulement le drapeau `active` : celui-ci ne retombe que
-     * quand la machine vient chercher la commande suivante (`nextImportData`). Si elle ne se
-     * connecte jamais, il resterait vrai indéfiniment — et une interface qui scrute tant qu'il est
-     * vrai scruterait pour toujours.
+     * rafraîchissement. Voir `fenetreOuverte` pour la raison du contrôle de durée.
      */
-    reading:
-      m.import?.active && Date.now() <= m.import.startedAt + m.import.durationMs
-        ? { remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending }
-        : null,
-    running: m.program?.active && Date.now() <= m.program.startedAt + m.program.durationMs ? m.program.label : null,
+    reading: fenetreOuverte(m.import)
+      ? { remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending }
+      : null,
+    running: fenetreOuverte(m.program) ? m.program.label : null,
     // Juste de quoi dire « elle répond, et dans quel état » — la fiche complète est /api/status.
     lastMonitor: m.lastMonitor ? { at: m.lastMonitor.at, stateByte: m.lastMonitor.stateByte } : null,
     activeProfile: m.activeProfile,
@@ -1844,6 +1843,111 @@ async function handleMachines(req, res) {
   return raw(res, JSON.stringify({ error: "not found" }), 404);
 }
 
+/**
+ * Une fenêtre est-elle encore ouverte ? On vérifie la **durée**, pas seulement le drapeau `active` :
+ * celui-ci ne retombe que quand la machine vient chercher la commande suivante
+ * (`nextImportData` / `nextProgramData`). Si elle ne se connecte jamais, il resterait vrai
+ * indéfiniment — et tout ce qui s'y fie resterait bloqué avec lui.
+ */
+const fenetreOuverte = (x) => !!x?.active && Date.now() <= x.startedAt + x.durationMs;
+
+/**
+ * Flux d'évènements vers les navigateurs (Server-Sent Events).
+ *
+ * Pourquoi pousser plutôt que laisser sonder : une lecture de propriété n'est pas synchrone — le
+ * POST rend la main dès l'annonce, et c'est la machine qui pousse la valeur deux secondes plus
+ * tard. Sonder, c'est re-télécharger la liste entière toutes les deux secondes pour voir un champ
+ * changer, et se tromper de toute façon sur le moment.
+ *
+ * **Le déclencheur est le journal.** Chaque changement d'état significatif de ce serveur passe déjà
+ * par `L()` — propriété reçue, import démarré ou terminé, programme servi, clé appliquée, adresse
+ * changée. Se brancher là évite d'instrumenter vingt endroits et de rater celui qu'on aurait
+ * oublié : il n'existe pas de changement d'état silencieux.
+ *
+ * Regroupé sur 250 ms : un import journalise une ligne par propriété, et on ne veut pas une trame
+ * par ligne.
+ */
+const SSE = new Set();
+let sseTimer = null;
+
+function sseBroadcast() {
+  if (!SSE.size) return;
+  const charge = JSON.stringify({
+    machines: machineList().map(machineSummary),
+    defaultId: defaultMachine().id,
+    at: Date.now(),
+  });
+  for (const res of [...SSE]) {
+    try {
+      res.write(`data: ${charge}\n\n`);
+    } catch {
+      SSE.delete(res);
+    }
+  }
+}
+
+/** Signale un changement d'état. Sans client connecté, ne coûte rien. */
+function sseTouch() {
+  if (!SSE.size || sseTimer) return;
+  sseTimer = setTimeout(() => {
+    sseTimer = null;
+    sseBroadcast();
+  }, 250);
+}
+
+/**
+ * Veilleur, actif seulement pendant qu'un import ou un programme tourne.
+ *
+ * Le journal suffit pour tout ce qui **arrive**, mais pas pour ce qui **cesse** : quand une fenêtre
+ * expire sans que la machine se soit connectée, aucune ligne n'est écrite. Sans ce veilleur, le
+ * badge « lecture… » resterait affiché indéfiniment, à décrire un import qui n'existe plus.
+ *
+ * Il s'arrête de lui-même au premier passage où plus rien n'est ouvert, après une dernière émission
+ * — celle qui remet les champs à zéro.
+ */
+let sseWatcher = null;
+function sseWatch() {
+  if (sseWatcher) return;
+  sseWatcher = setInterval(() => {
+    const actif = machineList().some((m) => fenetreOuverte(m.import) || fenetreOuverte(m.program));
+    sseBroadcast();
+    if (!actif) {
+      clearInterval(sseWatcher);
+      sseWatcher = null;
+    }
+  }, 2000);
+}
+
+/**
+ * Abonnement d'un navigateur. Pas de `raw()` ici : un flux ne porte pas de `Content-Length` et ne
+ * doit pas être fermé. Le premier envoi est immédiat, pour que la page ait un état sans attendre le
+ * premier changement.
+ */
+function sseSubscribe(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Rien d'autre ne doit tamponner ce flux (un reverse-proxy devant nous, typiquement).
+    "X-Accel-Buffering": "no",
+  });
+  SSE.add(res);
+  res.write(`retry: 3000\n\n`);
+  // Battement de cœur : un flux muet finit par être coupé par un intermédiaire, et le navigateur
+  // ne le saurait qu'au premier évènement perdu. Un commentaire SSE ne déclenche pas `onmessage`.
+  const battement = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { /* la fermeture est gérée ci-dessous */ }
+  }, 25000);
+  const fin = () => {
+    clearInterval(battement);
+    SSE.delete(res);
+  };
+  req.on("close", fin);
+  req.on("error", fin);
+  res.on("error", fin);
+  sseBroadcast();
+}
+
 // --- API de contrôle ---
 async function handleApi(req, res) {
   const url = req.url.split("?")[0];
@@ -1851,6 +1955,9 @@ async function handleApi(req, res) {
   // renomme, en supprime. Traitée avant toute résolution, sinon un identifiant supprimé
   // empêcherait de réparer la situation.
   if (url === "/api/machines" || url.startsWith("/api/machines/")) return handleMachines(req, res);
+  // Le flux d'évènements est global, et surtout : il ne doit pas déclencher la résolution du DSN
+  // ci-dessous, qui sonde la machine pendant 4 s. Un abonnement n'a aucune raison de faire ça.
+  if (url === "/api/events" && req.method === "GET") return sseSubscribe(req, res);
 
   // À quelle machine cette requête s'adresse-t-elle ? Un identifiant inconnu est refusé, jamais
   // remplacé en silence par la machine par défaut.

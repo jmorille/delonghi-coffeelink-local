@@ -566,6 +566,7 @@
     "notReady": "à configurer",
     "session": "session LAN",
     "readingNow": "lecture… {remaining} restantes",
+    "liveOff": "flux temps réel indisponible — repli sur une interrogation périodique",
     "select": "Afficher celle-ci",
     "selected": "{name} est maintenant la machine affichée.",
     "makeDefault": "en faire la machine par défaut",

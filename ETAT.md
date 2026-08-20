@@ -1549,3 +1549,39 @@ qui scrute tant qu'il est vrai scruterait pour toujours. Aucune borne n'est donc
 page : la borne est dans la donnée.
 
 Le message ne dit plus « rafraîchissez dans quelques secondes » : c'était refiler le travail.
+
+### L'état est poussé, plus sondé (2026-08-20)
+
+Le sondage toutes les 2 s re-téléchargeait la liste entière pour voir un champ changer. Remplacé par
+un flux **Server-Sent Events** sur `GET /api/events`.
+
+**Le déclencheur est le journal.** Tout changement d'état significatif de ce serveur passe déjà par
+`L()` : propriété reçue, import démarré ou terminé, commande servie, clé appliquée, adresse changée.
+S'y brancher évite d'instrumenter vingt endroits — et d'oublier le vingt-et-unième. Regroupement sur
+250 ms, un import journalisant une ligne par propriété.
+
+Ce que le journal ne peut pas dire : la **fin** d'une fenêtre expirée sans que la machine se soit
+connectée n'écrit aucune ligne. Sans le veilleur `sseWatch()`, le badge « lecture… » resterait
+affiché à décrire un import qui n'existe plus. Il ne tourne que pendant qu'une fenêtre est ouverte
+et s'arrête après une dernière émission — celle qui remet les champs à zéro.
+
+Côté page, la réactivité est **fine** : l'état poussé est fusionné machine par machine, et une
+machine inchangée garde son identité d'objet, donc React ne redessine pas sa carte. Sans ça chaque
+évènement reconstruirait toutes les cartes, ce qui ramènerait le défaut en poussé au lieu de sondé.
+Repli conservé : si le flux échoue, scrutation, et seulement pendant qu'une lecture tourne.
+
+**Vérifié sur un banc d'essai** — une copie de `server.mjs` avec Next remplacé par un bouchon, sur le
+port 3999, une copie de la base, et `SERVER_IP` en boucle locale pour qu'aucune trame ne parte vers
+la machine :
+
+| Contrôle | Résultat |
+|---|---|
+| en-têtes | `text/event-stream`, `no-cache, no-transform`, `keep-alive`, pas de `Content-Length` |
+| à l'abonnement | état complet immédiat, sans attendre le premier changement |
+| renommage d'une machine | une trame poussée, avec le nouveau libellé |
+| import de 2 propriétés | `reading` apparaît à `remaining: 2` |
+| fin de la fenêtre (30 s) | `reading` repasse à `null`, puis le veilleur s'arrête |
+
+Les trames surnuméraires observées pendant le test venaient du banc lui-même : avec `SERVER_IP` en
+boucle locale, le keep-alive journalise un échec de `local_reg` toutes les 2,5 s, et chaque ligne de
+journal émet. En fonctionnement normal `local_reg` réussit sans rien écrire.
