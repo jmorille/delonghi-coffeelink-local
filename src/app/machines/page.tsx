@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { MachineSummary, currentMachine, forId, setCurrentMachine } from "../machine";
+import { useMachineEvents } from "../events";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -138,34 +139,14 @@ export default function Machines() {
   }, [load]);
 
   /**
-   * L'état arrive **poussé** par le serveur (`/api/events`, Server-Sent Events).
-   *
-   * Une lecture de propriété n'est pas synchrone : le POST rend la main dès l'annonce, et c'est la
-   * machine qui pousse la valeur deux secondes plus tard. Sonder, c'était re-télécharger la liste
-   * entière toutes les deux secondes pour voir un champ changer — et se tromper de toute façon sur
-   * le moment. Ici la page ne demande rien : elle est prévenue.
+   * L'état arrive **poussé** par le serveur (`/api/events`). L'abonnement lui-même vit dans
+   * `../events` : deux pages en dépendent, et une deuxième copie aurait divergé au premier
+   * correctif.
    *
    * Le repli n'est pas oublié : si le flux échoue (proxy qui ne le laisse pas passer, navigateur
    * sans EventSource), on retombe sur une scrutation, et seulement pendant qu'une lecture tourne.
    */
-  const [flux, setFlux] = useState(true);
-  useEffect(() => {
-    if (typeof EventSource === "undefined") {
-      setFlux(false);
-      return;
-    }
-    const es = new EventSource("/api/events");
-    es.onmessage = (e) => {
-      try {
-        applyPush(JSON.parse(e.data));
-        setFlux(true);
-      } catch {
-        /* une trame illisible ne doit pas casser l'abonnement */
-      }
-    };
-    es.onerror = () => setFlux(false);
-    return () => es.close();
-  }, [applyPush]);
+  const { live: flux } = useMachineEvents(applyPush);
 
   const enCours = d?.machines.some((m) => m.reading || m.running) ?? false;
   useEffect(() => {

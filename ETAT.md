@@ -1767,3 +1767,56 @@ extraits de la source, confrontés à la charge utile réelle du banc d'essai.
 | `/bean-adapt` | 2 | tous présents |
 
 Build de production : 12 pages.
+
+### La page des grains : /beans, flux poussé, cartes, et une bibliothèque locale (2026-08-20)
+
+**Renommée** de `/bean-adapt` en `/beans`, l'ancienne adresse redirigeant en 307 — des onglets
+pointent encore là, et plusieurs messages du serveur nomment la fonction « Bean Adapt », qui reste
+le libellé du menu : c'est le nom De'Longhi de la fonction, pas celui de la page. Les endpoints
+gardent leur nom (`/api/beanadapt*`), comme `/api/machine` l'a gardé après la fusion des pages.
+
+**L'abonnement au flux est extrait** dans `src/app/events.ts` : deux pages en dépendent, et une
+deuxième copie aurait divergé au premier correctif. Le rappel y est gardé dans une **référence** —
+passé en dépendance de l'effet, une fonction recréée à chaque rendu fermait et rouvrait la connexion
+en boucle.
+
+Cette page attendait avec deux minuteurs : `setTimeout(refresh, 6000)` après une lecture,
+`setInterval(refresh, 3000)` pendant un balayage. Deux minuteurs qui ne pouvaient que se tromper —
+trop tôt ils montraient l'état d'avant, trop tard ils faisaient attendre pour rien. Ils sont
+remplacés par deux signaux tirés du flux : `importedAt` qui bouge (la machine a écrit ; `0xBA` passe
+par `putBeanSystem`, qui horodate) ou une lecture qui vient de **se terminer** (un balayage enchaîne
+un programme par grain, et sa fin est le moment de relire même si rien n'a été écrit).
+
+Vérifié dans le navigateur, sur l'application complète servie depuis un arbre isolé : une lecture
+demandée fait apparaître le badge « lecture en cours », et à la fin de la fenêtre la page relit
+`/api/beanadapt` d'elle-même — une requête de plus, mesurée, sans aucun minuteur dans la page.
+
+**Deux listes, en cartes.** Les six emplacements de la machine, et une **bibliothèque locale** de
+configurations mémorisées côté serveur. La raison d'être de la seconde : la machine n'a que six
+emplacements, dont un qui n'est pas un café, et les écraser fait perdre le réglage précédent — on ne
+peut pas essayer une mouture puis revenir. La bibliothèque garde un réglage par café sans occuper
+d'emplacement.
+
+Rangées dans `meta.beanPresets`, par machine : quelques lignes, et une table aurait coûté une version
+de schéma pour un tableau de cinq entrées. Par machine comme les recettes, parce qu'un réglage vaut
+pour les bornes d'un modèle et que supprimer une machine doit emporter ses configurations.
+
+Deux détails qui comptent : les bornes sont vérifiées **à l'enregistrement** et pas seulement à
+l'écriture (mémoriser un réglage inapplicable ne servirait qu'à faire échouer l'écriture plus tard,
+loin de la saisie), et `machineSummary` porte un compteur `beanPresets` parce que `setMeta` ne touche
+pas `importedAt` — à dessein, c'est la date des données LUES — donc sans lui un second onglet
+n'apprendrait jamais que la bibliothèque a changé.
+
+| Contrôle | Résultat |
+|---|---|
+| création | `b1`, bornes vérifiées, horodaté |
+| mouture 99 | refusée : « hors bornes (1–7) » |
+| modification | `createdAt` conservé, `at` mis à jour |
+| persistance | relue depuis la base après redémarrage du serveur |
+| suppression | `removed: true` ; identifiant inconnu → `false`, sans erreur |
+| signal | `beanPresets` dans `/api/machines` suit le nombre |
+| « mémoriser » depuis une carte machine | crée l'entrée avec le nom du grain, la carte apparaît |
+| écriture dans un emplacement | l'index 0 est exclu des cibles, la confirmation nomme le réglage écrasé |
+
+`alignItems: start` sur les grilles : sans lui une carte courte s'étirait à la hauteur de la plus
+grande de sa ligne, ce qui laissait des blancs et faisait croire à une donnée manquante.

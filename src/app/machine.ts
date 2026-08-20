@@ -116,6 +116,8 @@ export interface MachineSummary {
   activeProfile: number;
   activeProfileConfirmed: boolean;
   importedAt: number | null;
+  /** Nombre de configurations de grains mémorisées côté serveur, pour cette machine. */
+  beanPresets: number;
   counts: { props: number; stats: number; beanSystems: number; recipes: number };
   /** Réglages imposés par l'environnement : la saisie marche, mais la variable regagne au redémarrage. */
   envForced: { ip: boolean; lanKey: boolean; dsn: boolean; modelKey: boolean };

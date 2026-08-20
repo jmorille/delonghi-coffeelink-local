@@ -1942,6 +1942,10 @@ function machineSummary(m) {
     activeProfile: m.activeProfile,
     activeProfileConfirmed: m.activeProfileConfirmed,
     importedAt: m.store.importedAt(),
+    // Signal pour la page des grains : `setMeta` ne touche pas `importedAt` (à dessein — c'est la
+    // date des données LUES sur la machine), donc sans ce compteur un autre onglet ne saurait pas
+    // qu'une configuration mémorisée a changé.
+    beanPresets: beanPresets(m).length,
     counts: m.store.counts(),
     // Ce que l'interface ne pourra pas changer durablement : au redémarrage, la variable regagne.
     envForced: { ip: envForced(m, "ip"), lanKey: envForced(m, "lanKey"), dsn: envForced(m, "dsn"), modelKey: envForced(m, "modelKey") },
@@ -2193,6 +2197,59 @@ function sseSubscribe(req, res) {
   req.on("error", fin);
   res.on("error", fin);
   sseBroadcast();
+}
+
+/**
+ * Configurations de grains **mémorisées par le serveur**, en regard des six emplacements de la
+ * machine.
+ *
+ * Pourquoi les deux : la machine n'a que six emplacements, dont un qui n'est pas un café (l'entrée
+ * marche/arrêt), et les écraser fait perdre le réglage précédent. Une bibliothèque locale permet de
+ * garder un réglage par café acheté, d'en essayer un autre, et de revenir.
+ *
+ * Rangées dans `meta` de la machine, pas dans une table : ce sont quelques lignes, et `meta` est
+ * fait pour ça (même famille que `checksums`). Une table aurait demandé une version de schéma pour
+ * un tableau de cinq entrées. **Par machine** comme les recettes : un réglage vaut pour les bornes
+ * d'un modèle, et supprimer une machine doit emporter ses configurations.
+ *
+ * L'identifiant est frappé ici, jamais fourni par la requête — même règle que pour les machines.
+ */
+function beanPresets(m) {
+  const l = m.store.getMeta("beanPresets");
+  return Array.isArray(l) ? l : [];
+}
+
+function putBeanPreset(m, { id, name, grinder, temperature, aroma }) {
+  const liste = beanPresets(m);
+  const at = Date.now();
+  const propre = {
+    name: String(name ?? "").slice(0, 20),
+    grinder: Number(grinder),
+    temperature: Number(temperature),
+    aroma: Number(aroma),
+  };
+  const i = id ? liste.findIndex((x) => x.id === id) : -1;
+  let entree;
+  if (i >= 0) {
+    entree = { ...liste[i], ...propre, at };
+    liste[i] = entree;
+  } else {
+    const used = liste.map((x) => Number(String(x.id).replace(/^b/, "")) || 0);
+    entree = { id: `b${Math.max(0, ...used) + 1}`, ...propre, createdAt: at, at };
+    liste.push(entree);
+  }
+  m.store.setMeta("beanPresets", liste);
+  L("sys", `configuration de grains ${i >= 0 ? "modifiée" : "mémorisée"} : « ${entree.name || "sans nom"} » mouture ${entree.grinder}, temp ${entree.temperature}, arôme ${entree.aroma}`, m);
+  return entree;
+}
+
+function deleteBeanPreset(m, id) {
+  const liste = beanPresets(m);
+  const reste = liste.filter((x) => x.id !== id);
+  if (reste.length === liste.length) return false;
+  m.store.setMeta("beanPresets", reste);
+  L("sys", `configuration de grains oubliée (${id})`, m);
+  return true;
 }
 
 // --- API de contrôle ---
@@ -2663,6 +2720,9 @@ async function handleApi(req, res) {
     }));
     return raw(res, JSON.stringify({
       beans,
+      // La bibliothèque locale, servie avec les grains de la machine : la page les montre côte à
+      // côte, une seule requête suffit.
+      presets: beanPresets(m),
       bounds: {
         grinder: { min: GRINDER_MIN, max: GRINDER_MAX, verified: true },
         aroma: { min: AROMA_MIN, max: AROMA_MAX, verified: true },
@@ -2671,6 +2731,34 @@ async function handleApi(req, res) {
       activeProfile: m.activeProfile,
       scan: m.beanScan?.active ? { next: m.beanScan.next, to: m.beanScan.to } : null,
     }));
+  }
+
+  /**
+   * Bibliothèque locale de configurations de grains. **Rien n'est envoyé à la machine ici** : ces
+   * entrées ne servent qu'à mémoriser des réglages, et c'est `/api/beanadapt/save` qui en écrit un
+   * dans un emplacement.
+   *
+   * Les bornes sont vérifiées à l'enregistrement et pas seulement à l'écriture : mémoriser un
+   * réglage inapplicable ne servirait qu'à faire échouer l'écriture plus tard, loin de la saisie.
+   */
+  if (url === "/api/beanpresets" && req.method === "GET") {
+    return raw(res, JSON.stringify({ presets: beanPresets(m) }));
+  }
+  if (url === "/api/beanpresets" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const grinder = Number(b.grinder);
+    const temperature = Number(b.temperature);
+    const aroma = Number(b.aroma);
+    if (!(grinder >= GRINDER_MIN && grinder <= GRINDER_MAX)) return raw(res, JSON.stringify({ error: `mouture hors bornes (${GRINDER_MIN}–${GRINDER_MAX})` }), 400);
+    if (!(aroma >= AROMA_MIN && aroma <= AROMA_MAX)) return raw(res, JSON.stringify({ error: `arôme hors bornes (${AROMA_MIN}–${AROMA_MAX})` }), 400);
+    if (!(temperature >= TEMPERATURE_MIN && temperature <= TEMPERATURE_MAX)) return raw(res, JSON.stringify({ error: `température hors bornes (${TEMPERATURE_MIN}–${TEMPERATURE_MAX})` }), 400);
+    const entree = putBeanPreset(m, { id: typeof b.id === "string" ? b.id : null, name: b.name, grinder, temperature, aroma });
+    return raw(res, JSON.stringify({ ok: true, preset: entree, presets: beanPresets(m) }));
+  }
+  if (url === "/api/beanpresets" && req.method === "DELETE") {
+    const id = new URL(req.url, "http://x").searchParams.get("id");
+    const removed = deleteBeanPreset(m, String(id ?? ""));
+    return raw(res, JSON.stringify({ removed, presets: beanPresets(m) }));
   }
 
   // Simulation : ce que la règle donnerait, sans rien envoyer à la machine.
