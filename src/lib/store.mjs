@@ -187,6 +187,12 @@ const q = {
   countRecipes: db.prepare("SELECT count(*) AS n FROM recipes WHERE machine = ?"),
 
   putMeta: db.prepare("INSERT INTO meta(machine, key, value, at) VALUES(:machine, :key, :value, :at) ON CONFLICT(machine, key) DO UPDATE SET value = :value, at = :at"),
+  // Remise à zéro d'une machine : une instruction par table, jouées dans une seule transaction.
+  wipeProps: db.prepare("DELETE FROM props WHERE machine = ?"),
+  wipeBeans: db.prepare("DELETE FROM bean_systems WHERE machine = ?"),
+  wipeStats: db.prepare("DELETE FROM stats WHERE machine = ?"),
+  wipeRecipes: db.prepare("DELETE FROM recipes WHERE machine = ?"),
+  wipeMeta: db.prepare("DELETE FROM meta WHERE machine = ?"),
   getMeta: db.prepare("SELECT value, at FROM meta WHERE machine = ? AND key = ?"),
   delMeta: db.prepare("DELETE FROM meta WHERE machine = ? AND key = ?"),
 
@@ -490,6 +496,35 @@ export function forMachine(machine) {
       beanSystems: q.countBeans.get(id).n,
       recipes: q.countRecipes.get(id).n,
     }),
+
+    /**
+     * Efface **tout** ce qui appartient à cette machine, sans supprimer la machine elle-même :
+     * propriétés lues, statistiques, profils de grains, recettes, et toutes les valeurs `meta` —
+     * donc aussi l'adresse mémorisée, le DSN, le modèle et la clé LAN.
+     *
+     * C'est la remise à zéro de la **dernière** machine, qu'on ne peut pas retirer du registre sans
+     * laisser l'application sans rien à piloter. Une seule transaction : une coupure au milieu ne
+     * peut pas laisser la moitié d'une ancienne configuration, ce qui serait pire que les deux
+     * états francs.
+     *
+     * Rend le décompte de ce qui a été effacé, pour que l'interface puisse le dire.
+     */
+    reset() {
+      return tx(() => {
+        const efface = {
+          props: q.countProps.get(id).n,
+          stats: q.countStats.get(id).n,
+          beanSystems: q.countBeans.get(id).n,
+          recipes: q.countRecipes.get(id).n,
+        };
+        q.wipeProps.run(id);
+        q.wipeBeans.run(id);
+        q.wipeStats.run(id);
+        q.wipeRecipes.run(id);
+        q.wipeMeta.run(id);
+        return efface;
+      });
+    },
   };
   bound.set(id, api);
   return api;

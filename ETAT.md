@@ -1476,3 +1476,29 @@ attendue d'une adresse, le sort du mot de passe — et les avertissements. La ca
 n'apparaissent qu'après une action, et c'est là qu'ils servent. Dix-neuf clés devenues inutiles sont
 retirées du catalogue, qui passe de 589 à 571 messages.
 
+### Supprimer la dernière machine : remise à zéro au lieu d'un refus (2026-08-20)
+
+Le refus (409) était le mauvais choix. Il renvoyait vers « oublier l'adresse » et « oublier la clé »
+**sur une page qui n'existe plus**, il fallait donc deux actions à la main pour obtenir un résultat
+que le bouton pouvait produire — et même en les faisant, le cache de lectures restait en place.
+
+La dernière machine ne peut effectivement pas quitter le registre : l'application n'a aucun état
+« aucune machine » à montrer, et une base vide s'en recréerait une au démarrage. Mais on peut faire
+ce que la suppression voulait dire : `forMachine(id).reset()` efface les cinq tables de cette
+machine en une seule transaction — adresse, clé LAN, DSN, modèle, sommes de contrôle, propriétés,
+statistiques, grains, recettes. L'entrée survit, vide, et l'état d'exécution est reconstruit.
+
+Trois détails qui comptent :
+
+- les `setTimeout` en vol (balayage des grains, lecture des statistiques) référencent l'ancien
+  enregistrement : ils sont désarmés **avant** le remplacement, sinon un balayage en cours
+  continuerait à s'annoncer à l'ancienne adresse, sur un objet absent du registre — donc invisible ;
+- la réponse porte `envRestored` : ce que `.env.local` force revient aussitôt, et le dire est la
+  différence entre « ça a marché » et « ça n'a rien fait » ;
+- le bouton s'appelle « Tout effacer » quand il ne reste qu'une machine, et « Supprimer » sinon. Les
+  deux confirmations nomment ce qui part ; seul le sort de l'entrée diffère.
+
+Vérifié sur une **copie** de la base réelle avant de toucher à quoi que ce soit : 58 propriétés,
+62 statistiques, 6 profils de grains, adresse, clé LAN, DSN et modèle effacés, l'entrée `m1`
+conservée. Le chemin HTTP, lui, n'a pas encore été joué en direct : `server.mjs` n'est pas rechargé
+à chaud et le serveur de développement tournait avec la version précédente.

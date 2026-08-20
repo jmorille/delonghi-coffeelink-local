@@ -1754,24 +1754,56 @@ async function handleMachines(req, res) {
   if (id && req.method === "DELETE") {
     const m = machineById(id);
     if (!m) return raw(res, JSON.stringify({ error: `machine « ${id} » inconnue`, unknownMachine: true }), 404);
-    // On refuse de supprimer la dernière. L'application n'a aucun état « aucune machine » à
-    // montrer, et une base vide s'en recréerait une au redémarrage : la suppression n'aurait donc
-    // fait que perdre les données. Pour remettre celle-ci à zéro, « oublier l'adresse » et
-    // « oublier la clé » existent déjà.
-    if (MACHINES.size === 1) {
-      return raw(res, JSON.stringify({
-        error: "c'est la dernière machine : la supprimer laisserait l'application sans rien à piloter. Pour la remettre à zéro, utiliser « oublier l'adresse » et « oublier la clé » sur la page Clé LAN.",
-        lastMachine: true,
-      }), 409);
-    }
-    // Le keep-alive est un intervalle vivant : sans ça il continuerait à annoncer un serveur à
-    // une machine qui n'existe plus dans le registre.
+    // Le keep-alive est un intervalle vivant : sans ça il continuerait à annoncer un serveur à une
+    // machine qui n'existe plus, ou qui vient d'être vidée.
     if (m.keepalive) { clearInterval(m.keepalive); m.keepalive = null; }
     const nom = machineLabel(m);
+
+    /**
+     * La **dernière** machine ne peut pas quitter le registre : l'application n'a aucun état
+     * « aucune machine » à montrer, et une base vide s'en recréerait une au démarrage. Mais
+     * refuser était le mauvais choix — ça renvoyait l'utilisateur faire à la main ce que le bouton
+     * devait faire, et ça laissait de toute façon le cache de lectures en place.
+     *
+     * On fait donc ce que la suppression voulait dire : tout effacer, sur place. L'entrée survit,
+     * vide, et l'état d'exécution est reconstruit — ce qui remet aussi en vigueur les valeurs
+     * forcées par l'environnement, seule chose qu'un effacement local ne peut pas défaire.
+     */
+    if (MACHINES.size === 1) {
+      // L'ancien enregistrement va être remplacé, mais des `setTimeout` en vol le référencent
+      // encore (balayage des grains, lecture des statistiques). Les désarmer avant : sinon un
+      // balayage en cours continuerait à s'annoncer à l'ancienne adresse, sur un objet qui n'est
+      // plus dans le registre — invisible depuis l'interface.
+      m.beanScan = null;
+      m.statScan = null;
+      m.import = null;
+      m.program = null;
+      m.session = null;
+      const cleared = m.store.reset();
+      setMachineLabel(m.id, null);
+      const frais = makeMachine({ id: m.id, createdAt: m.createdAt, label: null });
+      MACHINES.set(frais.id, frais);
+      clearSetting("defaultMachine");
+      L("sys", `machine remise à zéro : ${nom} — adresse, clé LAN, DSN, modèle, ${cleared.props} propriétés et ${cleared.stats} statistiques effacés`, frais);
+      // Ce que l'environnement remet en place aussitôt : il faut le DIRE, sinon la remise à zéro
+      // a l'air de n'avoir rien fait.
+      const envRestored = ["ip", "lanKey", "dsn", "modelKey"].filter((k) => envForced(frais, k));
+      if (envRestored.length) L("sys", `valeurs reprises de .env.local après la remise à zéro : ${envRestored.join(", ")}`, frais);
+      return raw(res, JSON.stringify({
+        removed: false,
+        reset: true,
+        cleared,
+        envRestored,
+        machine: machineSummary(frais),
+        defaultId: defaultMachine().id,
+        machines: machineList().map(machineSummary),
+      }));
+    }
+
     MACHINES.delete(m.id);
     const removed = deleteMachine(m.id);
     if (getSetting("defaultMachine") === m.id) clearSetting("defaultMachine");
-    L("sys", `machine supprimée : ${nom} — propriétés lues, statistiques, recettes et clé LAN mémorisée effacées`);
+    L("sys", `machine supprimée : ${nom} — propriétés lues, statistiques, recettes et clé LAN mémorisée effacées`, m);
     return raw(res, JSON.stringify({ removed, defaultId: defaultMachine().id, machines: machineList().map(machineSummary) }));
   }
 

@@ -225,17 +225,30 @@ export default function Machines() {
     });
 
   /**
-   * Suppression : elle emporte tout ce qui a été lu sur cette machine, et sa clé LAN mémorisée.
-   * D'où la confirmation qui nomme précisément ce qui part.
+   * Suppression — ou **remise à zéro** s'il ne reste qu'une machine : elle ne peut pas quitter le
+   * registre, alors le serveur efface tout son contenu et garde l'entrée vide. Les deux cas
+   * emportent le même contenu, donc les deux confirmations nomment ce qui part ; seul le sort de
+   * l'entrée elle-même diffère, et le libellé du bouton le dit d'avance.
    */
   const remove = async (m: MachineSummary) => {
-    if (!confirm(t("deleteConfirm", { name: m.label, props: m.counts.props, stats: m.counts.stats }))) return;
+    const derniere = (d?.machines.length ?? 0) <= 1;
+    const params = { name: m.label, props: m.counts.props, stats: m.counts.stats };
+    if (!confirm(derniere ? t("resetConfirm", params) : t("deleteConfirm", params))) return;
     setBusy(m.id);
     setMsg(null);
     try {
       const r = await fetch(`/api/machines/${encodeURIComponent(m.id)}`, { method: "DELETE" }).then((x) => x.json());
       if (r.error) {
         setMsg(tc("error", { message: r.error }));
+      } else if (r.reset) {
+        // L'environnement reprend la main sur ce qu'il force : sans le dire, la remise à zéro
+        // aurait l'air de n'avoir rien fait.
+        setMsg(
+          t("resetDone", { name: m.label, props: r.cleared.props, stats: r.cleared.stats }) +
+            (r.envRestored?.length ? " " + t("resetEnv", { vars: r.envRestored.join(", ") }) : ""),
+        );
+        // Plus aucun prérequis : le bloc de configuration doit être sous les yeux.
+        setOpen((o) => ({ ...o, [m.id]: true }));
       } else {
         setMsg(t("deleted", { name: m.label }));
         // Si c'était la machine affichée, on repasse sur celle par défaut du serveur.
@@ -346,7 +359,7 @@ export default function Machines() {
                   </button>
                 )}
                 <button className="danger" onClick={() => remove(m)} disabled={!!busy}>
-                  {t("delete")}
+                  {d.machines.length <= 1 ? t("reset") : t("delete")}
                 </button>
               </div>
             </div>
