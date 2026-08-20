@@ -1527,3 +1527,25 @@ réussie), puis `importedAt` et `model` 15 s après — c'est-à-dire la lecture
 toute seule. Et le `createdAt` de l'entrée `m1` est inchangé alors que ses 58 propriétés, ses
 62 statistiques et ses 6 profils de grains ont disparu : c'est bien la remise à zéro sur place, pas
 une suppression suivie d'une recréation au démarrage.
+
+### La page suit les lectures au lieu de demander un rafraîchissement (2026-08-20)
+
+Défaut constaté sur la machine réelle : les journaux montraient la récupération du modèle, la carte
+affichait « Modèle : inconnu, 0 propriétés ». Le serveur avait tout enregistré — `model` et
+`importedAt` écrits **2 secondes** après `lanKey`.
+
+La cause n'est pas un cache : une lecture de propriété n'est pas synchrone. Le POST rend la main dès
+que l'annonce (`local_reg`) est faite, et c'est la **machine** qui se connecte ensuite pour pousser
+la valeur. Le `load()` qui suit l'action arrive donc systématiquement trop tôt.
+
+`machineSummary` expose maintenant `reading` (file restante, lues, échecs, propriété en attente) et
+`running` (programme ECAM en cours), et la page scrute toutes les 2 s tant que l'un des deux est
+vrai. Un badge « lecture… n restantes » le montre.
+
+Un détail qui compte : `reading` vérifie la **fenêtre** de l'import, pas seulement son drapeau
+`active`. Celui-ci ne retombe que quand la machine vient chercher la commande suivante
+(`nextImportData`) — si elle ne se connecte jamais, il resterait vrai indéfiniment, et une interface
+qui scrute tant qu'il est vrai scruterait pour toujours. Aucune borne n'est donc nécessaire côté
+page : la borne est dans la donnée.
+
+Le message ne dit plus « rafraîchissez dans quelques secondes » : c'était refiler le travail.

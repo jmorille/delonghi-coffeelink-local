@@ -98,6 +98,10 @@ export interface MachineSummary {
   model: { key: string | null; source: string; machineName: string | null; matchesCatalog: boolean | null };
   sessionActive: boolean;
   lastRegisterAt: number;
+  /** Lecture de propriétés en cours, `null` sinon. C'est ce qui fait scruter la page. */
+  reading: { remaining: number; ok: number; fail: number; pending: string | null } | null;
+  /** Libellé du programme ECAM en cours, `null` sinon. */
+  running: string | null;
   lastMonitor: { at: number; stateByte: number } | null;
   activeProfile: number;
   activeProfileConfirmed: boolean;

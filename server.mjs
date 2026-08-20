@@ -1682,6 +1682,20 @@ function machineSummary(m) {
     },
     sessionActive: !!m.session,
     lastRegisterAt: m.lastRegisterAt,
+    /**
+     * Lecture en cours, pour que l'interface puisse attendre le résultat au lieu de demander un
+     * rafraîchissement.
+     *
+     * La fenêtre est vérifiée ici, et pas seulement le drapeau `active` : celui-ci ne retombe que
+     * quand la machine vient chercher la commande suivante (`nextImportData`). Si elle ne se
+     * connecte jamais, il resterait vrai indéfiniment — et une interface qui scrute tant qu'il est
+     * vrai scruterait pour toujours.
+     */
+    reading:
+      m.import?.active && Date.now() <= m.import.startedAt + m.import.durationMs
+        ? { remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending }
+        : null,
+    running: m.program?.active && Date.now() <= m.program.startedAt + m.program.durationMs ? m.program.label : null,
     // Juste de quoi dire « elle répond, et dans quel état » — la fiche complète est /api/status.
     lastMonitor: m.lastMonitor ? { at: m.lastMonitor.at, stateByte: m.lastMonitor.stateByte } : null,
     activeProfile: m.activeProfile,

@@ -102,6 +102,25 @@ export default function Machines() {
     load();
   }, [load]);
 
+  /**
+   * Tant qu'une lecture tourne, on rafraîchit tout seul.
+   *
+   * Une lecture de propriété n'est pas synchrone : le POST rend la main dès que l'annonce est
+   * faite, et c'est la **machine** qui se connecte ensuite pour pousser la valeur — deux secondes
+   * plus tard en pratique. Le `load()` qui suit l'action arrive donc systématiquement trop tôt, et
+   * la carte affichait « Modèle : inconnu, 0 propriétés » alors que le serveur venait de tout
+   * enregistrer. Demander à l'utilisateur de rafraîchir était lui refiler le travail.
+   *
+   * Pas de borne ici : `reading` est déjà borné côté serveur par la fenêtre de l'import, donc la
+   * scrutation s'arrête d'elle-même même si la machine ne se connecte jamais.
+   */
+  const enCours = d?.machines.some((m) => m.reading || m.running) ?? false;
+  useEffect(() => {
+    if (!enCours) return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [enCours, load]);
+
   const cred = (id: string) => creds[id] ?? { email: "", password: "" };
 
   /**
@@ -344,6 +363,10 @@ export default function Machines() {
                 {m.id === d.defaultId && <span className="pill">{t("isDefault")}</span>}
                 <span className={`pill ${m.ready ? "on" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
                 {m.sessionActive && <span className="pill on">{t("session")}</span>}
+                {m.reading && (
+                  <span className="pill on">{t("readingNow", { remaining: m.reading.remaining })}</span>
+                )}
+                {m.running && <span className="pill on">{m.running}</span>}
               </div>
               <div className="row">
                 {m.id !== courante && (
