@@ -236,7 +236,7 @@ export default function Boissons() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "stop", beverageId: target?.id ?? 1, profileId: profile }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : tPower("stopSent", { frame: r.frameHex }));
+      setMsg(r.error ? tc("error", { message: r.error }) : tPower("stopSent"));
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -290,7 +290,7 @@ export default function Boissons() {
         body: JSON.stringify({ action: "dispense", beverageId: bev.id, profileId: profile, params }),
       }).then((x) => x.json());
       if (!r.error) setLastDispensed(bev);
-      setMsg(r.error ? tc("error", { message: r.error }) : t("sent", { label: r.program, frame: r.frameHex }));
+      setMsg(r.error ? tc("error", { message: r.error }) : t("sent", { label: r.program }));
     } finally {
       setBusy(false);
     }

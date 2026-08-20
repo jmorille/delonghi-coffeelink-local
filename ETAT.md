@@ -1852,3 +1852,40 @@ d'ajustement, pas celui de la liste des grains.
 
 Chaque page garde son repli : flux indisponible → scrutation, seulement pendant qu'une lecture
 tourne, et une ligne le dit.
+
+### La trame quitte l'interface et rejoint le journal (2026-08-20)
+
+« Écriture envoyée — trame 0d 33 bb f0 02 00 54 … » : cinq confirmations d'action affichaient la
+trame ECAM. Ça ne dit pas à l'utilisateur si son réglage est parti, ça lui montre des octets.
+
+L'information est précieuse en diagnostic, donc elle ne disparaît pas — elle va là où on la cherche.
+`startProgram` écrit désormais **une seule ligne** qui porte tout : ce que l'utilisateur a demandé, ce
+que ça vaut côté protocole, et les octets.
+
+```
+Enregistrer Espresso dans le profil 1 — écriture · recette enregistrée dans un profil (0x83) · trame 0d 0b 83 f0 …
+Arrêt — action · arrêt de la préparation (0x83) · trame 0d 08 83 f0 01 02 06 9d e1
+Sommes de contrôle — lecture · sommes de contrôle (0xa3) · trame 0d 05 a3 f0 7b 54
+Bean System 2 → mouture 5, temp 2, arôme 3 — écriture · profil de grains (0xbb) · trame 0d 33 bb f0 …
+```
+
+**L'indicateur d'opération** est `nature · nom (0x..)`, la nature étant le verbe — lecture, écriture
+ou action. C'est ce qu'on cherche en premier quand on se demande pourquoi une machine a fait quelque
+chose : une lecture n'a aucun effet physique, une écriture est persistante.
+
+`0x83` est affiné par son **octet de mode**, parce que le même octet de commande sert à trois choses :
+préparer une boisson (mode 1), arrêter (mode 2) et **écrire une recette dans un profil** (mode 0).
+Seule la dernière est une écriture persistante, et c'est celle qu'il faut voir d'un coup d'œil. Le
+drapeau `0x80` (vérification) est masqué : il ne change pas la nature.
+
+Deux détails : les 4 octets d'horodatage ajoutés par `datapointValue` sont retirés de l'affichage —
+sinon le journal montrerait quatre octets qui n'appartiennent pas à la commande — et `.log > div`
+reçoit `overflow-wrap: anywhere`, sans quoi une trame de 52 octets obligerait à faire défiler
+horizontalement pour lire une seule ligne.
+
+`frameHex` reste dans les réponses de l'API (utile en ligne de commande) ; aucune page ne le lit
+plus. Les infobulles qui citent une commande (« Commande 0x83 mode STOPV2 ») sont conservées : ce
+sont des aides contextuelles, pas des comptes rendus d'opération.
+
+Vérifié sur le banc : les quatre familles d'opération journalisées correctement, plus aucun message
+du catalogue ne contient `{frame}`, plus aucune page ne lit `frameHex`.

@@ -72,6 +72,9 @@ label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: 4
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .log { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .82rem; max-height: 260px; overflow: auto; }
+/* Les lignes du journal portent maintenant la trame ECAM : sans repli, une trame de 52 octets
+   obligerait a faire defiler horizontalement pour lire une seule ligne. */
+.log > div { overflow-wrap: anywhere; }
 .log .in { color: var(--accent-2); }
 .log .out { color: var(--accent); }
 .log .sys { color: var(--muted); }

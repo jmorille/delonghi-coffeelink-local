@@ -108,7 +108,7 @@ export default function Profils() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectProfile", profileId: id }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent", { label: r.program, frame: r.frameHex }));
+      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent", { label: r.program }));
     } finally {
       setBusy(false);
     }

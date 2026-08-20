@@ -247,7 +247,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index: selected, ...draft, visible }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("saveSent", { frame: r.frameHex }));
+      setMsg(r.error ? tc("error", { message: r.error }) : t("saveSent"));
       setTimeout(refresh, 8000);
     } finally {
       setBusy(false);
@@ -265,7 +265,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectBean", beanId: index }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent", { frame: r.frameHex }));
+      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent"));
     } finally {
       setBusy(false);
     }

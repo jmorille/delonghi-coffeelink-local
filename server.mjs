@@ -622,7 +622,71 @@ function nextProgramData(m) {
   }
   return { data: JSON.stringify({ properties: [prop(m, m.send, datapointValue(frameMonitorRequest()), true)] }), label: "sustain(monitor)" };
 }
-function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor") { m.program = { active: true, ecamB64, label, startedAt: Date.now(), durationMs, counter: 0, sustain }; L("sys", `programme « ${label} » démarré (présence : ${sustain})`, m); ensureKeepalive(m); sseWatch(); }
+/**
+ * Opérations ECAM, par octet de commande. Sert à **nommer** ce qu'un programme fait dans le
+ * journal : « 0x83 » ne dit rien à la relecture, « préparation ou enregistrement de recette » si.
+ *
+ * La nature — lecture ou action — est ce qui compte le plus au moment où l'on cherche pourquoi une
+ * machine a fait quelque chose : une lecture n'a aucun effet physique, une action en a un.
+ */
+const ECAM_OPS = {
+  // `nature` est le VERBE, `nom` l'objet : les deux se lisent à la suite (« lecture · monitor »).
+  // Les mettre tous les deux au complet donnait « lecture lecture d'un profil de grains ».
+  0x75: { nature: "lecture", nom: "monitor" },
+  // 0x83 est affiné par son octet de mode : voir `describeFrame`. La distinction compte — le même
+  // octet de commande sert à préparer une boisson, à arrêter, et à ÉCRIRE une recette dans un profil.
+  0x83: { nature: "action", nom: "recette" },
+  0x84: { nature: "action", nom: "marche / arrêt" },
+  0xa2: { nature: "lecture", nom: "paramètres et compteurs" },
+  0xa3: { nature: "lecture", nom: "sommes de contrôle" },
+  0xa6: { nature: "lecture", nom: "recette d'un profil" },
+  0xa9: { nature: "action", nom: "sélection de profil" },
+  0xb0: { nature: "lecture", nom: "bornes d'une recette" },
+  0xb9: { nature: "action", nom: "sélection du grain actif" },
+  0xba: { nature: "lecture", nom: "profil de grains" },
+  // La seule écriture persistante de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
+  0xbb: { nature: "écriture", nom: "profil de grains" },
+};
+
+/**
+ * Décrit la trame qu'on est en train d'envoyer : opération, nature, et octets.
+ *
+ * `ecamB64` porte la trame **suivie de 4 octets d'horodatage** (voir `datapointValue`) : on les
+ * retire, sinon le journal afficherait quatre octets qui n'appartiennent pas à la commande.
+ */
+function describeFrame(ecamB64) {
+  try {
+    const buf = Buffer.from(ecamB64, "base64");
+    const trame = buf.subarray(0, Math.max(0, buf.length - 4));
+    const cmd = trame[2];
+    let op = ECAM_OPS[cmd];
+    // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
+    // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
+    if (cmd === 0x83) {
+      const mode = trame[5] & 0x7f;
+      op =
+        mode === 0x00
+          ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
+          : mode === 0x02
+            ? { nature: "action", nom: "arrêt de la préparation" }
+            : { nature: "action", nom: "préparation d'une boisson" };
+    }
+    const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+    return `${op ? `${op.nature} · ${op.nom}` : "opération inconnue"} (0x${(cmd ?? 0).toString(16).padStart(2, "0")}) · trame ${hex}`;
+  } catch {
+    return "trame illisible";
+  }
+}
+
+function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor") {
+  m.program = { active: true, ecamB64, label, startedAt: Date.now(), durationMs, counter: 0, sustain };
+  // Une seule ligne, et elle porte tout : ce que l'utilisateur a demandé, ce que ça vaut côté
+  // protocole, et les octets. C'est ici que la trame vit — plus dans les messages de l'interface,
+  // où elle ne renseignait personne sur le résultat de son geste.
+  L("out", `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`, m);
+  ensureKeepalive(m);
+  sseWatch();
+}
 
 // --- import des recettes : lecture de propriétés Ayla en LAN (100 % local) ---
 // Port de AylaLanCommand.newGetPropertyCommand : on sert une commande GET dans
