@@ -1,0 +1,9229 @@
+{
+  "_source": "assets/MachinesModels.json de l'APK Coffee Link, table « Machine Template » v1.510.",
+  "_nature": "Catalogue de boissons par modèle. Ce qui change d'un modèle à l'autre est la LISTE des recettes ; la numérotation des propriétés Ayla est un espace de noms De'Longhi figé, tenu dans beverages.mjs.",
+  "_support": "classic = toutes les recettes sont adressables ; extended = familles iced/mug qui passent par l'autre nomenclature (non implémentée, non vérifiable sans une machine de ce type) ; norecipes = la table n'en contient aucune pour ce modèle.",
+  "tableVersion": "1.510",
+  "models": {
+    "17052": {
+      "productCode": "0132217052",
+      "type": "ECAM 610.35.B",
+      "name": "PrimaDonna SOUL ECAM610.35",
+      "appModelId": "PD_SOUL_BETTER",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 3,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 3,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17053": {
+      "productCode": "0132217053",
+      "type": "ECAM 610.55.SB",
+      "name": "PrimaDonna SOUL ECAM610.55",
+      "appModelId": "PD_SOUL_BETTER",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 3,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 3,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17054": {
+      "productCode": "0132217054",
+      "type": "ECAM 610.74.MB",
+      "name": "PrimaDonna SOUL ECAM610.74",
+      "appModelId": "PD_SOUL",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 5,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Long Black",
+          "ingredients": [
+            1,
+            2,
+            4,
+            12,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Travel Mug",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            15,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17055": {
+      "productCode": "0132217055",
+      "type": "ECAM 610.75.MB",
+      "name": "Prima Donna SOUL ECAM610.75",
+      "appModelId": "PD_SOUL",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 5,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Long Black",
+          "ingredients": [
+            1,
+            2,
+            4,
+            12,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Travel Mug",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            15,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17059": {
+      "productCode": "0132217059",
+      "type": "ECAM610.75.MB",
+      "name": "Prima Donna SOUL ECAM610.75",
+      "appModelId": "PD_SOUL",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 5,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Long Black",
+          "ingredients": [
+            1,
+            2,
+            4,
+            12,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Travel Mug",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            15,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17062": {
+      "productCode": "0132217062",
+      "type": "ECAM610.75.MB",
+      "name": "Prima Donna SOUL ECAM610.75",
+      "appModelId": "PD_SOUL",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 5,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Long Black",
+          "ingredients": [
+            1,
+            2,
+            4,
+            12,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Travel Mug",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            15,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17065": {
+      "productCode": "0132217065",
+      "type": "ECAM612.55.SB",
+      "name": "PRIMADONNA SOUL ECAM610.55",
+      "appModelId": "PD_SOUL_BETTER",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 3,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 3,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17069": {
+      "productCode": "0132217069",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17070": {
+      "productCode": "0132217070",
+      "type": "ECAM450.55.S",
+      "name": "Eletta Explore 450.55.S",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17071": {
+      "productCode": "0132217071",
+      "type": "ECAM452.57.G",
+      "name": "Eletta Explore 452.57.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17072": {
+      "productCode": "0132217072",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17073": {
+      "productCode": "0132217073",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17077": {
+      "productCode": "0132217077",
+      "type": "ECAM610.75.MB",
+      "name": "PrimaDonna SOUL ECAM610.75",
+      "appModelId": "PD_SOUL",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 5,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Long Black",
+          "ingredients": [
+            1,
+            2,
+            4,
+            12,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Travel Mug",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            15,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17079": {
+      "productCode": "0132217079",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17095": {
+      "productCode": "0132217095",
+      "type": "ECAM452.57.G",
+      "name": "Eletta Explore 452.57.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17096": {
+      "productCode": "0132217096",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17097": {
+      "productCode": "0132217097",
+      "type": "ECAM450.55.S",
+      "name": "Eletta Explore 450.55.S",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17098": {
+      "productCode": "0132217098",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17100": {
+      "productCode": "0132217100",
+      "type": "ECAM612.55.SB",
+      "name": "PRIMADONNA SOUL ECAM610.55",
+      "appModelId": "PD_SOUL_BETTER",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 3,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 3,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    },
+    "17104": {
+      "productCode": "0132217104",
+      "type": "ECAM450.55.S",
+      "name": "Eletta Explore 450.55.S",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17105": {
+      "productCode": "0132217105",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17108": {
+      "productCode": "0132217108",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17109": {
+      "productCode": "0132217109",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17110": {
+      "productCode": "0132217110",
+      "type": "ECAM450.55.S",
+      "name": "Eletta Explore 450.55.S",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17111": {
+      "productCode": "0132217111",
+      "type": "ECAM450.76.S",
+      "name": "Eletta Explore 45076S",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17112": {
+      "productCode": "0132217112",
+      "type": "ECAM450.55.S",
+      "name": "Eletta Explore 450.55.S",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17118": {
+      "productCode": "0132217118",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17119": {
+      "productCode": "0132217119",
+      "type": "ECAM450.76.T",
+      "name": "Eletta Explore 450.76.T",
+      "appModelId": "STRIKER_BEST",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "extended",
+      "unsupportedIds": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            8,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25,
+            12
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            9,
+            27,
+            30,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            27,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            15,
+            27,
+            13,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            25
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Brew Over Ice",
+          "ingredients": [
+            1,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 51,
+          "name": "Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 53,
+          "name": "Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            12,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 55,
+          "name": "Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            27,
+            2,
+            30,
+            36,
+            37,
+            31,
+            28,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 80,
+          "name": "Mug Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 81,
+          "name": "Mug Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 82,
+          "name": "Mug Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 83,
+          "name": "Mug Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 84,
+          "name": "Mug Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 85,
+          "name": "Mug Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            12,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 86,
+          "name": "Mug Hot Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 100,
+          "name": "Mug Iced Brew Over ice",
+          "ingredients": [
+            1,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 101,
+          "name": "Mug Iced Americano",
+          "ingredients": [
+            1,
+            15,
+            2,
+            27,
+            30,
+            32,
+            33,
+            31,
+            37,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 102,
+          "name": "Mug Iced Cappuccino",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 103,
+          "name": "Mug Iced Latte Macchiato",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 104,
+          "name": "Mug Iced Caffelatte",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 105,
+          "name": "Mug Iced Cappuccino Mix",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 106,
+          "name": "Mug Iced Flat White",
+          "ingredients": [
+            1,
+            9,
+            2,
+            27,
+            30,
+            28,
+            12,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 107,
+          "name": "Mug Iced Cold Milk",
+          "ingredients": [
+            9,
+            27,
+            28,
+            32,
+            33,
+            31,
+            37,
+            35,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 233,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 234,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        },
+        {
+          "id": 235,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            15,
+            9,
+            2,
+            30,
+            12,
+            28,
+            24,
+            25
+          ]
+        }
+      ]
+    },
+    "17121": {
+      "productCode": "0132217121",
+      "type": "ECAM450.55.G",
+      "name": "Eletta Explore 450.55.G",
+      "appModelId": "STRIKER_GOOD",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 4,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 6,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_1",
+      "support": "norecipes",
+      "unsupportedIds": [],
+      "recipes": []
+    },
+    "17123": {
+      "productCode": "0132217123",
+      "type": "ECAM610.55.SB",
+      "name": "PrimaDonna SOUL ECAM610.55",
+      "appModelId": "PD_SOUL_BETTER",
+      "protocolVersion": 2,
+      "protocolMinorVersion": 1,
+      "nProfiles": 3,
+      "nStandardRecipes": 18,
+      "nCustomRecipes": 3,
+      "customizableProfiles": true,
+      "creationRecipes": true,
+      "globalTemperature": true,
+      "characterSet": "1",
+      "profileIconsSet": "SET_2",
+      "support": "classic",
+      "unsupportedIds": [],
+      "recipes": [
+        {
+          "id": 1,
+          "name": "Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Regular Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Long Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 4,
+          "name": "2X Espresso Coffee",
+          "ingredients": [
+            1,
+            2,
+            4,
+            8,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Doppio+",
+          "ingredients": [
+            1,
+            4,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 6,
+          "name": "Americano",
+          "ingredients": [
+            1,
+            2,
+            4,
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 7,
+          "name": "Cappuccino",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Latte Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 9,
+          "name": "Caffé Latte",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 10,
+          "name": "Flat White",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Espresso Macchiato",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hot Milk",
+          "ingredients": [
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 13,
+          "name": "Cappuccino Doppio+",
+          "ingredients": [
+            1,
+            4,
+            9,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 15,
+          "name": "Cappuccino Reverse",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hot Water",
+          "ingredients": [
+            15,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Tea",
+          "ingredients": [
+            13,
+            15,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Coffee pot",
+          "ingredients": [
+            1,
+            2,
+            4,
+            25,
+            27,
+            30
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Cortado",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            27,
+            28
+          ]
+        },
+        {
+          "id": 200,
+          "name": "Espresso BS 1",
+          "ingredients": [
+            1,
+            2,
+            24,
+            25,
+            27
+          ]
+        },
+        {
+          "id": 230,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 231,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        },
+        {
+          "id": 232,
+          "name": "Custom",
+          "ingredients": [
+            1,
+            2,
+            4,
+            9,
+            12,
+            24,
+            25,
+            28
+          ]
+        }
+      ]
+    }
+  }
+}

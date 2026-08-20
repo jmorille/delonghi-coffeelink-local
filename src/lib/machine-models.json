@@ -2,7 +2,7 @@
   "_source": "assets/MachinesModels.json de l'APK Coffee Link — table « Machine Template » v1.510. Extraction automatique (scripts/extract-models.mjs) : ne pas editer a la main.",
   "_scope": "Uniquement les modeles dont connectionType n'est pas « BT » : un modele purement Bluetooth ne peut pas parler le LAN mode Ayla. 30 entrees sur les 117 de la table.",
   "_keying": "Indexe par les 5 DERNIERS caracteres du product_code — c'est la cle que l'app utilise elle-meme (DefaultsTable.getDefaultValuesForMachine), et ce sont les 5 caracteres que la machine publie dans d270_serialnumber.",
-  "_noRecipes": "Pas de recettes ici volontairement : le catalogue actif est src/lib/machine-model.json (le seul modele reellement supporte). recipeCount dit combien la table en declare, ce qui suffit a signaler un ecart de modele sans dupliquer les recettes.",
+  "_noRecipes": "Pas de recettes ici volontairement : elles vivent dans src/lib/machine-catalogs.json. recipeCount dit combien la table en declare, ce qui suffit a identifier un modele sans dupliquer les recettes.",
   "tableVersion": "1.510",
   "models": {
     "17052": {

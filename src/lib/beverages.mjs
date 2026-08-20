@@ -1,28 +1,48 @@
 /**
- * Catalogue des boissons de la machine — ECAM 610.75.MB (« Primadonna Soul », PD_SOUL).
+ * Catalogue des boissons — **par modèle**.
  *
- * Deux sources, toutes deux vérifiées :
+ * Deux choses à ne pas confondre, et c'est tout l'objet de ce fichier :
  *
- * 1. `machine-model.json` — extrait de `assets/MachinesModels.json` de l'APK (table
- *    « Machine Template » v1.510), entrée `product_code` 0132217055. C'est l'app elle-même
- *    qui décide de la liste des boissons à partir de cette table : la machine n'est JAMAIS
- *    interrogée sur « quelles boissons sais-tu faire ». Elle fournit id, nom d'usine et la
- *    liste des ingrédients (paramètres) de chaque boisson.
- * 2. `docs/capture-reveil-app.txt` — logcat de l'app parlant à CETTE machine
- *    (`loadEspressoSoul` / `getClassicBeverages`), qui donne la correspondance
- *    boisson → propriété Ayla.
+ * 1. **La LISTE des boissons dépend du modèle.** Elle vient de `machine-catalogs.json`, extrait de
+ *    `assets/MachinesModels.json` de l'APK. C'est l'app elle-même qui décide de cette liste à partir
+ *    de cette table : la machine n'est JAMAIS interrogée sur « quelles boissons sais-tu faire ».
+ *    Elle ne fournit que des valeurs.
  *
- * ⚠️ Les identifiants ne sont pas contigus : capp_reverse = 15, tea = 22, coffee_pot = 23,
- * cortado = 24, long_black = 25, mug_to_go = 26, brew_over_ice = 27. (La 1re version de
- * docs/commandes-cafe.md supposait 16..21 — faux pour ce modèle : envoyer 21 pour un
- * « brew over ice » viserait la mauvaise boisson.)
+ * 2. **La NUMÉROTATION des propriétés Ayla ne dépend pas du modèle.** C'est un espace de noms
+ *    De'Longhi figé, relevé dans `p258z7/z.java` :
  *
- * Fichier en .mjs volontairement : partagé tel quel entre `server.mjs` (HTTP brut, JS) et
- * l'API qui alimente l'UI, sans duplication de la table.
+ *      `v(profileId, template)`  →  `i11 = (profileId − 1) × 21`, puis un offset FIXE par nom :
+ *                                   rec_espresso + 39, rec_regular + 40 … rec_brew_over_ice + 59
+ *      `t(profileId, template)`  →  `i10 = (profileId − 1) × 6`, puis bs_recipe_01 + 160 … 165
+ *      bornes                    →  `d001_rec_espresso` … `d021_rec_brew_over_ice`, même ordre
+ *
+ *    ⚠️ Le `21` est une **constante de l'app**, pas le nombre de recettes du modèle. Une version
+ *    précédente de ce fichier dérivait les offsets de l'INDEX dans le catalogue (`39 + i`) et
+ *    documentait le 21 comme « le nombre de recettes standard de ce modèle ». Les deux affirmations
+ *    étaient fausses. Elles donnaient le bon résultat sur ce modèle-ci par coïncidence — son
+ *    catalogue est un préfixe de la liste globale — et auraient décalé toutes les lectures sur un
+ *    modèle auquel manque une boisson du MILIEU de la liste.
+ *
+ * Conséquence heureuse : changer de modèle ne change que la liste. Aucune arithmétique à refaire,
+ * donc aucun risque de lire silencieusement la mauvaise propriété.
+ *
+ * Fichier en .mjs volontairement : partagé tel quel entre `server.mjs` (HTTP brut, JS) et l'API qui
+ * alimente l'UI, sans duplication de la table.
  */
 import { readFileSync } from "node:fs";
 
-export const MODEL = JSON.parse(readFileSync(new URL("./machine-model.json", import.meta.url), "utf8"));
+const CATALOGS = JSON.parse(readFileSync(new URL("./machine-catalogs.json", import.meta.url), "utf8"));
+
+/**
+ * Modèle retenu quand on ne sait pas encore lequel on pilote — celui de la machine sur laquelle ce
+ * serveur a été développé et vérifié. Surchargeable par `MACHINE_MODEL_KEY`. Ce n'est pas une
+ * supposition sur votre machine : c'est un point de départ, et l'écart est signalé dès que la
+ * machine dit son vrai modèle (voir `applyIdentity` dans server.mjs).
+ */
+export const DEFAULT_MODEL_KEY = "17055";
+
+export const CATALOG_TABLE_VERSION = CATALOGS.tableVersion;
+export const MODEL_KEYS = Object.keys(CATALOGS.models);
 
 /** Libellés FR + classement, par id de boisson. `slug` = suffixe de la propriété Ayla. */
 const LABELS = {
@@ -60,57 +80,93 @@ const LABELS = {
 };
 
 /**
- * Propriétés Ayla portant les bornes min/défaut/max (`loadMinMaxFromDefault`) : d001..d021
- * pour les 21 standard, d028..d033 pour les perso, d022 pour le Bean System.
+ * **Le créneau de chaque boisson standard dans l'espace de noms De'Longhi.** Fixe, global, relevé
+ * dans l'app — jamais dérivé du catalogue d'un modèle.
+ *
+ *   bornes           : `d{slot}_rec_{slug}`               (d001 … d021)
+ *   recette du profil: `d{slot + 38 + (p−1) × 21}_{p}_rec_{slug}`   (d039 … d059 pour le profil 1)
+ *
+ * Vérifié sur le profil 1 dans le logcat de l'app parlant à cette machine :
+ * d001_rec_espresso … d021_rec_brew_over_ice, d039_1_rec_espresso … d059_1_rec_brew_over_ice.
  */
-const BOUNDS_PROP = {
-  ...Object.fromEntries(
-    // d001..d021 dans l'ordre du catalogue standard
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 22, 23, 24, 25, 26, 27].map((id, i) => [
-      id,
-      `d${String(i + 1).padStart(3, "0")}_rec_${LABELS[id].slug}`,
-    ]),
-  ),
-  200: "d022_beansystem_1",
-  230: "d028_rec_custom_1",
-  231: "d029_rec_custom_2",
-  232: "d030_rec_custom_3",
-  233: "d031_rec_custom_4",
-  234: "d032_rec_custom_5",
-  235: "d033_rec_custom_6",
+const SLOT = {
+  espresso: 1,
+  regular: 2,
+  long_coffee: 3,
+  "2x_espresso": 4,
+  doppio: 5,
+  americano: 6,
+  cappuccino: 7,
+  latte_macchiato: 8,
+  caffelatte: 9,
+  flat_white: 10,
+  espr_macchiato: 11,
+  hot_milk: 12,
+  capp_doppio: 13,
+  capp_reverse: 14,
+  hot_water: 15,
+  tea: 16,
+  coffee_pot: 17,
+  cortado: 18,
+  long_black: 19,
+  mug_to_go: 20,
+  brew_over_ice: 21,
 };
+const PROFILE_OFFSET = 38; // d039 = créneau 1 du profil 1
+const PROFILE_STRIDE = 21; // constante de l'app (i11 = (p − 1) × 21), PAS le nombre de recettes
 
 /**
- * Index de la propriété « recette enregistrée du profil » (`loadRecipeFromProfile`).
- * Formule relevée dans `p258z7/z.java` (`v(profileId, template)`) :
- *   numéro = offsetBase + (profileId − 1) × 21
- * avec offsetBase = 39 pour l'espresso, puis +1 par boisson dans l'ordre du catalogue.
- * Vérifié sur le profil 1 dans le logcat : d039_1_rec_espresso … d059_1_rec_brew_over_ice.
+ * Bean System : bornes `d022_beansystem_1`, recette du profil
+ * `d{160 + (p−1) × 6}_{p}_bs_recipe_01`.
+ *
+ * ⚠️ Le pas de 6 vient de `t()` dans l'app (`i10 = (i9 − 1) * 6`). Il manquait : la version
+ * précédente rendait `d160_{p}_bs_recipe_01` pour TOUS les profils, donc un nom qui n'existe pas
+ * pour p ≥ 2. La lecture répondait vide et était classée « absente sur ce modèle » — la recette
+ * Bean Adapt des profils 2 à 5 était donc illisible, sans que rien ne le dise.
  */
-const PROFILE_BASE = Object.fromEntries(
-  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 22, 23, 24, 25, 26, 27].map((id, i) => [id, 39 + i]),
-);
-// Perso : d200_1_cstm_recipe_01 … d205_1_cstm_recipe_06 ; Bean System : d160_1_bs_recipe_01.
-// (Relevé pour le profil 1 ; l'incrément par profil suit la même logique — à confirmer
-// pour les profils 2..5 lors d'un import réel.)
-const PROFILE_BASE_CUSTOM = { 200: 160, 230: 200, 231: 201, 232: 202, 233: 203, 234: 204, 235: 205 };
+const BS_BOUNDS = "d022_beansystem_1";
+const BS_PROFILE_BASE = 160;
+const BS_PROFILE_STRIDE = 6;
 
-/** Le catalogue : une entrée par boisson que CETTE machine sait préparer. */
-export const ALL_BEVERAGES = MODEL.recipes.map((r) => {
-  const meta = LABELS[r.id] ?? { label: r.name, slug: `id_${r.id}`, category: "perso" };
-  return {
-    id: r.id,
-    factoryName: r.name, // nom d'usine de la table (anglais)
-    label: meta.label,
-    slug: meta.slug,
-    category: meta.category,
-    ingredients: r.ingredients, // ids des paramètres que cette boisson accepte
-    milk: r.ingredients.includes(9),
-    bounds: BOUNDS_PROP[r.id] ?? null,
-  };
-});
+/**
+ * Recettes personnalisées : bornes `d028_rec_custom_1` … `d033_rec_custom_6`, valeurs
+ * `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06`.
+ *
+ * ⚠️ **Le profil est toujours 1**, et ce n'est pas un raccourci de notre part : l'app écrit ces
+ * noms en dur (`DeLonghiWifiConnectService`, `C1("d200_1_cstm_recipe_01")`) et il n'existe aucune
+ * fonction qui les construise avec un profil variable, contrairement aux recettes standard et au
+ * Bean System. Demander `d200_2_cstm_recipe_01` serait inventer un nom.
+ */
+const CUSTOM_BOUNDS_BASE = 28; // d028 = perso 1
+const CUSTOM_PROFILE_BASE = 200; // d200 = perso 1, profil 1
+const CUSTOM_SLOT = { cstm_recipe_01: 1, cstm_recipe_02: 2, cstm_recipe_03: 3, cstm_recipe_04: 4, cstm_recipe_05: 5, cstm_recipe_06: 6 };
 
-export const BEVERAGES = ALL_BEVERAGES.filter((b) => b.id < 200);
+const d = (n) => `d${String(n).padStart(3, "0")}`;
+
+/** Propriété portant les bornes min/défaut/max d'une boisson (trame `0xB0`). */
+function boundsProp(slug) {
+  if (SLOT[slug] !== undefined) return `${d(SLOT[slug])}_rec_${slug}`;
+  if (slug === "bs_recipe_01") return BS_BOUNDS;
+  if (CUSTOM_SLOT[slug] !== undefined) return `${d(CUSTOM_BOUNDS_BASE + CUSTOM_SLOT[slug] - 1)}_rec_custom_${CUSTOM_SLOT[slug]}`;
+  return null;
+}
+
+/** Propriété portant la recette enregistrée d'un profil (trame `0xA6`). */
+function profilePropForSlug(slug, profileId = 1) {
+  const p = Number(profileId) || 1;
+  if (SLOT[slug] !== undefined) {
+    return `${d(SLOT[slug] + PROFILE_OFFSET + (p - 1) * PROFILE_STRIDE)}_${p}_rec_${slug}`;
+  }
+  if (slug === "bs_recipe_01") {
+    return `${d(BS_PROFILE_BASE + (p - 1) * BS_PROFILE_STRIDE)}_${p}_bs_recipe_01`;
+  }
+  if (CUSTOM_SLOT[slug] !== undefined) {
+    // Profil 1 imposé : voir le commentaire de CUSTOM_PROFILE_BASE.
+    return `${d(CUSTOM_PROFILE_BASE + CUSTOM_SLOT[slug] - 1)}_1_${slug}`;
+  }
+  return null;
+}
+
 export const CATEGORIES = {
   cafe: "Cafés",
   lait: "Boissons lactées",
@@ -119,18 +175,65 @@ export const CATEGORIES = {
   perso: "Personnalisées",
 };
 
-export const byId = (id) => ALL_BEVERAGES.find((b) => b.id === Number(id));
+const cache = new Map();
 
-/** Nom de la propriété Ayla portant la recette enregistrée d'un profil (1..5). */
-export function profileProp(bev, profileId = 1) {
-  const p = Number(profileId);
-  if (PROFILE_BASE[bev.id] !== undefined) {
-    const n = PROFILE_BASE[bev.id] + (p - 1) * 21;
-    return `d${String(n).padStart(3, "0")}_${p}_rec_${bev.slug}`;
-  }
-  const base = PROFILE_BASE_CUSTOM[bev.id];
-  if (base === undefined) return null;
-  return `d${String(base).padStart(3, "0")}_${p}_${bev.slug}`;
+/**
+ * Catalogue d'un modèle, par sa clé de 5 chiffres (les 5 derniers du `product_code`).
+ *
+ * Une clé inconnue — ou un modèle dont la table ne donne aucune recette — retombe sur le modèle par
+ * défaut, en le **disant** dans le champ `fallback` : mieux vaut une liste explicitement empruntée
+ * qu'une page vide, et l'interface doit pouvoir l'annoncer.
+ */
+export function catalogFor(modelKey) {
+  const key = String(modelKey ?? "");
+  if (cache.has(key)) return cache.get(key);
+
+  const demande = CATALOGS.models[key] ?? null;
+  const utilisable = demande && demande.recipes.length > 0;
+  const model = utilisable ? demande : CATALOGS.models[DEFAULT_MODEL_KEY];
+  const effectif = utilisable ? key : DEFAULT_MODEL_KEY;
+
+  const beverages = model.recipes.map((r) => {
+    const meta = LABELS[r.id] ?? { label: r.name, slug: `id_${r.id}`, category: "perso" };
+    return {
+      id: r.id,
+      factoryName: r.name, // nom d'usine de la table (anglais)
+      label: meta.label,
+      slug: meta.slug,
+      category: meta.category,
+      ingredients: r.ingredients, // ids des paramètres que cette boisson accepte
+      milk: r.ingredients.includes(9),
+      bounds: boundsProp(meta.slug),
+      // Vrai quand la boisson existe sur ce modèle mais qu'aucune propriété connue ne l'adresse
+      // (familles « iced »/« mug » des Striker). Elle est listée, pas lisible.
+      unaddressable: boundsProp(meta.slug) === null,
+    };
+  });
+
+  const catalogue = {
+    key: effectif,
+    /** `true` si la clé demandée n'a pas pu être servie et qu'on a repris le modèle par défaut. */
+    fallback: !utilisable,
+    requestedKey: key || null,
+    model: { ...model, key: effectif },
+    support: model.support,
+    beverages,
+    byId: (id) => beverages.find((b) => b.id === Number(id)),
+    boundsProp,
+    profileProp: (bev, profileId = 1) => profilePropForSlug(bev.slug, profileId),
+    /** Boissons listées par le modèle mais qu'aucune propriété connue n'adresse. */
+    unaddressable: beverages.filter((b) => b.unaddressable).map((b) => b.id),
+  };
+  cache.set(key, catalogue);
+  return catalogue;
+}
+
+/** Fiche courte d'un modèle, sans son catalogue : pour lister ce que le serveur sait piloter. */
+export function modelSheet(key) {
+  const m = CATALOGS.models[String(key)];
+  if (!m) return null;
+  const { recipes, ...rest } = m;
+  return { key: String(key), nRecipes: recipes.length, ...rest };
 }
 
 // --- Paramètres de recette (enum p127m6/i) --------------------------------

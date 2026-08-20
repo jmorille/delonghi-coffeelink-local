@@ -24,9 +24,9 @@ import { MachineSummary, currentMachine, forId, setCurrentMachine } from "../mac
  *
  * Deux limites du multi-machines sont écrites en bas, parce qu'elles ne se devinent pas :
  *
- * - le **catalogue de boissons est celui d'un seul modèle** (`machine-model.json`). Le modèle
- *   détecté est comparé, et un écart signalé : sur une machine d'un autre modèle l'adressage des
- *   propriétés de recette ne correspond pas, et une lecture fausse ressemble à une lecture normale ;
+ * - le **catalogue de boissons vient du modèle détecté** de chaque machine. Deux familles restent
+ *   hors de portée, et la carte le dit : les modèles dont la table constructeur ne donne aucune
+ *   recette, et les boissons « iced »/« mug » des Striker, qui passent par une autre nomenclature ;
  * - les **variables d'environnement ne décrivent que la première machine**.
  *
  * Invariants côté serveur, qui décident de ce que cette page peut montrer : le mot de passe n'est
@@ -511,7 +511,7 @@ export default function Machines() {
 
             {m.model.matchesCatalog === false && (
               <div className="warn" style={{ marginBottom: 10 }}>
-                ⚠️ {t("modelMismatch", { detected: m.model.key ?? "?" })}
+                ⚠️ {t("modelMismatch", { detected: m.model.key ?? "?", catalog: m.model.catalogType })}
               </div>
             )}
 
@@ -544,7 +544,9 @@ export default function Machines() {
               <span className="row">
                 <span>
                   {m.model.key ? `${m.model.key}${m.model.machineName ? ` · ${m.model.machineName}` : ""}` : t("unknown")}{" "}
-                  <span className="sub">({m.model.source})</span>
+                  <span className="sub">
+                    ({m.model.source}) · {t("catalogOf", { type: m.model.catalogType, count: m.model.catalogBeverages })}
+                  </span>
                 </span>
                 {/* Le modèle est demandé automatiquement dès que les deux prérequis sont réunis
                     (voir maybeReadModel côté serveur). Ce bouton couvre le reste : machine déjà

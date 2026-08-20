@@ -162,7 +162,7 @@ en **protocole v2**, la table ci-dessus est celle qui s'applique.
 La **liste des boissons n'est jamais demandée à la machine** : c'est l'app qui la connaît via
 `MachinesModels.json`, indexée par les 5 derniers caractères du `product_code` (`17055`).
 La machine ne fournit que les *valeurs* (§ 6). Table reprise dans
-`lan-server/src/lib/machine-model.json` (extraite) + `src/lib/beverages.mjs` (libellés FR,
+`lan-server/src/lib/machine-catalogs.json` (extraite) + `src/lib/beverages.mjs` (libellés FR,
 catégories, mapping des propriétés).
 
 Chaque boisson déclare aussi la liste des **paramètres qu'elle accepte** (`ingredients`) :

@@ -17,7 +17,7 @@ import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
-import { MODEL, ALL_BEVERAGES, CATEGORIES, byId, profileProp, decodeRecipeProperty } from "./src/lib/beverages.mjs";
+import { CATEGORIES, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
@@ -73,6 +73,9 @@ const ENV_MACHINE = {
   lanKey: process.env.LANIP_KEY || null,
   lanKeyId: Number(process.env.LANIP_KEY_ID ?? "0"),
   gen: process.env.MACHINE_GENERATION || "classic",
+  // Distinguer « posée à classic » de « non posée » : sans ça, la déduction depuis le modèle ne
+  // saurait pas si elle a le droit de s'appliquer.
+  genForced: !!process.env.MACHINE_GENERATION,
 };
 const DEVICE_SHEET = JSON.parse(readFileSync(new URL("./src/lib/device-sheet.json", import.meta.url), "utf8"));
 /**
@@ -158,6 +161,14 @@ function makeMachine(row) {
 
     modelKey: env ? ENV_MACHINE.modelKey : null,
     modelSource: env && ENV_MACHINE.modelKey ? "MACHINE_MODEL_KEY (.env.local)" : "inconnu",
+    /**
+     * Catalogue de boissons de CETTE machine, choisi par son modèle.
+     *
+     * Posé par `applyCatalog()`, réévalué dès que le modèle change (détection, cache, variable).
+     * Les noms de propriétés Ayla, eux, ne dépendent pas du modèle — ce sont des créneaux figés —
+     * donc un changement de catalogue **n'invalide pas le cache** : seule la liste change.
+     */
+    catalog: catalogFor(env ? ENV_MACHINE.modelKey : null),
     // Derniere identification du modele (decodage de `d270_serialnumber`). En cas d'echec on garde
     // la raison ET la trame : c'est ce qui rend une decoupe fausse corrigeable en une passe.
     identity: null,
@@ -211,6 +222,59 @@ function makeMachine(row) {
  * surtout : un `MACHINE_IP` présent ne doit pas revendiquer l'adresse de la machine numéro 2.
  */
 const envForced = (m, champ) => m.id === DEFAULT_MACHINE && !!ENV_MACHINE[champ];
+
+/**
+ * (Re)choisit le catalogue d'une machine d'après son modèle, et dit ce qu'il a fait.
+ *
+ * Trois cas, tous annoncés :
+ *   - modèle supporté et différent de celui en place → on **bascule**. C'est le but ;
+ *   - modèle connu de la table mais dont les boissons sortent de l'espace de noms vérifié
+ *     (familles « iced »/« mug » des Striker), ou dont la table ne donne aucune recette → on
+ *     conserve le catalogue par défaut et on le dit. Inventer des noms de propriétés serait pire
+ *     que d'avouer la limite ;
+ *   - rien de nouveau → silence.
+ */
+function applyCatalog(m) {
+  const avant = m.catalog?.key ?? null;
+  m.catalog = catalogFor(m.modelKey);
+  const c = m.catalog;
+
+  /**
+   * La **génération** se déduit du modèle, exactement comme l'app le fait : `p258z7/s.r()` rend
+   * vrai quand l'`appModelId` de la machine **contient** « striker », sans égard à la casse. Ce
+   * n'est donc pas une supposition de notre part, c'est la règle de l'app portée telle quelle.
+   *
+   * Elle décide des propriétés de transport (`data_request` / `d302_monitor` contre
+   * `app_data_request` / `d302_monitor_machine`) : s'en remettre à un défaut « classic » sur une
+   * machine Striker, c'est parler dans le vide. `MACHINE_GENERATION` garde le dernier mot.
+   */
+  if (!ENV_MACHINE.genForced || m.id !== DEFAULT_MACHINE) {
+    // Depuis le modèle DÉTECTÉ, pas depuis le catalogue : quand le catalogue est un pis-aller (une
+    // Striker dont la table ne donne aucune recette), il vient d'un autre modèle et parlerait
+    // « classic » à une machine qui ne comprend que « striker ». On sait pourtant qu'elle est
+    // Striker — la table d'identification le dit, même sans recettes.
+    const identite = (m.modelKey ? modelSheet(m.modelKey)?.appModelId : null) ?? c.model.appModelId;
+    const gen = /striker/i.test(identite ?? "") ? "striker" : "classic";
+    if (gen !== m.gen) {
+      m.gen = gen;
+      m.send = gen === "striker" ? "app_data_request" : "data_request";
+      m.mon = gen === "striker" ? "d302_monitor_machine" : "d302_monitor";
+      L("sys", `génération déduite du modèle ${identite} : ${gen} (propriétés ${m.send} / ${m.mon})`, m);
+    }
+  }
+  if (c.fallback && m.modelKey) {
+    const fiche = modelSheet(m.modelKey);
+    L("sys", fiche
+      ? `⚠ modèle ${m.modelKey} (${fiche.type}) reconnu mais son catalogue n'est pas exploitable (${fiche.support === "norecipes" ? "aucune recette dans la table constructeur" : "boissons hors de l'espace de noms vérifié"}) — catalogue ${c.model.type} conservé`
+      : `⚠ modèle ${m.modelKey} absent de la table des catalogues — catalogue ${c.model.type} conservé`, m);
+  } else if (avant && avant !== c.key) {
+    L("sys", `catalogue basculé sur ${c.model.type} (${c.key}) : ${c.beverages.length} boissons, ${c.model.nProfiles} profils, ${c.model.nCustomRecipes} recettes perso`, m);
+  }
+  if (c.unaddressable.length) {
+    L("sys", `⚠ ${c.unaddressable.length} boissons de ce modèle n'ont aucune propriété Ayla connue (${c.unaddressable.slice(0, 6).join(", ")}…) : listées, mais ni lisibles ni réglables`, m);
+  }
+  return c;
+}
 
 const machineList = () => [...MACHINES.values()];
 const machineById = (id) => MACHINES.get(String(id)) ?? null;
@@ -529,8 +593,10 @@ function decodeParameters(b64) {
   return { count, entries, hex: buf.subarray(0, buf[1] + 1).toString("hex").replace(/(..)/g, "$1 ").trim() };
 }
 
-// id → libellé, dérivé du catalogue (src/lib/beverages.mjs) : ids réels de CETTE machine.
-const BEVERAGES = Object.fromEntries(ALL_BEVERAGES.map((b) => [b.id, b.label]));
+// Libellé d'une boisson, dans le catalogue de CETTE machine. Plus de table de module : deux
+// machines de modèles différents n'ont pas la même liste, et un libellé pris dans la mauvaise
+// nommerait une boisson que la machine ne sait pas faire.
+const bevLabel = (m, id) => m.catalog.byId(id)?.label ?? id;
 
 // --- programme (séquence app validée : device_connected → cmd → présence soutenue) ---
 const prop = (m, name, value, id = false) => { const p = { base_type: "string", dsn: m.dsn ?? "", name, value, metadata: {} }; if (id) p.id = crypto.randomBytes(4).toString("hex"); return { property: p }; };
@@ -787,7 +853,7 @@ function handleProperty(m, name, value) {
       case 0xa6: {
         const r = decodeRecipeProperty(value);
         m.store.putProp(name, { at: Date.now(), kind: r.kind, beverageId: r.beverageId, profileId: r.profileId ?? null, exact: r.exact, params: r.params, hex: r.hex });
-        return done(`${r.kind === "bounds" ? "bornes" : "valeurs"} ${BEVERAGES[r.beverageId] ?? r.beverageId}, ${r.params.length} paramètres${r.exact ? "" : " ⚠ désalignement"}`);
+        return done(`${r.kind === "bounds" ? "bornes" : "valeurs"} ${bevLabel(m, r.beverageId)}, ${r.params.length} paramètres${r.exact ? "" : " ⚠ désalignement"}`);
       }
       case 0xa4:
       case 0xaa: {
@@ -1560,13 +1626,16 @@ function restoreDsn(m) {
 }
 
 /**
- * Enregistre l'identification déduite de `d270_serialnumber`.
+ * Enregistre l'identification déduite de `d270_serialnumber`, **et applique le catalogue**.
  *
- * ⚠️ Le modèle détecté n'est **pas** appliqué au catalogue. `machine-model.json` reste la seule
- * table active : la faire dépendre d'une détection changerait l'adressage des propriétés de
- * recette (`d{39+i+(p-1)*21}` — ce 21 est le nombre de recettes standard DU modèle), donc les
- * lectures elles-mêmes. Ici on identifie, on mémorise, et on SIGNALE un écart. Basculer le
- * catalogue est une décision, pas un effet de bord.
+ * Le modèle détecté commande désormais la liste des boissons. Ce qui rend la bascule sûre, et qui
+ * a demandé de relire l'app pour en être certain : la numérotation des propriétés Ayla ne dépend
+ * PAS du modèle. C'est un espace de noms De'Longhi figé, par nom de boisson (voir `beverages.mjs`).
+ * Un commentaire de cette fonction affirmait le contraire — que le pas de 21 était « le nombre de
+ * recettes standard du modèle » — et refusait la bascule sur cette base. C'était une inférence
+ * fausse : le 21 est une constante de l'app.
+ *
+ * Corollaire : basculer ne périme aucune lecture déjà faite, puisque les noms ne bougent pas.
  */
 function applyIdentity(m, b64) {
   const r = identifyModel(b64);
@@ -1589,10 +1658,7 @@ function applyIdentity(m, b64) {
     ? `${r.model.type} — ${r.model.appModelId}, ${r.model.recipeCount} recettes, ${r.model.nProfiles} profils`
     : `modèle absent de la table v${MODELS_TABLE_VERSION} (${Object.keys(MODELS).length} modèles connectés connus)`;
   L("in", `${SERIAL_PROP} : ${r.machineName} → clé ${r.modelKey} → ${lu}`, m);
-  const attendu = MODEL.productCode.slice(-5);
-  if (r.modelKey !== attendu) {
-    L("sys", `⚠ écart de modèle : la machine dit ${r.modelKey}, le catalogue actif est ${MODEL.type} (${attendu}). Les identifiants de boisson et les noms de propriétés de recette ne correspondent probablement pas — voir la page Système.`, m);
-  }
+  applyCatalog(m);
 }
 
 /**
@@ -1649,14 +1715,16 @@ function restoreModel(m) {
     m.modelSource = "cache local";
     const modele = findModel(saved.key);
     m.identity = { at: saved.at ?? null, ok: true, serial: saved.serial ?? null, machineName: saved.machineName ?? null, modelKey: saved.key, hex: null, restored: true };
-    L("sys", `modèle repris du cache : ${saved.key}${modele ? ` (${modele.type})` : " (inconnu de la table)"}`, m, m);
+    L("sys", `modèle repris du cache : ${saved.key}${modele ? ` (${modele.type})` : " (inconnu de la table)"}`, m);
+    applyCatalog(m);
   } catch {}
 }
 
 /** Ce que les pages affichent : le modèle lu, le catalogue actif, et l'écart entre les deux. */
 function modelState(m) {
   const detected = m.modelKey ? findModel(m.modelKey) : null;
-  const catalogKey = MODEL.productCode.slice(-5);
+  const cat = m.catalog;
+  const catalogKey = cat.key;
   return {
     key: m.modelKey,
     source: m.modelSource,
@@ -1665,8 +1733,22 @@ function modelState(m) {
     knownModels: Object.keys(MODELS).length,
     detected,
     // Le catalogue réellement utilisé pour bâtir les trames et nommer les propriétés.
-    catalog: { key: catalogKey, productCode: MODEL.productCode, type: MODEL.type, appModelId: MODEL.appModelId, nProfiles: MODEL.nProfiles, nStandardRecipes: MODEL.nStandardRecipes, nCustomRecipes: MODEL.nCustomRecipes },
-    // null = pas encore lu. false = écart, et alors le catalogue actif est probablement faux.
+    catalog: {
+      key: catalogKey,
+      productCode: cat.model.productCode,
+      type: cat.model.type,
+      appModelId: cat.model.appModelId,
+      nProfiles: cat.model.nProfiles,
+      nStandardRecipes: cat.model.nStandardRecipes,
+      nCustomRecipes: cat.model.nCustomRecipes,
+      nBeverages: cat.beverages.length,
+      support: cat.support,
+      /** Vrai si le catalogue est un pis-aller : le modèle détecté n'était pas exploitable. */
+      fallback: cat.fallback,
+      /** Boissons listées par le modèle mais qu'aucune propriété connue n'adresse. */
+      unaddressable: cat.unaddressable,
+    },
+    // null = pas encore lu. false = le modèle détecté n'a pas pu être appliqué.
     matchesCatalog: m.modelKey ? m.modelKey === catalogKey : null,
     serial: m.identity?.serial ?? null,
     machineName: m.identity?.machineName ?? null,
@@ -1838,7 +1920,12 @@ function machineSummary(m) {
       key: m.modelKey,
       source: m.modelSource,
       machineName: m.identity?.machineName ?? null,
-      matchesCatalog: m.modelKey ? m.modelKey === MODEL.productCode.slice(-5) : null,
+      matchesCatalog: m.modelKey ? m.modelKey === m.catalog.key : null,
+      // Le catalogue réellement en service, pour que l'interface puisse nommer le pis-aller.
+      catalogKey: m.catalog.key,
+      catalogType: m.catalog.model.type,
+      catalogBeverages: m.catalog.beverages.length,
+      catalogSupport: m.catalog.support,
     },
     sessionActive: !!m.session,
     lastRegisterAt: m.lastRegisterAt,
@@ -2162,7 +2249,7 @@ async function handleApi(req, res) {
       config: { dsn: m.dsn, dsnSource: m.dsnSource, machineIp: m.ip, machineIpSource: m.ipSource, serverIp: CFG.serverIp, serverIpSource: CFG.serverIpSource, serverIpProblem: serverIpProblem(), serverPort: CFG.port, generation: m.gen, lanKeyId: m.lanKeyId, lanKeySet: m.lanKey.length > 0, lanKeySource: m.lanKeySource },
       // Volontairement léger : /api/status est interrogé toutes les 3 s. La fiche complète du
       // modèle est sur /api/model.
-      model: { key: m.modelKey, source: m.modelSource, matchesCatalog: m.modelKey ? m.modelKey === MODEL.productCode.slice(-5) : null },
+      model: { key: m.modelKey, source: m.modelSource, catalogKey: m.catalog.key, catalogType: m.catalog.model.type, matchesCatalog: m.modelKey ? m.modelKey === m.catalog.key : null },
       session: { active: !!m.session }, lastRegisterAt: m.lastRegisterAt, activeProfile: m.activeProfile, activeProfileConfirmed: m.activeProfileConfirmed,
       program: m.program ? { active: m.program.active, label: m.program.label, counter: m.program.counter } : null,
       lastMonitor: m.lastMonitor, lastDataResponse: m.lastDataResponse, log: LOG.slice(0, 50),
@@ -2189,11 +2276,11 @@ async function handleApi(req, res) {
         const bev = Number(b.beverageId);
         const prof = Number(b.profileId ?? 1);
         const params = b.params ?? [];
-        if (!byId(bev)) return raw(res, JSON.stringify({ error: `boisson ${bev} inconnue` }), 400);
-        if (!(prof >= 1 && prof <= MODEL.nProfiles)) return raw(res, JSON.stringify({ error: `profil ${prof} invalide` }), 400);
+        if (!m.catalog.byId(bev)) return raw(res, JSON.stringify({ error: `boisson ${bev} inconnue sur ${m.catalog.model.type}` }), 400);
+        if (!(prof >= 1 && prof <= m.catalog.model.nProfiles)) return raw(res, JSON.stringify({ error: `profil ${prof} invalide (ce modèle en a ${m.catalog.model.nProfiles})` }), 400);
         if (!params.length) return raw(res, JSON.stringify({ error: "aucun paramètre à enregistrer" }), 400);
         frame = frameDispense(bev, prof, MODE.DONTCARE, ACT.SAVE, params);
-        label = `Enregistrer ${BEVERAGES[bev] ?? bev} dans le profil ${prof}`;
+        label = `Enregistrer ${bevLabel(m, bev)} dans le profil ${prof}`;
         dur = 20000;
         // On renvoie la somme de contrôle du profil AVANT écriture : la redemander ensuite
         // (POST /api/checksums) permet de vérifier que la machine a bien enregistré, au lieu de
@@ -2223,7 +2310,7 @@ async function handleApi(req, res) {
         rememberActiveProfile(m);
         const act = inverted(params) ? ACT.PREPARE_INVERSION : ACT.PREPARE;
         frame = frameDispense(bev, prof, MODE.START, act, params);
-        label = `Préparer ${BEVERAGES[bev] ?? bev}${act === ACT.PREPARE_INVERSION ? " (lait d'abord)" : ""}`;
+        label = `Préparer ${bevLabel(m, bev)}${act === ACT.PREPARE_INVERSION ? " (lait d'abord)" : ""}`;
       } else return raw(res, JSON.stringify({ error: "action inconnue" }), 400);
     } catch (e) { return raw(res, JSON.stringify({ error: e.message }), 400); }
     const ecamB64 = datapointValue(frame);
@@ -2246,9 +2333,9 @@ async function handleApi(req, res) {
     // libellé générique du catalogue.
     const machineNames = machineBeverageNames(store);
     const bean = activeBeanSystem(store);
-    const beverages = ALL_BEVERAGES.map((b) => {
+    const beverages = m.catalog.beverages.map((b) => {
       const boundsProp = b.bounds;
-      const valuesProp = profileProp(b, profileId);
+      const valuesProp = m.catalog.profileProp(b, profileId);
       const bounds = boundsProp ? store.props[boundsProp] ?? null : null;
       const values = valuesProp ? store.props[valuesProp] ?? null : null;
       const named = machineNames[b.id];
@@ -2273,7 +2360,7 @@ async function handleApi(req, res) {
     const prioProp = `d${String(260 + profileId).padStart(3, "0")}_${profileId}_rec_priority`;
     const order = store.props[prioProp]?.beverageIds ?? null;
     return raw(res, JSON.stringify({
-      model: { type: MODEL.type, appModelId: MODEL.appModelId, productCode: MODEL.productCode, nProfiles: MODEL.nProfiles, protocolVersion: MODEL.protocolVersion },
+      model: { key: m.catalog.key, type: m.catalog.model.type, appModelId: m.catalog.model.appModelId, productCode: m.catalog.model.productCode, nProfiles: m.catalog.model.nProfiles, protocolVersion: m.catalog.model.protocolVersion, fallback: m.catalog.fallback },
       categories: CATEGORIES, profileId, beverages, order, orderProp: prioProp,
       importedAt: store.importedAt,
       import: m.import ? { active: m.import.active, remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
@@ -2285,13 +2372,13 @@ async function handleApi(req, res) {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const profileId = Number(b.profileId ?? 1);
     const what = b.what ?? "all"; // "bounds" | "values" | "all"
-    const ids = Array.isArray(b.beverageIds) && b.beverageIds.length ? b.beverageIds.map(Number) : ALL_BEVERAGES.map((x) => x.id);
+    const ids = Array.isArray(b.beverageIds) && b.beverageIds.length ? b.beverageIds.map(Number) : m.catalog.beverages.map((x) => x.id);
     const queue = [];
     for (const id of ids) {
-      const bev = byId(id);
+      const bev = m.catalog.byId(id);
       if (!bev) continue;
       if (what !== "values" && bev.bounds) queue.push(bev.bounds);
-      if (what !== "bounds") { const vp = profileProp(bev, profileId); if (vp) queue.push(vp); }
+      if (what !== "bounds") { const vp = m.catalog.profileProp(bev, profileId); if (vp) queue.push(vp); }
     }
     if (!queue.length) return raw(res, JSON.stringify({ error: "rien à lire" }), 400);
 
@@ -2314,7 +2401,7 @@ async function handleApi(req, res) {
     // ce nom par défaut d'un vrai nom choisi par l'utilisateur : la page / n'affiche que
     // les profils réellement renommés.
     const isDefaultName = (n) => n == null || /^profil(e)?\s*\d+$/i.test(n.trim());
-    const profiles = Array.from({ length: MODEL.nProfiles }, (_, i) => {
+    const profiles = Array.from({ length: m.catalog.model.nProfiles }, (_, i) => {
       const id = i + 1;
       const prio = PRIORITY_PROPS.filter((x) => x.profileId === id)
         .map((x) => store.props[x.prop])
@@ -2327,11 +2414,12 @@ async function handleApi(req, res) {
         icon: names[id]?.icon ?? null,
         source: names[id]?.prop ?? null,
         order: prio
-          ? prio.beverageIds.map((bid) => ({ id: bid, label: byId(bid)?.label ?? null }))
+          ? prio.beverageIds.map((bid) => ({ id: bid, label: m.catalog.byId(bid)?.label ?? null }))
           : null,
       };
     });
-    const customs = [1, 2, 3, 4, 5, 6].map((n) => ({
+    // Le nombre d'emplacements perso dépend du modèle : 6 sur un PD_SOUL, 3 sur un PD_SOUL_BETTER.
+    const customs = Array.from({ length: m.catalog.model.nCustomRecipes }, (_, i) => i + 1).map((n) => ({
       slot: n,
       beverageId: 229 + n,
       name: customNames[n]?.name ?? null,
@@ -2339,7 +2427,7 @@ async function handleApi(req, res) {
       source: customNames[n]?.prop ?? null,
     }));
     return raw(res, JSON.stringify({
-      model: { type: MODEL.type, nProfiles: MODEL.nProfiles, customizableProfiles: MODEL.customizableProfiles, nCustomRecipes: MODEL.nCustomRecipes },
+      model: { key: m.catalog.key, type: m.catalog.model.type, nProfiles: m.catalog.model.nProfiles, customizableProfiles: m.catalog.model.customizableProfiles, nCustomRecipes: m.catalog.model.nCustomRecipes },
       profiles, customs,
       props: ALL_PROFILE_PROPS.map((x) => {
         const d = store.props[x.prop];
@@ -2425,7 +2513,7 @@ async function handleApi(req, res) {
     const cloud = cloudOtaState(m);
     return raw(res, JSON.stringify({
       deviceSheet: DEVICE_SHEET,
-      model: MODEL,
+      model: { ...m.catalog.model, nBeverages: m.catalog.beverages.length },
       identification: modelState(m),
       network: {
         machineIp: m.ip,
@@ -2888,6 +2976,9 @@ for (const m of loadMachines()) {
   restoreDsn(m);
   restoreModel(m);
   restoreLanKey(m);
+  // Après les reprises : le modèle est connu (variable, cache) ou non, et dans les deux cas c'est
+  // ici que le catalogue et la génération sont arrêtés — et que leurs limites sont annoncées.
+  applyCatalog(m);
   if (!m.ip) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local", m);
   if (!m.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Machines » (compte De'Longhi)", m);
 }

@@ -1,7 +1,7 @@
 /**
  * Extrait de MachinesModels.json la table d'IDENTIFICATION des modeles connectes.
- * Volontairement SANS les recettes : le catalogue actif reste machine-model.json, et deux
- * sources de verite pour les recettes seraient un piege.
+ * Volontairement SANS les recettes : celles-ci vivent dans machine-catalogs.json, produit par
+ * extract-catalogs.mjs. Deux sources de verite pour les memes recettes seraient un piege.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -56,7 +56,7 @@ const out = {
   _keying:
     "Indexe par les 5 DERNIERS caracteres du product_code — c'est la cle que l'app utilise elle-meme (DefaultsTable.getDefaultValuesForMachine), et ce sont les 5 caracteres que la machine publie dans d270_serialnumber.",
   _noRecipes:
-    "Pas de recettes ici volontairement : le catalogue actif est src/lib/machine-model.json (le seul modele reellement supporte). recipeCount dit combien la table en declare, ce qui suffit a signaler un ecart de modele sans dupliquer les recettes.",
+    "Pas de recettes ici volontairement : elles vivent dans src/lib/machine-catalogs.json. recipeCount dit combien la table en declare, ce qui suffit a identifier un modele sans dupliquer les recettes.",
   tableVersion: src.version,
   models,
 };

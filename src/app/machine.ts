@@ -95,7 +95,17 @@ export interface MachineSummary {
   lanKeySource: string;
   /** Date de la découverte. La clé elle-même n'est jamais transmise. */
   lanKeyCachedAt: number | null;
-  model: { key: string | null; source: string; machineName: string | null; matchesCatalog: boolean | null };
+  model: {
+    key: string | null;
+    source: string;
+    machineName: string | null;
+    /** `false` = le modèle détecté n'a pas pu être appliqué, un catalogue de remplacement sert. */
+    matchesCatalog: boolean | null;
+    catalogKey: string;
+    catalogType: string;
+    catalogBeverages: number;
+    catalogSupport: string;
+  };
   sessionActive: boolean;
   lastRegisterAt: number;
   /** Lecture de propriétés en cours, `null` sinon. C'est ce qui fait scruter la page. */

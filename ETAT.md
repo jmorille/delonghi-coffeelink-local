@@ -1669,3 +1669,66 @@ pour non vérifiés : corrigé.
 | renouvellement avec un faux jeton | 401 applicatif, session **oubliée**, puis 400 réclamant les identifiants |
 
 Reste non éprouvé : le chemin heureux, qui demande un vrai mot de passe.
+
+### Le catalogue de boissons devient celui du modèle (2026-08-20)
+
+C'était la limite annoncée du multi-machines, et la raison invoquée pour ne pas la lever était
+**fausse**. `CLAUDE.md` et un commentaire d'`applyIdentity` affirmaient que basculer le catalogue
+exigerait de rendre l'arithmétique des propriétés dépendante du modèle, « ce 21 étant le nombre de
+recettes standard DU modèle ». C'était une inférence. La lecture de `p258z7/z.java` la contredit :
+
+```
+v(profileId, template)  ->  i11 = (profileId - 1) * 21      puis un offset FIXE par nom :
+                            rec_espresso + 39, rec_regular + 40 … rec_brew_over_ice + 59
+t(profileId, template)  ->  i10 = (profileId - 1) * 6       puis bs_recipe_01 + 160 … 165
+bornes                  ->  d001_rec_espresso … d021_rec_brew_over_ice, même ordre
+```
+
+Le `21` est une **constante de l'app**, et les offsets sont attachés au **nom** de la boisson, pas à
+sa position dans le catalogue d'un modèle. Autrement dit : la numérotation des propriétés Ayla est un
+espace de noms De'Longhi figé, et un modèle en utilise simplement un sous-ensemble. Changer de
+catalogue ne change donc **aucune** adresse — et ne périme aucune lecture déjà faite.
+
+Deux défauts que cette lecture a révélés, dans le code qui tournait :
+
+- **le pas du Bean System manquait.** `d160_<p>_bs_recipe_01` était rendu pour tous les profils,
+  alors que la formule est `160 + (p − 1) × 6`. Le nom demandé pour p ≥ 2 n'existe pas : la lecture
+  répondait vide et était classée « absente sur ce modèle ». La recette Bean Adapt des profils 2 à 5
+  était donc illisible, sans que rien ne le dise ;
+- **les offsets étaient dérivés de l'index** dans le catalogue (`39 + i`). Juste sur ce modèle par
+  coïncidence — son catalogue est un préfixe de la liste globale — et décalé de un sur tout modèle
+  auquel manquerait une boisson du milieu.
+
+Et une limite qu'il fallait constater plutôt que supposer : **les recettes perso n'ont pas de
+formule par profil.** L'app écrit `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06` en dur, et
+aucune fonction ne les construit avec un profil variable, contrairement aux recettes standard et au
+Bean System. Le profil 1 est donc imposé ; demander `d200_2_…` serait inventer un nom.
+
+**Ce que la table constructeur permet réellement**, sur les 30 modèles connectés :
+
+| Famille | Modèles | Verdict |
+|---|---|---|
+| PD_SOUL (28 boissons, 5 profils) | 5 | servi |
+| PD_SOUL_BETTER (22 boissons, 3 profils, 3 perso) | 5 | servi |
+| STRIKER_BEST (48 boissons) | 7 | catalogue servi, **22 boissons marquées non adressables** — les familles « iced » et « mug » passent par l'autre nomenclature (`d%s_rec_%s_…`, pas de 43), non implémentée et non vérifiable sans une telle machine |
+| STRIKER_GOOD | 13 | **aucune recette dans la table** — l'app obtient la leur ailleurs. Catalogue par défaut, signalé comme pis-aller |
+
+**La génération se déduit aussi du modèle**, et là encore en portant la règle de l'app plutôt qu'en
+la devinant : `p258z7/s.r()` rend vrai quand l'`appModelId` **contient** « striker », sans égard à la
+casse. Elle décide des propriétés de transport, donc rester sur « classic » face à une Striker, c'est
+parler dans le vide. Déduite du modèle **détecté** et non du catalogue : quand le catalogue est un
+pis-aller, il appartient à un autre modèle et dirait « classic » d'une Striker.
+
+`machine-model.json` est supprimé — plus personne ne l'importait, et le laisser aurait fait une
+deuxième source de vérité pour les mêmes recettes.
+
+| Vérifié sur le banc d'essai | Résultat |
+|---|---|
+| 17055 (PD_SOUL) | 28 boissons, 5 profils, 6 perso — **tous les noms de propriétés identiques** à l'implémentation précédente pour le profil 1, celle vérifiée sur la vraie machine |
+| 17052 (PD_SOUL_BETTER) | 22 boissons, 3 profils, 3 emplacements perso, `d081_3_rec_espresso` pour le profil 3 |
+| 17079 (STRIKER_BEST) | 48 boissons, 22 non adressables signalées, génération **striker** déduite |
+| 17069 (STRIKER_GOOD) | repli sur le catalogue par défaut, dit dans le journal, et génération **striker** quand même |
+| build de production | 12 pages, dont `/machines` |
+
+Reste non éprouvé : une machine d'un autre modèle que celle-ci. Le contrôle qui compte est donc la
+non-régression sur les noms de propriétés, faite exhaustivement.

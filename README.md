@@ -240,16 +240,24 @@ catalogue de traductions, build, initialisation du stockage, et démarrage de l'
 
 ## Adapter à un autre modèle
 
-Le catalogue vient de `src/lib/machine-model.json`, extrait pour le `product_code` d'une
-ECAM 610.75.MB. Pour un autre modèle, il faut le remplacer par les caractéristiques correspondantes ;
-les identifiants de boissons et les bornes de paramètres changent. Le protocole, lui, est commun.
+Le catalogue vient de `src/lib/machine-catalogs.json`, extrait pour les **30 modèles connectés** de
+la table constructeur, et le serveur choisit celui du modèle qu'il a lu sur la machine. Rien à
+remplacer à la main.
 
-C'est aussi la limite du multi-machines : le catalogue est **unique**, donc deux cafetières de
-modèles différents ne peuvent pas être servies correctement en même temps. Le nombre de recettes
-standard entre dans le calcul du nom des propriétés de recette (`(profil − 1) × 21` pour ce
-modèle) : sur un modèle à 22 recettes, chaque lecture viserait la mauvaise propriété — et une
-propriété qui répond vide est interprétée comme « absente sur ce modèle », donc l'erreur
-ressemblerait à un import normal. D'où l'avertissement, plutôt qu'une bascule automatique.
+Ce qui rend cette bascule sûre : **la numérotation des propriétés Ayla ne dépend pas du modèle**.
+C'est un espace de noms De'Longhi figé, par nom de boisson. Un modèle a simplement un sous-ensemble
+de ces boissons.
+
+Deux familles restent hors de portée, et le serveur le dit au lieu de deviner :
+
+- les **13 modèles STRIKER_GOOD** n'ont aucune recette dans la table constructeur — l'app obtient
+  la leur ailleurs. Le catalogue par défaut sert, signalé comme un pis-aller ;
+- les **7 STRIKER_BEST** ajoutent les familles « iced » et « mug » (22 boissons), qui passent par une
+  autre nomenclature de propriétés. Elles sont listées et marquées comme non adressables : ni
+  lisibles, ni réglables.
+
+Restent **10 modèles pleinement servis** : 5 PD_SOUL (28 boissons, 5 profils) et 5 PD_SOUL_BETTER
+(22 boissons, 3 profils, 3 recettes perso).
 
 ## Licence
 

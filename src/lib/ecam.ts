@@ -164,7 +164,7 @@ export function frameDispense(
  * brew over ice = 27. Une version précédente de cette table reprenait la numérotation supposée
  * 16..21 : envoyer 21 pour un « brew over ice » aurait visé une autre boisson.
  *
- * La table qui fait foi est `src/lib/beverages.mjs`, construite sur `machine-model.json`
+ * La table qui fait foi est `src/lib/beverages.mjs`, construite sur `machine-catalogs.json`
  * (entrée `product_code` 0132217055 de la table constructeur). Celle-ci n'en est qu'un reflet.
  */
 export const BEVERAGES: Record<number, string> = {

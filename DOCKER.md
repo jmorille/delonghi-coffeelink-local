@@ -172,7 +172,7 @@ De'Longhi elles n'ouvrent rien. Les variables ci-dessous ne servent qu'à les **
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `MACHINE_MODEL_KEY` | — | Forçage du modèle : les 5 derniers chiffres du `product_code` (`17055` = ECAM 610.75.MB). Sinon **lu sur la machine** (propriété `d270_serialnumber`) et mémorisé en base. La détection rapporte le modèle et signale un écart ; le catalogue de boissons utilisé reste `src/lib/machine-model.json`. |
+| `MACHINE_MODEL_KEY` | — | Forçage du modèle : les 5 derniers chiffres du `product_code` (`17055` = ECAM 610.75.MB). Sinon **lu sur la machine** (propriété `d270_serialnumber`) et mémorisé en base. Le catalogue de boissons vient du modèle détecté (`src/lib/machine-catalogs.json`) ; un modèle dont la table constructeur ne donne aucune recette retombe sur le catalogue par défaut, ce qui est signalé. |
 
 ### Divers
 
