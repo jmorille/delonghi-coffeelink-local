@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 interface OrderEntry {
   id: number;
@@ -54,7 +55,7 @@ export default function Profils() {
   const [showProps, setShowProps] = useState(false);
 
   const refresh = useCallback(async () => {
-    setData(await fetch("/api/profiles").then((r) => r.json()));
+    setData(await mfetch("/api/profiles").then((r) => r.json()));
   }, []);
 
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function Profils() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/profiles/import", {
+      const r = await mfetch("/api/profiles/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ what: scope }),
@@ -89,7 +90,7 @@ export default function Profils() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectProfile", profileId: id }),

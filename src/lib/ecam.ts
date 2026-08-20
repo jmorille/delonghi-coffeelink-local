@@ -2,6 +2,10 @@
  * ⚠️ **Ce fichier ne tourne pas.** `server.mjs` sert lui-même `/local_lan/*` et `/api/*` en
  * HTTP brut, dans tous les modes : ces routes et ces modules sont shadowés et ne sont gardés
  * que comme référence. En cas de divergence, `server.mjs` fait foi.
+ *
+ * ⚠️ **Et la divergence est maintenant structurelle** : `server.mjs` gère PLUSIEURS machines, avec
+ * un état, une session, une file de commandes et un cache par machine. Ce qui suit décrit encore
+ * un singleton de processus, c'est-à-dire une seule cafetière. Ne pas s'en servir de modèle.
  */
 /**
  * Protocole binaire ECAM — construction/décodage des trames.

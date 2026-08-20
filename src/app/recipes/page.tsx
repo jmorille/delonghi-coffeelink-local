@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
+import { mfetch } from "../machine";
 
 /**
  * Édition des recettes locales, **sous les contraintes du modèle**.
@@ -65,7 +66,7 @@ export default function Recipes() {
   const [msg, setMsg] = useState("");
 
   const load = useCallback(
-    () => fetch("/api/recipes").then((r) => r.json()).then((d) => setList(d.recipes)),
+    () => mfetch("/api/recipes").then((r) => r.json()).then((d) => setList(d.recipes)),
     [],
   );
 
@@ -155,7 +156,7 @@ export default function Recipes() {
       setMsg(t("outOfRange", { list: outOfRange.map((b) => paramLabel(b)).join(", ") }));
       return;
     }
-    await fetch("/api/recipes", {
+    await mfetch("/api/recipes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(draft),
@@ -212,7 +213,7 @@ ${detail}
     )
       return;
     setMsg("");
-    const r = await fetch("/api/command", {
+    const r = await mfetch("/api/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: draft.profileId, params: payload() }),
@@ -225,7 +226,7 @@ ${detail}
   };
 
   const del = async (id: string) => {
-    await fetch("/api/recipes?id=" + encodeURIComponent(id), { method: "DELETE" });
+    await mfetch("/api/recipes?id=" + encodeURIComponent(id), { method: "DELETE" });
     load();
   };
 

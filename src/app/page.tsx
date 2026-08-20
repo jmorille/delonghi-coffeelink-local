@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
+import { mfetch } from "./machine";
 
 interface Param {
   id: number;
@@ -111,7 +112,7 @@ export default function Boissons() {
   // capturé au montage de l'effet (qui est nul).
   const statusRef = useRef<Status | null>(null);
   const refreshStatus = useCallback(async () => {
-    const s = await fetch("/api/status").then((r) => r.json());
+    const s = await mfetch("/api/status").then((r) => r.json());
     statusRef.current = s;
     setStatus(s);
   }, []);
@@ -130,7 +131,7 @@ export default function Boissons() {
    */
   useEffect(() => {
     const ping = () => {
-      fetch("/api/presence", { method: "POST" })
+      mfetch("/api/presence", { method: "POST" })
         .then(() => refreshStatus())
         .catch(() => {});
     };
@@ -154,7 +155,7 @@ export default function Boissons() {
   // Noms des profils : simple lecture de ce que le serveur a déjà en cache. L'import des
   // profils, lui, se fait sur la page Profils — pas ici.
   useEffect(() => {
-    fetch("/api/profiles")
+    mfetch("/api/profiles")
       .then((r) => r.json())
       .then((d) => setProfiles(d.profiles ?? []))
       .catch(() => {});
@@ -188,7 +189,7 @@ export default function Boissons() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/beverages/import", {
+      const r = await mfetch("/api/beverages/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profileId: profile, what: scope, beverageIds }),
@@ -207,7 +208,7 @@ export default function Boissons() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: next ? "on" : "off" }),
@@ -230,7 +231,7 @@ export default function Boissons() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "stop", beverageId: target?.id ?? 1, profileId: profile }),
@@ -254,7 +255,7 @@ export default function Boissons() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectProfile", profileId: id }),
@@ -283,7 +284,7 @@ export default function Boissons() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "dispense", beverageId: bev.id, profileId: profile, params }),
@@ -361,7 +362,7 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: profile, params }),
@@ -393,7 +394,7 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
 
       {status && !status.config?.lanKeySet && (
         <div className="warn">
-          ⚠️ {tc("noLanKey")} <a href="/cle-lan">{tc("noLanKeyLink")}</a>
+          ⚠️ {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
         </div>
       )}
       {data && (

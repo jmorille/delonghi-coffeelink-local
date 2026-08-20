@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 /** Partie du monitor qu'on exploite ici — le reste de `/api/status` reste souple. */
 interface Monitor {
@@ -31,13 +32,13 @@ export default function Dashboard() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const s = await fetch("/api/status").then((r) => r.json());
+    const s = await mfetch("/api/status").then((r) => r.json());
     setStatus(s);
   }, []);
 
   useEffect(() => {
     refresh();
-    fetch("/api/recipes")
+    mfetch("/api/recipes")
       .then((r) => r.json())
       .then((d) => setRecipes(d.recipes));
     const t = setInterval(refresh, 3000);
@@ -48,7 +49,7 @@ export default function Dashboard() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyObj),
@@ -66,7 +67,7 @@ export default function Dashboard() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/register", { method: "POST" }).then((x) => x.json());
+      const r = await mfetch("/api/register", { method: "POST" }).then((x) => x.json());
       setMsg(r.error ? tc("error", { message: r.error }) : t("registerSent", { status: r.status ?? "?" }));
       await refresh();
     } catch (e) {
@@ -88,10 +89,10 @@ export default function Dashboard() {
       </p>
 
       {/* Message unifié avec celui de la page d'accueil, et qui renvoie vers la page qui sait
-          récupérer la clé — l'ancien texte ne parlait que de .env.local, antérieur à /cle-lan. */}
+          récupérer la clé — l'ancien texte ne parlait que de .env.local, antérieur à la page. */}
       {cfg && !cfg.lanKeySet && (
         <div className="warn">
-          ⚠️ {tc("noLanKey")} <a href="/cle-lan">{tc("noLanKeyLink")}</a>
+          ⚠️ {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
         </div>
       )}
 
@@ -270,7 +271,11 @@ export default function Dashboard() {
       <div className="card log">
         {status?.log?.map((e: any, i: number) => (
           <div key={i} className={e.dir}>
-            [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()} · {e.msg}
+            [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
+            {/* Le journal est unique, toutes machines confondues : sans cette étiquette, deux
+                cafetières produiraient une chronologie indéchiffrable. Elle n'apparaît qu'à partir
+                de deux machines, sinon elle se répéterait à chaque ligne pour rien. */}
+            {(status?.machines?.length ?? 0) > 1 && e.m ? ` · ${e.m}` : ""} · {e.msg}
           </div>
         ))}
       </div>

@@ -1317,3 +1317,355 @@ champs (adresse, e-mail, mot de passe), avertissement d'adresse manquante presen
 reelle : « Adresse 192.168.x.x enregistree, et la machine repond. DSN : AC000W0XXXXXXXX. », plus
 aucun avertissement. Le menu reste reduit — correctement : `ready` exige les DEUX prerequis, et la
 cle est absente. `/machine` -> 404, `/cle-lan` -> 200, `tsc --noEmit` passe, le build compile.
+
+### Plusieurs machines (2026-08-20)
+
+Le serveur pilote désormais N cafetières. Trois couches ont bougé.
+
+**Stockage — schéma v2.** Chaque table de données porte une colonne `machine` et une clé primaire
+composite, avec `REFERENCES machines(id) ON DELETE CASCADE` ; les réglages qui n'appartiennent à
+aucune machine vivent dans une table `settings` à part, plutôt que sous une machine sentinelle qui
+aurait fait mentir la clé étrangère. Toute lecture ou écriture passe par `forMachine(id)` : il
+n'existe volontairement **aucune** version sans machine de ces fonctions, parce qu'un appel qui
+aurait oublié de préciser laquelle écrirait dans la mauvaise sans que rien ne le signale.
+
+SQLite ne sait pas changer une clé primaire : la migration recrée les tables et recopie, en une
+seule transaction, en rattachant toutes les lignes existantes à `m1` — la seule lecture possible,
+une base v1 ne pouvant décrire qu'une machine.
+
+| Vérification de la migration | Résultat |
+|---|---|
+| copie de la vraie base (58 propriétés, 62 statistiques, 6 grains, 7 valeurs `meta`) | tout repris sous `m1`, DSN, adresse, modèle, clé LAN et profil actif intacts |
+| la vraie base, en place | idem, et le serveur redémarre en lisant tout depuis le cache |
+| deuxième démarrage | aucune remigration (`user_version` fait barrage) |
+| base plus récente que le code | refus immédiat avec un message, au lieu d'échouer plus loin sur une colonne inconnue |
+| suppression d'une machine | ses lignes partent par cascade, celles des autres sont intactes |
+
+La CI joue maintenant cette migration sur une base v1 fabriquée pour l'occasion : c'est la seule
+opération du projet capable de détruire les données de quelqu'un.
+
+**Serveur — l'état devient un enregistrement par machine.** `CFG` ne garde que ce qui appartient au
+serveur (`serverIp`, `port`). Adresse, cache DNS, DSN et son étranglement, clé LAN, modèle,
+génération, session, programme, file de lecture, monitor, keep-alive, profil actif, balayages,
+requêtes OTA : tout est par machine. Le journal reste **unique**, chaque ligne portant sa machine —
+deux journaux auraient obligé l'interface à recoudre une chronologie, or c'est exactement ce qu'on
+regarde quand une commande ne passe pas. Le préfixe `[m1]` n'apparaît qu'à partir de deux machines,
+donc la sortie d'une installation mono-machine est inchangée.
+
+**Qui nous appelle ?** C'est le point qui décidait de l'architecture. Les endpoints device-facing ne
+portent **aucune** identité : le `uri` annoncé dans `local_reg` est commun, et seul
+`key_exchange.json` transporte un `key_id`. L'identification se fait donc sur l'**adresse source**,
+la seule information présente sur les trois endpoints : une seule machine connue → c'est elle sans
+condition (une installation mono-machine ne peut pas régresser) ; sinon correspondance avec
+l'adresse configurée ou résolue ; sinon avec l'adresse déjà reconnue lors d'un échange de clés. Au
+key exchange seulement, le `key_id` sert de second recours. Deux machines derrière une même adresse
+source ne seraient pas distinguables — c'est dit dans l'interface.
+
+La piste d'un `uri` par machine dans `local_reg` a été écartée : rien ne prouve que l'ESP32 respecte
+une base arbitraire, et le module a déjà montré qu'il est pointilleux sur ce genre de détail
+(l'en-tête `Host`). L'adresse source ne dépend d'aucun comportement non vérifié.
+
+**Interface.** Un sélecteur dans la barre de navigation (à partir de deux machines), une page
+`/machines` pour ajouter, nommer, désigner la machine par défaut et supprimer, et surtout : les
+38 appels d'API des pages passent tous par `mfetch`, qui ajoute la machine courante. Un `fetch` nu
+viserait la machine **par défaut du serveur**, pas celle qui est affichée — sur des commandes qui
+agissent sur un appareil réel, ce n'est pas un détail d'affichage. Le choix vit dans
+`localStorage` : un « courant » global aurait fait changer la page sous les yeux de quelqu'un
+pendant qu'un autre onglet choisissait autrement.
+
+| Vérifié dans le navigateur | Résultat |
+|---|---|
+| une seule machine | sélecteur absent, menu et journal identiques à avant |
+| ajout d'une deuxième | sélecteur présent, `m2` sans adresse ni clé, 0 donnée |
+| bascule sur `m2` | menu réduit à Machines / Clé LAN / Système, `/cle-lan` montre bien l'état de `m2` |
+| retour sur `m1` | 28 boissons, ordre de la machine, profils nommés, compteurs, session LAN |
+| `/api/status?machine=m99` | HTTP 404 `unknownMachine`, **pas** de repli silencieux sur la machine par défaut |
+| POST vers `m2` | HTTP 409 `needsMachineIp` — le refus est par machine |
+| présence sur `m1`, avec `m2` déclarée | échange de clés et datapoints routés vers `m1` par adresse source, monitor décodé |
+| suppression de la dernière machine | refusée (409 `lastMachine`) |
+
+**Ce que ça ne fait pas, et il faut le dire.** Le catalogue de boissons reste celui d'un seul modèle,
+partagé par toutes les machines. Le modèle réel de chacune est lu et comparé ; un écart est signalé
+en bandeau sur `/machines`, dans le journal et sur `/systeme` — mais pas corrigé. La raison est celle
+déjà consignée : le nombre de recettes standard entre dans le nom des propriétés de recette
+(`(profil − 1) × 21` ici), et sur un modèle à 22 recettes chaque lecture viserait la mauvaise
+propriété, qui répondrait vide, donc serait interprétée comme « absente sur ce modèle ». L'erreur
+ressemblerait à un import normal. Deux cafetières du **même** modèle n'ont, elles, rien à craindre.
+
+Les variables d'environnement ne décrivent que la première machine (`envForced(m, champ)`), puisque
+`MACHINE_IP` ne peut pas désigner deux appareils. Ne jamais tester `process.env.MACHINE_*` dans une
+fonction qui travaille sur une machine : ce serait laisser la variable revendiquer l'adresse de la
+machine numéro 2.
+
+**Reste à éprouver** : deux cafetières réellement raccordées en même temps.
+
+### La configuration rejoint la carte de chaque machine (2026-08-20)
+
+La page Machines renvoyait vers `/cle-lan` pour l'adresse et la clé, c'est-à-dire pour la moitié de
+ce qu'on vient y faire. Et `/cle-lan` ne travaillait que sur la machine **sélectionnée** : configurer
+la deuxième obligeait donc à basculer dessus d'abord, puis à quitter la page où on était. Deux
+allers-retours pour un réglage.
+
+Les deux réglages sont maintenant dans la carte de la machine concernée, dans l'ordre de leur
+dépendance (adresse, puis clé — la clé est rangée chez Ayla sous le DSN, que seule la machine
+fournit). Le bloc est **ouvert d'office sur une machine incomplète**, replié sur une machine prête :
+c'est le réglage qui manque qu'il faut avoir sous les yeux.
+
+Le point qui rend la chose possible : chaque requête **nomme sa machine** (`forId`), au lieu de viser
+la machine courante (`mfetch`). C'est ce qui permet de configurer une cafetière sans quitter celle
+qu'on regarde — et c'est aussi ce qui aurait envoyé la saisie à la mauvaise machine si on avait
+gardé `mfetch` par réflexe. Vérifié : avec `m1` affichée, l'enregistrement de l'adresse depuis la
+carte de `m3` ne modifie que `m3`, et le verdict de la sonde s'affiche sous cette carte-là.
+
+`/cle-lan` disparaît du menu et **redirige** (307) vers `/machines` : des liens et des onglets
+pointent encore là, et six messages du serveur nommaient cette page. Le menu ne garde donc que deux
+entrées inconditionnelles, `/machines` et `/systeme` ; `nav.lanKey` est retirée du catalogue. Les
+namespaces `lankey` et `machine` sont **réutilisés tels quels** — une quarantaine de chaînes qu'il
+aurait été absurde de dupliquer.
+
+`/api/machines` livre en une requête tout ce que la page affiche : les deux dates de mise en cache
+par machine (`ipCachedAt`, `lanKeyCachedAt`), l'adresse annoncée par le serveur, et l'état de la
+configuration de découverte. Sinon il aurait fallu interroger `/api/machine` et `/api/lankey` une
+fois par machine pour obtenir les mêmes réponses.
+
+**Un garde-fou trouvé par l'usage.** Au premier essai réel de la page, la même cafetière s'est
+retrouvée enregistrée deux fois — une fois par nom court, une fois par nom complet. C'est l'erreur
+naturelle, et elle échoue **en silence** : l'identification se faisant par adresse source, une seule
+des deux entrées reçoit la session, l'autre reste muette pour toujours sans rien dire. Un
+avertissement le signale maintenant, sur la base du **DSN** (le numéro de série : deux entrées qui le
+partagent sont le même appareil), avec l'adresse saisie ou résolue comme second indice. Vérifié en
+direct sur le cas réel : les deux cartes portent l'avertissement, `cafe` et `cafe.maison.lan` résolvant
+bien la même adresse.
+
+**Piège rencontré, à ne pas réapprendre** : `server.mjs` n'est pas rechargé à chaud. Une modification
+de `machineSummary` sans redémarrage laisse l'IHM — elle, rechargée par HMR — lire un champ que
+l'API ne renvoie pas encore, et la page casse sur un `undefined`. Le symptôme accuse le composant ;
+la cause est le serveur qui n'a pas redémarré.
+
+### Modèle lu automatiquement, nom modifiable, écrans dégraissés (2026-08-20)
+
+**Le modèle n'était pas calculé à l'ajout d'une machine.** Il ne pouvait pas l'être : il vient du
+numéro de série (`d270_serialnumber`), donc d'une **lecture de propriété Ayla**, qui exige une
+session chiffrée — donc la clé LAN. Au moment où l'on ajoute une machine, on n'a que son adresse et
+le DSN qu'elle vient de donner. Constaté sur le cas réel : une deuxième entrée avec DSN et clé LAN
+affichait « Modèle : inconnu », parce que rien n'avait jamais demandé le numéro de série.
+
+`maybeReadModel(m)` le demande au **premier moment possible** : celui où le second prérequis tombe,
+dans un sens ou dans l'autre — clé obtenue alors que l'adresse était là, ou adresse saisie alors que
+la clé venait de l'environnement. D'où l'appel depuis `POST /api/lankey` et `POST /api/machine`, et
+un garde qui rend l'ordre indifférent (modèle déjà connu, prérequis manquant, ou import/programme en
+cours → on ne fait rien). Une lecture pure, aucun effet sur la machine. Un bouton « lire le
+modèle » / « relire » couvre le reste : machine configurée avant que ça n'existe, lecture expirée,
+simple vérification. La réponse n'arrivant pas dans le corps du POST (c'est la machine qui se
+connecte et pousse la propriété), la page scrute la liste, bornée à 15 s.
+
+**Le nom était modifiable, mais invisible.** Le champ était noyé au milieu des lignes
+d'information — qui sont des faits en lecture seule — avec un bouton grisé tant qu'on n'avait rien
+tapé : il avait l'air cassé. Il est remonté en tête du bloc de configuration, avec son propre titre,
+un bouton actif dès que la valeur change, et un bouton « vider » qui rend son nom dérivé à la
+machine. Le libellé du bouton de bascule passe de « Configurer son adresse et sa clé » à
+« Configurer », puisqu'il couvre maintenant trois réglages. Vérifié : renommage en « Cuisine », puis
+retour au nom dérivé.
+
+**Moins de texte.** Le formulaire était précédé de quatre paragraphes de prose : la dépendance
+adresse → DSN → clé, les quatre étapes du protocole Gigya/Ayla, la note sur les noms d'hôte en
+conteneur, le sort du mot de passe. Tout cela est **déjà** dans `doc/` et `DOCKER.md`, où c'est à sa
+place ; un écran de saisie n'a pas à le répéter. Il ne reste qu'une ligne courte par champ — la forme
+attendue d'une adresse, le sort du mot de passe — et les avertissements. La carte passe de plus de
+2 000 caractères à 729. Les verdicts et les confirmations, eux, ne sont pas raccourcis : ils
+n'apparaissent qu'après une action, et c'est là qu'ils servent. Dix-neuf clés devenues inutiles sont
+retirées du catalogue, qui passe de 589 à 571 messages.
+
+### Supprimer la dernière machine : remise à zéro au lieu d'un refus (2026-08-20)
+
+Le refus (409) était le mauvais choix. Il renvoyait vers « oublier l'adresse » et « oublier la clé »
+**sur une page qui n'existe plus**, il fallait donc deux actions à la main pour obtenir un résultat
+que le bouton pouvait produire — et même en les faisant, le cache de lectures restait en place.
+
+La dernière machine ne peut effectivement pas quitter le registre : l'application n'a aucun état
+« aucune machine » à montrer, et une base vide s'en recréerait une au démarrage. Mais on peut faire
+ce que la suppression voulait dire : `forMachine(id).reset()` efface les cinq tables de cette
+machine en une seule transaction — adresse, clé LAN, DSN, modèle, sommes de contrôle, propriétés,
+statistiques, grains, recettes. L'entrée survit, vide, et l'état d'exécution est reconstruit.
+
+Trois détails qui comptent :
+
+- les `setTimeout` en vol (balayage des grains, lecture des statistiques) référencent l'ancien
+  enregistrement : ils sont désarmés **avant** le remplacement, sinon un balayage en cours
+  continuerait à s'annoncer à l'ancienne adresse, sur un objet absent du registre — donc invisible ;
+- la réponse porte `envRestored` : ce que `.env.local` force revient aussitôt, et le dire est la
+  différence entre « ça a marché » et « ça n'a rien fait » ;
+- le bouton s'appelle « Tout effacer » quand il ne reste qu'une machine, et « Supprimer » sinon. Les
+  deux confirmations nomment ce qui part ; seul le sort de l'entrée diffère.
+
+Vérifié sur une **copie** de la base réelle avant de toucher à quoi que ce soit : 58 propriétés,
+62 statistiques, 6 profils de grains, adresse, clé LAN, DSN et modèle effacés, l'entrée `m1`
+conservée. Le chemin HTTP, lui, n'a pas encore été joué en direct : `server.mjs` n'est pas rechargé
+à chaud et le serveur de développement tournait avec la version précédente.
+
+### Première lecture automatique : modèle ET noms (2026-08-20)
+
+`maybeReadModel` devient `maybeInitialRead` et demande aussi les **noms** — ceux des profils et ceux
+des recettes personnalisées, deux familles couvertes par la même somme de contrôle, et celles qui
+font qu'un emplacement renommé sur la machine s'affiche sous son nom partout (`readNames`).
+
+Neuf propriétés au premier passage : le numéro de série, quatre propriétés de noms de profils et
+quatre de noms de recettes perso (les variantes Striker répondent vide, ce qui compte comme lu).
+La file est construite **à partir de ce qui manque**, propriété par propriété : la fonction est donc
+idempotente sans drapeau « déjà fait », et une machine dont le modèle est connu mais les noms pas
+encore lus obtient quand même ses noms. Vérifié sur les deux états réels : file de 8 propriétés sur
+la machine dont le modèle était déjà lu, de 9 après une remise à zéro.
+
+Cet import ne pose **aucune** marque « sommes à jour ». La poser obligerait à répliquer la règle de
+`/api/profiles/import`, et une marque posée à tort fait sauter la relecture des noms jusqu'à un
+`force: true` : le coût d'une lecture inutile est sans commune mesure.
+
+**Les deux mécanismes précédents sont validés en direct — par l'usage, pas par un test.** L'ordre
+d'écriture des valeurs `meta` de la base réelle le raconte sans ambiguïté : `machineIp` et `dsn` à la
+même seconde (adresse saisie, sonde qui résout le DSN), `lanKey` 22 s plus tard (récupération
+réussie), puis `importedAt` et `model` 15 s après — c'est-à-dire la lecture du modèle déclenchée
+toute seule. Et le `createdAt` de l'entrée `m1` est inchangé alors que ses 58 propriétés, ses
+62 statistiques et ses 6 profils de grains ont disparu : c'est bien la remise à zéro sur place, pas
+une suppression suivie d'une recréation au démarrage.
+
+### La page suit les lectures au lieu de demander un rafraîchissement (2026-08-20)
+
+Défaut constaté sur la machine réelle : les journaux montraient la récupération du modèle, la carte
+affichait « Modèle : inconnu, 0 propriétés ». Le serveur avait tout enregistré — `model` et
+`importedAt` écrits **2 secondes** après `lanKey`.
+
+La cause n'est pas un cache : une lecture de propriété n'est pas synchrone. Le POST rend la main dès
+que l'annonce (`local_reg`) est faite, et c'est la **machine** qui se connecte ensuite pour pousser
+la valeur. Le `load()` qui suit l'action arrive donc systématiquement trop tôt.
+
+`machineSummary` expose maintenant `reading` (file restante, lues, échecs, propriété en attente) et
+`running` (programme ECAM en cours), et la page scrute toutes les 2 s tant que l'un des deux est
+vrai. Un badge « lecture… n restantes » le montre.
+
+Un détail qui compte : `reading` vérifie la **fenêtre** de l'import, pas seulement son drapeau
+`active`. Celui-ci ne retombe que quand la machine vient chercher la commande suivante
+(`nextImportData`) — si elle ne se connecte jamais, il resterait vrai indéfiniment, et une interface
+qui scrute tant qu'il est vrai scruterait pour toujours. Aucune borne n'est donc nécessaire côté
+page : la borne est dans la donnée.
+
+Le message ne dit plus « rafraîchissez dans quelques secondes » : c'était refiler le travail.
+
+### L'état est poussé, plus sondé (2026-08-20)
+
+Le sondage toutes les 2 s re-téléchargeait la liste entière pour voir un champ changer. Remplacé par
+un flux **Server-Sent Events** sur `GET /api/events`.
+
+**Le déclencheur est le journal.** Tout changement d'état significatif de ce serveur passe déjà par
+`L()` : propriété reçue, import démarré ou terminé, commande servie, clé appliquée, adresse changée.
+S'y brancher évite d'instrumenter vingt endroits — et d'oublier le vingt-et-unième. Regroupement sur
+250 ms, un import journalisant une ligne par propriété.
+
+Ce que le journal ne peut pas dire : la **fin** d'une fenêtre expirée sans que la machine se soit
+connectée n'écrit aucune ligne. Sans le veilleur `sseWatch()`, le badge « lecture… » resterait
+affiché à décrire un import qui n'existe plus. Il ne tourne que pendant qu'une fenêtre est ouverte
+et s'arrête après une dernière émission — celle qui remet les champs à zéro.
+
+Côté page, la réactivité est **fine** : l'état poussé est fusionné machine par machine, et une
+machine inchangée garde son identité d'objet, donc React ne redessine pas sa carte. Sans ça chaque
+évènement reconstruirait toutes les cartes, ce qui ramènerait le défaut en poussé au lieu de sondé.
+Repli conservé : si le flux échoue, scrutation, et seulement pendant qu'une lecture tourne.
+
+**Vérifié sur un banc d'essai** — une copie de `server.mjs` avec Next remplacé par un bouchon, sur le
+port 3999, une copie de la base, et `SERVER_IP` en boucle locale pour qu'aucune trame ne parte vers
+la machine :
+
+| Contrôle | Résultat |
+|---|---|
+| en-têtes | `text/event-stream`, `no-cache, no-transform`, `keep-alive`, pas de `Content-Length` |
+| à l'abonnement | état complet immédiat, sans attendre le premier changement |
+| renommage d'une machine | une trame poussée, avec le nouveau libellé |
+| import de 2 propriétés | `reading` apparaît à `remaining: 2` |
+| fin de la fenêtre (30 s) | `reading` repasse à `null`, puis le veilleur s'arrête |
+
+Les trames surnuméraires observées pendant le test venaient du banc lui-même : avec `SERVER_IP` en
+boucle locale, le keep-alive journalise un échec de `local_reg` toutes les 2,5 s, et chaque ligne de
+journal émet. En fonctionnement normal `local_reg` réussit sans rien écrire.
+
+### Vérifier les mises à jour OTA, sans AYLA_TOKEN (2026-08-20)
+
+Deux défauts sur le bloc OTA de la page Système. Le premier, cosmétique : il affichait
+« désactivée », puis une phrase se terminant par « vérification cloud désactivée » — le libellé et la
+note disaient la même chose. Le second, réel : la vérification exigeait un jeton Ayla brut dans
+`AYLA_TOKEN`, que personne n'a sous la main.
+
+Or la récupération de la clé LAN obtient **déjà** un `access_token` Ayla, et le jetait. Le même
+jeton ouvre `dsns/<DSN>/ota.json`. `aylaAccessToken()` est donc extrait de `discoverLanKey` — deux
+usages en ont besoin — et `checkCloudOta()` lit la fiche avec.
+
+Trois conséquences :
+
+- la récupération de la clé **relève l'OTA au passage**, au mieux disant : un échec là ne doit pas
+  faire échouer la récupération, qui est le but de l'appel ;
+- `POST /api/ota` refait la vérification à la demande — identifiants d'abord, `AYLA_TOKEN` en repli ;
+- **seul le résultat est mémorisé** (`meta.otaCheck`), jamais le jeton. Ouvrir une page ne doit
+  déclencher aucun appel au cloud, et rien ne doit rester qui puisse en déclencher un plus tard.
+
+C'est aussi ce qui corrige un défaut de fond : `GET /api/system` appelait le cloud **à chaque
+affichage** de la page Système quand `AYLA_TOKEN` était présent. Pour un projet dont l'objet est le
+pilotage local, c'était le mauvais réglage par défaut. La fonction ne fait plus que rapporter le
+dernier relevé — et la page répond en 0,27 s au lieu de jusqu'à 8 s.
+
+L'action est sur `/machines`, à côté des identifiants qu'elle réutilise ; `/systeme` affiche le
+relevé, sur **une** ligne. Le formulaire d'identifiants reste hors de la fiche technique, comme
+convenu.
+
+**Vérifié sur le banc d'essai** (Next bouchonné, port 3999, copie de la base) :
+
+| Contrôle | Résultat |
+|---|---|
+| `GET /api/ota` | `tokenConfigured: false`, `last: null`, DSN présent — aucun appel au cloud |
+| `GET /api/system` | 0,27 s, `ota.cloud` = `{tokenConfigured, last}` |
+| `POST /api/ota` sans rien | HTTP 400, `needsCredentials`, message explicite |
+| `POST /api/ota` avec un JWT invalide | vrai appel à `token_sign_in.json` d'Ayla → HTTP 422 → 502 avec le message. Branche `jwt`, donc Gigya n'est pas sollicité et aucun échec de connexion n'est enregistré pour un compte |
+
+Le chemin heureux — vrais identifiants, vraie fiche OTA — demande un mot de passe : il reste à
+jouer par l'utilisateur.
+
+### Jeton Ayla : cascade à quatre niveaux (2026-08-20)
+
+Le principe retenu est celui qui valait déjà pour la clé LAN — frapper un jeton au moment du besoin,
+l'utiliser, ne rien conserver — étendu d'un niveau qui évite de retaper le mot de passe.
+
+| Niveau | Coût | Ce qui est conservé |
+|---|---|---|
+| 1. jeton d'accès en mémoire, non expiré | aucun appel | rien qui survive au processus |
+| 2. `refresh_token` mémorisé (opt-in) | un appel à Ayla | le jeton de renouvellement, sur disque |
+| 3. identifiants du compte | les quatre sauts | rien |
+| 4. `AYLA_TOKEN` | — | rien (déjà dans `.env.local`) |
+
+Le niveau 1 rend gratuite une deuxième vérification dans la même session : `m.aylaToken` garde le
+jeton pour la durée annoncée par `expires_in`, avec une marge d'une minute pour ne pas repartir avec
+un jeton qui expire pendant la requête.
+
+**Le niveau 2 est le seul secret de niveau COMPTE que ce serveur puisse écrire.** D'où : case
+décochée par défaut, étiquetée sans détour, rangée dans `settings` (c'est un identifiant de compte,
+pas d'appareil — deux machines du même compte n'en gardent pas deux copies), jamais renvoyée par un
+endpoint, oubliable, et emportée par « Tout effacer ». La clé LAN ne donne que le pilotage local
+d'une cafetière, et encore faut-il être sur le réseau ; un `refresh_token` agit sur le compte
+De'Longhi jusqu'à révocation. La distinction est écrite dans `CLAUDE.md`, section secrets.
+
+Deux détails qui viennent du protocole : Ayla **fait tourner** le `refresh_token` à chaque usage,
+donc garder l'ancien casserait l'appel suivant ; et Ayla ne renvoie pas toujours de `refresh_token`,
+donc l'interface n'annonce la mémorisation que si le serveur confirme l'avoir faite — une case cochée
+sans effet serait un mensonge.
+
+**Le chemin de renouvellement est vérifié, et c'est le banc d'essai qui l'a dit.** Avec un jeton
+bidon injecté dans la base, Ayla répond `HTTP 401 Your refresh token is not found` : une réponse
+**applicative**, là où un mauvais chemin aurait donné un 404. Le chemin (`/users/refresh_token.json`)
+et la forme du corps (`{ user: { refresh_token } }`) sont donc bons. Ma documentation les donnait
+pour non vérifiés : corrigé.
+
+| Contrôle sur le banc | Résultat |
+|---|---|
+| `GET /api/cloudsession` | `set: false` |
+| `DELETE` sur une session absente | `removed: false`, pas d'erreur |
+| `POST /api/ota` sans rien | 400 `needsCredentials` |
+| `POST /api/ota`, JWT invalide + `remember` | 502, et **aucune** session mémorisée — rien à retenir d'un échange raté |
+| renouvellement avec un faux jeton | 401 applicatif, session **oubliée**, puis 400 réclamant les identifiants |
+
+Reste non éprouvé : le chemin heureux, qui demande un vrai mot de passe.

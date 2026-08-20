@@ -3,6 +3,10 @@
  * HTTP brut, dans tous les modes : ces routes et ces modules sont shadowés et ne sont gardés
  * que comme référence. En cas de divergence, `server.mjs` fait foi.
  *
+ * ⚠️ **Et la divergence est maintenant structurelle** : `server.mjs` gère PLUSIEURS machines, avec
+ * un état, une session, une file de commandes et un cache par machine. Ce qui suit décrit encore
+ * un singleton de processus, c'est-à-dire une seule cafetière. Ne pas s'en servir de modèle.
+ *
  * ⚠️ **Et le stockage décrit ici n'existe plus.** La persistance est passée à SQLite
  * (`src/lib/store.mjs`, table `recipes`) ; `data/recipes.json` a été renommé `.migrated` et
  * n'est plus relu par personne. Ce module écrirait donc un fichier que rien ne lit — ne pas

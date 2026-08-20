@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 interface Finding {
   level: "warn" | "info";
@@ -44,7 +45,14 @@ interface Payload {
   ota: {
     lanRequests: { at: number; url: string; method: string; from: string }[];
     lanNote: string;
-    cloud: { configured: boolean; note?: string; status?: number; updateAvailable?: boolean; body?: unknown; error?: string };
+    /**
+     * Ce qu'on SAIT, pas une requête : ouvrir cette page ne déclenche plus d'appel au cloud.
+     * `last` est le dernier relevé mémorisé, `null` si la vérification n'a jamais été faite.
+     */
+    cloud: {
+      tokenConfigured: boolean;
+      last: { at: number; status: number; updateAvailable: boolean; version: string | null; type: string | null } | null;
+    };
   };
   /** État du stockage local. Voir `src/lib/store.mjs`. */
   storage: {
@@ -83,7 +91,7 @@ export default function Systeme() {
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      setD(await fetch("/api/system").then((r) => r.json()));
+      setD(await mfetch("/api/system").then((r) => r.json()));
     } finally {
       setBusy(false);
     }
@@ -103,14 +111,14 @@ export default function Systeme() {
     setIdMsg(t("idReading"));
     try {
       const before = d?.identification.at ?? 0;
-      const r = await fetch("/api/model", { method: "POST" }).then((x) => x.json());
+      const r = await mfetch("/api/model", { method: "POST" }).then((x) => x.json());
       if (r.error) {
         setIdMsg(tc("error", { message: r.error }));
         return;
       }
       for (let i = 0; i < 14; i++) {
         await new Promise((res) => setTimeout(res, 1500));
-        const m = await fetch("/api/model").then((x) => x.json());
+        const m = await mfetch("/api/model").then((x) => x.json());
         if ((m.at ?? 0) > before || m.lastError) {
           setIdMsg(m.lastError ? t("idFailed", { reason: m.lastError.reason }) : t("idDone"));
           break;
@@ -203,23 +211,30 @@ export default function Systeme() {
             </tbody>
           </table>
         )}
+{/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
+            terminait par « vérification cloud désactivée » : le libellé et la note disaient la même
+            chose. Et la vérification n'est plus subordonnée à AYLA_TOKEN — elle se lance depuis la
+            page Machines, avec les identifiants du compte. */}
         <div className="kv" style={{ marginTop: 10 }}>
           <span className="k">{t("cloudCheck")}</span>
-          <span className="mono">
-            {!d.ota.cloud.configured
-              ? t("cloudDisabled")
-              : d.ota.cloud.error
-                ? tc("error", { message: d.ota.cloud.error })
-                : d.ota.cloud.updateAvailable
-                  ? t("cloudAvailable")
-                  : t("cloudNone", { status: d.ota.cloud.status ?? 0 })}
+          <span>
+            {!d.ota.cloud.last ? (
+              <span className="sub">{t("cloudNever")}</span>
+            ) : d.ota.cloud.last.updateAvailable ? (
+              <>
+                <span className="pill off">{t("cloudAvailable")}</span>{" "}
+                <span className="sub">
+                  {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
+                </span>
+              </>
+            ) : (
+              <>
+                {t("cloudNone", { status: d.ota.cloud.last.status })}{" "}
+                <span className="sub">{new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}</span>
+              </>
+            )}
           </span>
         </div>
-        {d.ota.cloud.note && (
-          <p className="sub" style={{ marginTop: 6, marginBottom: 0 }}>
-            {d.ota.cloud.note}
-          </p>
-        )}
       </div>
 
       <h2>{t("wifiModule")}</h2>

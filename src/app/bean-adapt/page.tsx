@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 interface Bean {
   index: number;
@@ -58,7 +59,7 @@ export default function BeanAdapt() {
   const [sim, setSim] = useState<Simulation | null>(null);
 
   const refresh = useCallback(async () => {
-    setData(await fetch("/api/beanadapt").then((r) => r.json()));
+    setData(await mfetch("/api/beanadapt").then((r) => r.json()));
   }, []);
 
   useEffect(() => {
@@ -83,7 +84,7 @@ export default function BeanAdapt() {
     setBusy(true);
     setMsg(null);
     try {
-      await fetch("/api/beansystem", {
+      await mfetch("/api/beansystem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index }),
@@ -100,7 +101,7 @@ export default function BeanAdapt() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/beanadapt/scan", {
+      const r = await mfetch("/api/beanadapt/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from: 0, to: 5 }),
@@ -124,7 +125,7 @@ export default function BeanAdapt() {
     setBusy(true);
     setMsg(null);
     try {
-      const r: Simulation = await fetch("/api/beanadapt/simulate", {
+      const r: Simulation = await mfetch("/api/beanadapt/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...draft, flowTime, crema, taste }),
@@ -152,7 +153,7 @@ export default function BeanAdapt() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/beanadapt/save", {
+      const r = await mfetch("/api/beanadapt/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index: selected, ...draft, visible }),
@@ -170,7 +171,7 @@ export default function BeanAdapt() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/command", {
+      const r = await mfetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectBean", beanId: index }),
