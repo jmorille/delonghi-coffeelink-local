@@ -43,6 +43,14 @@ interface MachineState {
   serverPort: number;
 }
 
+/** Verdict de la sonde. `reachable` dit qu'un serveur a répondu ; `isMachine`, que c'est la bonne. */
+interface Probe {
+  reachable: boolean;
+  isMachine: boolean;
+  status: number | null;
+  error: string | null;
+}
+
 export default function CleLan() {
   const t = useTranslations("lankey");
   const tm = useTranslations("machine");
@@ -93,10 +101,13 @@ export default function CleLan() {
       if (r.error) {
         setMachineMsg(tc("error", { message: r.error }));
       } else {
+        const probe: Probe = r.probe;
         setMachineMsg(
-          r.probe.reachable
+          probe.isMachine
             ? tm("savedReachable", { ip: r.ip, dsn: r.dsn ?? tm("dsnNone") })
-            : tm("savedUnreachable", { ip: r.ip, reason: r.probe.error ?? String(r.probe.status ?? "?") }),
+            : probe.reachable
+              ? tm("savedNotAMachine", { ip: r.ip, status: String(probe.status ?? "?") })
+              : tm("savedUnreachable", { ip: r.ip, reason: probe.error ?? String(probe.status ?? "?") }),
         );
         await load();
         window.dispatchEvent(new Event("lankey-changed"));

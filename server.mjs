@@ -772,18 +772,21 @@ function probeRegtoken() {
   // Sans adresse, il n'y a personne à interroger : on répond « injoignable » plutôt que de
   // laisser node:http composer un hôte nul.
   if (!CFG.machineIp) return Promise.resolve({ reachable: false, error: "adresse de la machine non configurée", at: Date.now() });
+  // `host` est renvoyé avec le résultat : l'adresse peut changer pendant que la requête est en
+  // vol, et le résultat doit rester attribuable à l'adresse réellement interrogée.
+  const host = CFG.machineIp;
   return new Promise((resolve) => {
-    const r = httpRequest({ host: CFG.machineIp, port: 80, path: "/regtoken.json", method: "GET" }, (res) => {
+    const r = httpRequest({ host, port: 80, path: "/regtoken.json", method: "GET" }, (res) => {
       const c = [];
       res.on("data", (d) => c.push(d));
       res.on("end", () => {
         const body = Buffer.concat(c).toString("utf8");
         let parsed = null;
         try { parsed = JSON.parse(body); } catch {}
-        resolve({ reachable: true, status: res.statusCode, regtoken: parsed, at: Date.now() });
+        resolve({ host, reachable: true, status: res.statusCode, regtoken: parsed, at: Date.now() });
       });
     });
-    r.on("error", (e) => resolve({ reachable: false, error: e.message, at: Date.now() }));
+    r.on("error", (e) => resolve({ host, reachable: false, error: e.message, at: Date.now() }));
     r.setTimeout(4000, () => r.destroy(new Error("timeout")));
     r.end();
   });
@@ -950,12 +953,35 @@ function applyLanKey({ key, keyId }, source) {
  * `compare: true` interroge la machine même si le DSN est déjà connu, pour signaler une divergence
  * au lieu de la laisser passer.
  */
+let dernierEssaiDsn = 0;
 async function resolveDsn({ compare = false } = {}) {
   if (CFG.dsn && !compare) return CFG.dsn;
+  // Sans cela, la resolution paresseuse en tete de handleApi lance une sonde de 4 s a CHAQUE
+  // appel d API tant que le DSN est inconnu — or les pages interrogent /api/status toutes les
+  // 3 s. Resultat : le reseau martele et le journal noye sous des lignes identiques. Une
+  // tentative toutes les 30 s suffit ; `compare` (action explicite) n est jamais bride.
+  if (!compare) {
+    if (Date.now() - dernierEssaiDsn < 30000) return CFG.dsn;
+    dernierEssaiDsn = Date.now();
+  }
   const r = await probeRegtoken();
+  // L'adresse a pu changer pendant la requête (saisie d'une nouvelle machine, oubli). Attribuer
+  // le DSN d'un ancien appareil à la nouvelle adresse serait faux — et c'est arrivé : une sonde
+  // lancée au démarrage a repeuplé, 186 ms plus tard, un DSN qu'un changement d'adresse venait
+  // d'effacer.
+  if (r?.host && r.host !== CFG.machineIp) {
+    L("sys", `sonde ignorée : la réponse venait de ${r.host}, l'adresse est maintenant ${CFG.machineIp ?? "inconnue"}`);
+    return CFG.dsn;
+  }
   const found = r?.regtoken?.host_symname;
   if (typeof found !== "string" || !/^[A-Za-z0-9-]{6,}$/.test(found)) {
-    if (!CFG.dsn) L("sys", "DSN inconnu : la machine n'a pas répondu à /regtoken.json et MACHINE_DSN n'est pas défini");
+    // « Joignable » ne veut pas dire « c'est la machine » : n'importe quel serveur HTTP à cette
+    // adresse répond quelque chose. Distinguer les deux cas est ce qui rend le diagnostic possible.
+    if (!CFG.dsn) {
+      L("sys", r?.reachable
+        ? `DSN inconnu : ${r.host} a répondu HTTP ${r.status} à /regtoken.json, mais sans host_symname — ce n'est probablement pas la cafetière`
+        : `DSN inconnu : aucune réponse de ${r?.host ?? "(adresse non configurée)"} (${r?.error ?? "pas de détail"}), et MACHINE_DSN n'est pas défini`);
+    }
     return CFG.dsn;
   }
   if (CFG.dsn && CFG.dsn !== found) {
@@ -1000,10 +1026,15 @@ function restoreMachineIp() {
 function applyMachineIp(ip) {
   const value = ip.trim();
   const changed = value !== CFG.machineIp;
+  // On n'efface le DSN que si l'on REMPLACE une adresse connue par une autre : ce peut alors être
+  // un autre appareil. Passer de « aucune adresse » à une adresse n'indique rien de tel — et
+  // l'effacer là faisait perdre un DSN parfaitement valide juste après un oubli d'adresse, laissant
+  // la récupération de clé sans rien à quoi se raccrocher.
+  const remplace = changed && CFG.machineIp !== null;
   CFG.machineIp = value;
   CFG.machineIpSource = "saisie dans l'interface";
   setMeta("machineIp", { value, at: Date.now() });
-  if (changed) {
+  if (remplace) {
     S.session = null;
     if (!process.env.MACHINE_DSN) {
       CFG.dsn = null;
@@ -1745,12 +1776,16 @@ async function handleApi(req, res) {
     // telle, pas laissée à découvrir au premier échec de commande.
     const probe = await probeRegtoken();
     const dsn = probe.reachable ? await resolveDsn({ compare: true }) : CFG.dsn;
+    // Trois verdicts, pas deux : injoignable / quelque chose répond mais ce n'est pas la cafetière /
+    // c'est bien elle. Le cas du milieu est le plus trompeur — une adresse ou un nom d'hôte qui
+    // désigne un autre serveur répond très bien, en 404.
+    const isMachine = probe.reachable && typeof probe.regtoken?.host_symname === "string";
     return raw(res, JSON.stringify({
       ok: true,
       ip: CFG.machineIp,
       source: CFG.machineIpSource,
       changed,
-      probe: { reachable: probe.reachable, status: probe.status ?? null, error: probe.error ?? null },
+      probe: { reachable: probe.reachable, isMachine, status: probe.status ?? null, error: probe.error ?? null },
       dsn,
       dsnSource: CFG.dsnSource,
     }));

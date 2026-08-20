@@ -562,6 +562,7 @@
     "save": "enregistrer et tester",
     "testing": "test en cours…",
     "savedReachable": "Adresse {ip} enregistrée, et la machine répond. DSN : {dsn}.",
+    "savedNotAMachine": "Adresse {ip} enregistrée, mais ce n'est pas la cafetière : quelque chose a bien répondu à cette adresse (HTTP {status}), sans fournir le numéro de série que la machine renvoie sur /regtoken.json. Vérifiez l'adresse — un nom d'hôte qui ne désigne pas la machine, ou un autre serveur sur le réseau, répond de cette façon.",
     "savedUnreachable": "Adresse {ip} enregistrée, mais la machine n'a pas répondu ({reason}). Vérifiez l'adresse, que la machine est allumée, et que le trafic est autorisé entre ce serveur et son réseau.",
     "forget": "oublier l'adresse enregistrée",
     "forgetConfirm": "Oublier l'adresse enregistrée ? Sans MACHINE_IP dans .env.local, le serveur ne pourra plus contacter la machine jusqu'à une nouvelle saisie.",
