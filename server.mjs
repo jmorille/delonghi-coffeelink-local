@@ -1815,7 +1815,7 @@ createServer((req, res) => {
   restoreDsn();
   restoreLanKey();
   if (!CFG.machineIp) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Clé LAN », ou par MACHINE_IP dans .env.local");
-  if (!CFG.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page Système (compte De'Longhi)");
+  if (!CFG.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Clé LAN » (compte De'Longhi)");
   // `compare` : on interroge la machine même quand le DSN est déjà connu, pour signaler une
   // divergence au démarrage plutôt que de la découvrir au premier échec de commande.
   if (CFG.machineIp) resolveDsn({ compare: true }).catch(() => {});

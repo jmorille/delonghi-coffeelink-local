@@ -41,11 +41,11 @@ risque que s'il est **atteignable**. C'est là que la configuration réseau chan
 | **Un seul port ouvert : TCP/80** | Surface minimale |
 | Deux handlers seulement (`/regtoken.json`, `/local_reg.json`) | Pas de gros service web exposé |
 | Aucun port forward, machine derrière NAT | **Inatteignable depuis Internet** |
-| Isolée sur VLAN IoT le VLAN IoT | Séparée du reste du réseau |
+| Isolée sur un VLAN IoT dédié | Séparée du reste du réseau |
 | `enable_ssl: null` | Le port 80 est en clair — mais rien de sensible n'y transite hors `/regtoken.json` |
 | `/regtoken.json` sans authentification | Fuite DSN + regtoken à quiconque est déjà sur le VLAN IoT |
 
-Pour exploiter une faille locale, il faut **déjà être présent sur le VLAN le VLAN IoT**. À ce stade,
+Pour exploiter une faille locale, il faut **déjà être présent sur le VLAN IoT**. À ce stade,
 l'attaquant a des cibles plus intéressantes qu'une cafetière.
 
 ### 2.2 En sortie — piéger la machine
@@ -87,7 +87,7 @@ Règles OPNsense (source = `IP_MACHINE`) :
 | 1 | **Block** `IP_MACHINE` → `wan` (tout) | Tue le vecteur MITM/OTA distant |
 | 2 | **Block** `IP_MACHINE` → `RFC1918` (autres VLAN) | Empêche le pivot en cas de compromission |
 | 3 | **Pass** `<contrôleur local>` → `IP_MACHINE:80` | Seul le pilote LAN mode y accède |
-| 4 | **Block** reste de le VLAN IoT → `IP_MACHINE` | Isole des autres objets IoT |
+| 4 | **Block** reste du VLAN IoT → `IP_MACHINE` | Isole des autres objets IoT |
 
 Compromis : l'app mobile hors réseau et les notifications push cessent de fonctionner. En local
 (domicile ou VPN), tout est conservé.
@@ -104,7 +104,7 @@ Réduit la fenêtre de MITM sans casser l'app.
 
 ### 4.3 Priorité 3 — Maintien de l'isolement (déjà en place)
 
-- Garder la machine sur le VLAN IoT le VLAN IoT. **Ne jamais** la basculer sur un VLAN de confiance.
+- Garder la machine sur le VLAN IoT. **Ne jamais** la basculer sur un VLAN de confiance.
 - Restreindre qui, sur les autres VLAN, peut atteindre `IP_MACHINE:80` (idéalement : seulement
   le contrôleur Home Assistant / le pilote LAN mode).
 

@@ -241,6 +241,12 @@ L'image est **construite et publiée par GitHub Actions** : il n'y a rien à com
 | `:0.1.0`, `:0.1`, `:0` | une version précise — **à préférer en production** |
 | architectures | `linux/amd64` et `linux/arm64` (les images de release ; `:edge` suit celle du runner) |
 
+> **Visibilité du paquet.** Un paquet GHCR nouvellement créé est **privé**. Soit vous le passez en
+> public (page du paquet sur GitHub → *Package settings* → *Change visibility*), soit chaque hôte
+> qui tire l'image doit s'authentifier :
+> `echo $TOKEN | docker login ghcr.io -u VOTRE_COMPTE --password-stdin` avec un jeton portant la
+> portée `read:packages`.
+
 ### Exemple complet
 
 Deux fichiers à côté l'un de l'autre : `compose.yaml` et `.env.local`.

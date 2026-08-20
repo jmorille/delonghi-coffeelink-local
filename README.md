@@ -127,12 +127,64 @@ dépôt.
 
 ## Sécurité
 
-- Le module Wi-Fi ne parle qu'en **HTTP en clair** : le chiffrement Ayla protège le contenu des
-  *datapoints*, pas le transport. N'exposez pas ce serveur sur Internet.
-- La machine répond à `GET /regtoken.json` **sans aucune authentification** et reste
-  revendicable par un compte. Isolez-la sur un VLAN dédié — voir [`doc/securite.md`](doc/securite.md).
-- Le mot de passe du compte De'Longhi, s'il est utilisé, n'est **ni journalisé, ni stocké, ni
-  renvoyé**, et aucun endpoint ne retourne jamais la clé LAN.
+### Ce que cette machine est, du point de vue du réseau
+
+Un objet connecté dont le firmware **n'a jamais été mis à jour** : agent Ayla 1.5.3, SDK
+**ESP-IDF 3.3.1** — branche sans correctif de sécurité depuis 2022 —, binaire compilé en avril 2020.
+Il écoute sur **TCP/80 en clair**, répond à `GET /regtoken.json` **sans aucune authentification**
+(ce qui livre son numéro de série à quiconque est déjà sur le même réseau), et reste
+**revendicable** par un compte (`registrable: true`).
+
+La surface d'attaque locale est petite — deux handlers HTTP, aucun service web réel — mais le
+firmware, lui, est indéfendable dans le temps. La bonne réponse n'est pas de le corriger, c'est de
+**réduire ce qu'il peut atteindre**. Analyse complète dans [`doc/securite.md`](doc/securite.md).
+
+### Configuration du routeur / pare-feu
+
+Le pilotage local n'a **aucun besoin d'Internet**. C'est précisément ce qui permet de couper
+l'accès sortant de la machine sans rien perdre.
+
+Sur un réseau segmenté — la machine sur un VLAN IoT, le serveur sur un VLAN d'administration :
+
+| # | Règle | Pourquoi |
+|---|---|---|
+| 1 | **Bloquer** `machine → WAN` (tout) | Le levier décisif : plus de mise à jour distante, plus de MITM depuis Internet, plus de revendication par un tiers |
+| 2 | **Bloquer** `machine → autres VLAN` (RFC1918) | Si elle est compromise, elle ne sert pas de point d'appui vers le reste du réseau |
+| 3 | **Autoriser** `serveur → machine:80` | Le seul flux entrant utile : `local_reg.json` et `regtoken.json` |
+| 4 | **Autoriser** `machine → serveur:3000` | **Indispensable.** En LAN mode c'est la machine qui appelle : sans cette règle, rien ne fonctionne |
+| 5 | **Bloquer** `reste du VLAN IoT → machine` | L'isole des autres objets connectés, souvent les plus faibles |
+
+La règle 4 est celle qu'on oublie, et c'est la première cause de panne. Les règles 1 et 2 sont
+celles qui apportent réellement quelque chose.
+
+Si votre réseau n'est pas segmenté, le minimum utile : réserver un bail DHCP à la machine, la
+placer sur le SSID invité s'il est isolé, et bloquer son accès sortant sur le routeur — beaucoup de
+routeurs grand public savent le faire par adresse MAC ou par client.
+
+### Le serveur lui-même
+
+- **Ne l'exposez pas sur Internet** : aucune redirection de port, aucune DMZ, aucun DNS dynamique
+  vers lui. Il parle HTTP en clair et n'a **aucune authentification** — quiconque l'atteint pilote
+  votre machine.
+- Pour y accéder à distance, passez par un **VPN** (WireGuard, Tailscale…), pas par une exposition
+  directe.
+- Un reverse proxy pour l'interface est possible, mais **`/local_lan/*` doit rester joignable en
+  direct par la machine** : son client HTTP est rudimentaire et ne supporte pas les en-têtes
+  ajoutés par un proxy.
+- Désactivez **UPnP** sur le routeur : c'est ce qui pourrait ouvrir un port sans que vous le
+  demandiez.
+
+### Les secrets
+
+- `data/lan-server.db` contient la **clé LAN**, le numéro de série et les noms saisis sur la
+  machine. Traitez-le comme un fichier de mots de passe : pas de sauvegarde en clair vers un
+  stockage partagé, et jamais en pièce jointe d'un rapport de bug. Le répertoire est gitignoré.
+- `.env.local` n'est pas versionné et ne doit pas l'être.
+- Le mot de passe du compte De'Longhi, s'il est utilisé pour récupérer la clé, n'est **ni
+  journalisé, ni stocké, ni renvoyé** : il n'existe que le temps de la requête. Aucun endpoint ne
+  retourne jamais la clé LAN — seulement son identifiant, qui circule de toute façon en clair dans
+  l'échange de clés.
+- Le chiffrement Ayla protège le **contenu** des *datapoints*, pas le transport.
 
 ## État
 

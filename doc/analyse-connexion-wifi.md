@@ -26,7 +26,7 @@ Analyse réalisée le 2026-08-19 à partir de :
 | Hostname | `cafe` | bail DHCP |
 | MAC | `XX:XX:XX:XX:XX:XX` | bail DHCP |
 | Fabricant du module | **Espressif Inc.** (ESP32) | OUI de la MAC |
-| VLAN | le VLAN IoT `VLAN_IOT/24` (IoT), iface `IFACE_IOT` | OPNsense |
+| VLAN | VLAN IoT `VLAN_IOT/24`, iface `IFACE_IOT` | pare-feu du réseau |
 | **DSN Ayla** | **`AC000W0XXXXXXXX`** | `/regtoken.json` + logcat `DSN:` |
 | Nom machine (app) | `D1705596` | logcat `Wifi Machine found` |
 | Jeton d'enregistrement | `9f3340` | `GET /regtoken.json` |
@@ -347,7 +347,7 @@ Le pilotage de la machine passe uniquement par Ayla. L'app contacte par ailleurs
    numéro de série de la machine et le jeton d'enregistrement Ayla. Dans le modèle Ayla, le
    couple DSN + regtoken permet de revendiquer un appareil sur un compte. Ici la machine est
    déjà enregistrée (`registered: 1`), ce qui limite la portée, et elle est isolée sur le VLAN
-   IoT le VLAN IoT — c'est le bon réflexe et il faut le garder.
+   IoT — c'est le bon réflexe et il faut le garder.
 2. **Aucun chiffrement ni authentification sur le port 80.** Rien de sensible n'y transite en
    dehors du point 1, mais l'endpoint n'a aucune raison d'être joignable depuis autre chose que
    l'app pendant l'appairage.
@@ -493,9 +493,9 @@ Rediriger `ads-eu.aylanetworks.com` vers un faux cloud local (via Unbound). Beau
 lourd : il faudrait reproduire l'API Ayla et gérer la validation TLS côté module ESP32.
 À ne considérer que si le LAN mode échoue.
 
-> Note de topologie : la machine est sur le VLAN IoT (`192.168.30.x`), Home Assistant sur LAN5
-> (`192.168.50.x`). Le LAN mode demande un flux **bidirectionnel** : LAN5 → le VLAN IoT:80 pour le
-> `local_reg`, et le VLAN IoT → LAN5:\<notre port\> pour les rappels de la machine. Deux règles à créer.
+> Note de topologie : la machine est sur le VLAN IoT (`VLAN_IOT`), le contrôleur sur un VLAN
+> d'administration (`VLAN_ADMIN`). Le LAN mode demande un flux **bidirectionnel** : VLAN_ADMIN → VLAN_IOT:80 pour le
+> `local_reg`, et VLAN_IOT → VLAN_ADMIN sur notre port pour les rappels de la machine. Deux règles à créer.
 
 ---
 
