@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+.env.local
+.env*.local
+# Etat runtime : recettes locales et cache des lectures machine (noms de profils,
+# checksums, Bean System). Regenere par la machine, et contient des donnees perso.
+data/
+next-env.d.ts
+*.tsbuildinfo

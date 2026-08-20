@@ -1,0 +1,1319 @@
+# État du serveur LAN mode — 2026-08-19
+
+## 🎉 SUCCÈS COMPLET end-to-end via `server.mjs` (2026-08-19 ~21:29)
+
+Le pilotage local fonctionne **via l'architecture finale** (`node server.mjs`, port 3000) :
+bouton « Allumer » de l'UI → la machine s'allume, confirmé visuellement ET par le monitor
+qu'elle pousse en LAN (**état 0x04 veille → 0x00 ALLUMÉE**, progress lu en direct) et ses
+`data_response` (`0xD0…`). Le programme se déroule (≈30 cycles sur 75 s) puis s'arrête proprement.
+
+### Le dernier fix décisif
+Retirer **`Connection: close`** de nos réponses HTTP. L'ESP32 enchaîne key_exchange →
+commands.json sur la **même connexion keep-alive** ; `Connection: close` la coupait et il ne
+passait jamais à commands.json (symptôme : `session active` mais `counter=0`). Garder uniquement
+`Content-Type` + **`Content-Length` explicite**.
+
+### Robustesse à connaître
+La machine a des **transitoires** : juste après un réveil/extinction elle peut répondre
+`socket hang up` ou `404` à `local_reg` pendant ~20-40 s. Si ça tombe pendant la fenêtre du
+programme, la commande n'est pas livrée → réessayer quand elle s'est stabilisée. (À fiabiliser :
+retries + fenêtre de programme plus longue.)
+
+## La recette qui marche (validée en conditions réelles)
+
+Reproduire exactement la séquence de l'app officielle :
+
+1. **HTTP brut, pas Next.js**, pour les endpoints device-facing. Le client HTTP de l'ESP32
+   (ADA 1.5.3) rejette le framing de Next (`fetch`/undici → 400 ; header `vary: rsc,…` de l'App
+   Router). Il faut des réponses `node:http` avec **`Content-Length` explicite** + `Connection: close`.
+2. **`device_connected` (unix-sec frais) servi EN PREMIER** (présence de l'app), puis la trame
+   ECAM voulue, puis **présence soutenue** (SEND_PROFILE + refresh device_connected) pendant tout
+   le boot (~60–75 s).
+3. **Keep-alive rapide (2,5 s)** : re-`local_reg` en continu ; la machine fait un cycle complet
+   (key_exchange → GET commands.json → applique) à chaque `local_reg`.
+4. **Crypto** : dérivation **double HMAC-SHA256**, AES-256-CBC flux persistant, `lanip_key` en
+   octets ASCII. Fonctionne **dans les deux sens** (on déchiffre les datapoints de la machine).
+5. **Trame de réveil = turn-on** : `0D 07 84 0F 02 01 55 12` (+ ts). Identique à ce que l'app
+   envoie (vérifié en logcat). ⚠️ ON = `…02 01`, OFF = `…01 01` (ne pas inverser).
+
+Propriétés observées côté machine : `d302_monitor` (état), `data_response` (accusés/réponses ECAM
+en `0xD0…`), `device_connected`, `data_request`.
+
+## Architecture finale
+
+- **`server.mjs`** (serveur Node personnalisé) : gère `/local_lan/*` et `/api/*` en HTTP brut
+  (recette validée), et **délègue les pages UI à Next.js** (même process → état partagé).
+  Lancer : `npm run build && npm start` (= `node server.mjs`).
+- Les route handlers Next sous `src/app/local_lan/*` et `src/app/api/*` restent pour référence
+  mais **ne sont pas utilisés en prod** (server.mjs intercepte ces chemins avant Next). Le problème
+  du header `vary` de Next est ainsi contourné.
+- UI : `/` (pilotage : allumer/éteindre/boissons + état live) et `/recipes` (config recettes).
+
+## Séquence de réveil de l'app (référence terrain, logcat 20:56–20:57)
+
+Voir `../docs/capture-reveil-app.txt`. Points clés :
+- connexion → `device_connected = <unix sec>`
+- tap réveil → `turnMachineOn` → `AylaDatapoint sent to SDK: 0d 07 84 0f 02 01 55 12`
+- puis spam `0d 06 a9 f0 01` (SEND_PROFILE) pendant le boot
+
+## Reste à finaliser
+
+- **Démo end-to-end du `server.mjs`** : la logique est prouvée (via le script `debug-capture.mjs`
+  qui a réveillé la machine), mais le round-trip via `server.mjs` n'a pas été bouclé car la
+  machine était en état instable après un test intensif (`local_reg` → `socket hang up` puis
+  `404`, regtoken qui change). **Laisser la machine se stabiliser** (quelques minutes au repos)
+  puis retester `npm start` + bouton Allumer.
+- **Fiabiliser** : espacer les commandes, gérer les `socket hang up`/`404` transitoires avec
+  retries, allonger la fenêtre du programme si la machine tarde à répondre.
+- **États du monitor** : 0x04 = veille, 0x00 = allumée ; cartographier les autres (préparation,
+  alarmes) en capturant pendant une boisson.
+- `debug-capture.mjs` (script de test/diagnostic) peut être retiré une fois `server.mjs` validé.
+
+---
+
+## Import du catalogue de boissons (2026-08-19, après le succès allumage/extinction)
+
+Page dédiée **`/boissons`** + API `GET /api/beverages` / `POST /api/beverages/import`.
+
+### Ce qui est acquis
+
+- **Catalogue statique, 28 boissons**, exact pour cette machine : `src/lib/machine-model.json`
+  (extrait de `assets/MachinesModels.json` de l'APK, entrée `product_code` 0132217055) et
+  libellés/mapping dans `src/lib/beverages.mjs`. L'app officielle ne demande **jamais** la liste
+  à la machine — elle la connaît par cette table.
+- **Ids corrigés** : pas d'id 14 ni 17–21 ; thé = 22, verseuse = 23, cortado = 24,
+  long black = 25, travel mug = 26, brew over ice = 27. L'ancienne table de
+  `docs/commandes-cafe.md` était fausse (elle déduisait les ids de l'ordre des propriétés).
+- **Deux formats de lecture élucidés et documentés** (`docs/commandes-cafe.md` §6) :
+  `0xB0` = quadruplets `id, min, défaut, max` (parser `X()`), `0xA6` = paires `id, valeur`
+  par profil (parser `u0()`). Décodeurs portés dans `beverages.mjs`.
+- **Décodeur validé** sur la trame réelle `d001_rec_espresso` : parcours tombant pile sur le
+  CRC, café 20/40/180 ml, arôme 0/4/5 — et les 7 paramètres trouvés sont exactement les 7
+  `ingredients` déclarés par la table constructeur. Deux sources indépendantes concordantes.
+- **Lecture 100 % locale** : `readPropertyCmd()` sert une commande Ayla
+  `GET property.json?name=<prop>` dans `commands.json` (port de
+  `AylaLanCommand.newGetPropertyCommand`) ; la machine POSTe la valeur sur
+  `/local_lan/property/datapoint.json`, qu'on déchiffre déjà. Aucun cloud, aucun token.
+- **`pnpm dev` passe désormais par `server.mjs --dev`** (Next en HMR, endpoints device-facing
+  en HTTP brut). `next dev` seul contournait `server.mjs` et cassait le pilotage : conservé
+  sous `pnpm dev:next-only` pour du travail purement UI.
+
+### Pas encore fait
+
+- **L'import n'a pas encore été exécuté contre la machine réelle** : le catalogue et les
+  décodeurs sont en place et vérifiés hors ligne, mais le round-trip
+  `POST /api/beverages/import` → 21 propriétés remontées reste à valider (bouton « Importer »
+  de `/boissons`, machine réveillée). Vérifier aussi si elle répond aux lectures en veille.
+- Propriétés par profil 2..5 : formule déduite du code, observée seulement pour le profil 1.
+- Noms des recettes perso / profils (`0xAA` / `0xA4`, UTF-16BE, stride 22) non implémentés.
+- Aucune boisson n'a encore été coulée via le serveur (bouton « Préparer » câblé, non testé).
+
+## Import des profils (2026-08-19) — validé sur la machine
+
+Page **`/profils`** + API `GET /api/profiles` / `POST /api/profiles/import`.
+Import réel réussi : les 5 profils, leurs icônes, leurs ordres de favoris et les 6 noms de
+recettes perso remontent correctement.
+
+```
+Profil 1  Profil A   icône 12   23 boissons (Bean Adapt, Espresso macchiato, Latte macchiato, …)
+Profil 2  Profil B  icône  8   23 boissons (ordre différent)
+Profil 3  Profil C     icône 17   23 boissons
+Profil 4  Profil 4 icône  5   Perso 1 = « Recette A », Perso 2..6 = noms par défaut
+Profil 5  Profil 5 icône 14
+```
+
+### Deux erreurs corrigées en cours de route
+
+1. **Mauvais parser.** Un premier repérage concluait au parser `K0()` (stride 22, avec octet
+   « mug »). C'est le chemin **Striker** ; le logcat de cette machine dit `isStriker = false`,
+   donc c'est `J0()` / **stride 21** et les propriétés `d034`/`d035`/`d036`/`d037`. Les variantes
+   Striker sont quand même interrogées : elles répondent vide et sont marquées « absente ».
+2. **Décodeur trop strict.** Ma 1re version déduisait l'offset en exigeant que les entrées
+   remplissent exactement le bloc → `d034` était rejeté (« 0 entrées, désaligné ») car il laisse
+   **un octet résiduel**. La vraie règle, lue sur les trames : entrées à l'**offset 6**, nombre
+   d'entrées donné par les **octets 4 et 5** (premier/dernier index), reste ignoré — comme la
+   division entière de `J0()`. Détail dans `docs/commandes-cafe.md` §8.
+
+Également : `POST /api/command {"action":"selectProfile","profileId":n}` (trame `0xA9`), et un
+bouton « Activer » par profil. Non testé contre la machine.
+
+## Divers (2026-08-19)
+
+- Page `/` : bouton **« Arrêter la préparation »** global (0x83 mode STOPV2, ciblant la dernière
+  boisson lancée). Les boutons d'arrêt par boisson ont été retirés — un seul suffit.
+- Les deux recettes d'usine (Espresso, Cappuccino) ont été supprimées de `data/recipes.json` et
+  le `SEED` du serveur est vide : le catalogue réel des 28 boissons est sur `/`.
+
+### Sélecteur de profil sur `/` (2026-08-19)
+
+Le choix du profil a quitté la carte d'import pour la carte « Machine », en haut, et affiche les
+**noms réels** (« 1 — Profil A », « 2 — Profil B »…) avec un bouton « Activer sur la machine »
+(trame `0xA9`). La page `/` ne fait que **lire** le cache de noms via `GET /api/profiles` ;
+l'import des profils reste sur `/profils`. Un seul sélecteur pilote désormais à la fois les
+réglages affichés et la cible de l'import.
+
+### Page `/` épurée (2026-08-19)
+
+- Le bloc « Importer les réglages depuis la machine » a été **retiré** de `/`. La lecture reste
+  possible boisson par boisson (bouton « Lire » sur chaque carte, qui lit bornes + valeurs du
+  profil courant) et l'endpoint `POST /api/beverages/import` accepte toujours un import complet.
+  ⚠️ Il n'y a donc plus de bouton pour relire les 28 boissons d'un coup depuis l'UI.
+- Le sélecteur de profil n'est plus une liste déroulante mais une **rangée de boutons nommés**
+  (Profil A, Profil B, Profil C, …). Un clic bascule l'affichage **et** active le profil sur la machine
+  (trame `0xA9`), sans confirmation : la trame est inoffensive et le clic est explicite. C'était
+  la raison de ne pas activer sur une liste déroulante — la parcourir aurait envoyé une commande
+  par valeur traversée.
+- La progression de lecture et les messages sont remontés dans la carte « Machine ».
+
+### Filtrage des profils non renommés (2026-08-19)
+
+`GET /api/profiles` expose désormais un booléen `renamed` par profil : faux si le nom est celui
+d'usine (motif `Profil <n>`, testé par `/^profil(e)?\s*\d+$/i`) ou pas encore lu. La page `/`
+n'affiche que les profils renommés — ici **Profil A, Profil B, Profil C** ; « Profil 4 » et « Profil 5 »
+sont masqués. La page `/profils` continue d'afficher les cinq, c'est elle qui sert au diagnostic.
+
+Deux replis pour que le contrôle ne disparaisse jamais : noms pas encore lus → on affiche les
+numéros avec un renvoi vers la page Profils ; machine sans aucun nom personnalisé → on affiche
+tout en l'indiquant. Et si le profil sélectionné sort de la liste affichée, la sélection bascule
+sur le premier affiché (simple changement d'affichage, rien n'est envoyé à la machine).
+
+### Bug corrigé : la présence écrasait le profil choisi (2026-08-19)
+
+**Symptôme** : cliquer « Profil C » laissait la machine sur « Profil A ».
+
+**Cause** : la trame de « présence soutenue » du programme était `frameSendProfile(1)` — profil 1
+**en dur**. Or `0xA9` n'est pas une trame neutre : c'est **la commande de sélection de profil**.
+La séquence servie était donc `device_connected` → `0xA9 profil 3` → `0xA9 profil 1` ×N pendant
+les 20 s du programme. La machine finissait sur le profil 1.
+
+Cette trame avait été choisie pendant la mise au point du réveil, où elle jouait le rôle de
+signal de présence de l'app — inoffensive tant qu'on ne visait que le profil 1.
+
+**Correctif** : `S.activeProfile` (défaut 1) est positionné par `selectProfile` **et** par
+`dispense` (qui cible aussi un profil), et la présence envoie `frameSendProfile(S.activeProfile)`.
+Le libellé de log devient `sustain(profil n)` pour que la dérive soit visible.
+
+**Vérifié** sur les trames servies : `0d 06 a9 f0 03` puis `sustain(profil 3)` répété.
+Le même bug basculait la machine sur le profil 1 en pleine préparation lancée sur un autre profil.
+
+`GET /api/status` expose désormais `activeProfile`, et la page `/` s'y aligne au chargement pour
+ne pas afficher un profil actif faux après un rechargement.
+
+### Ordre d'affichage par profil (2026-08-19)
+
+Question posée : « activer un profil déclenche-t-il un import du profil pour garantir l'ordre
+d'affichage ? » Réponse d'alors : **non**, et trois écarts sont apparus à la vérification :
+
+1. `selectProfile` n'envoyait que la trame `0xA9`, sans rien relire.
+2. **La page `/` n'utilisait pas du tout l'ordre de la machine** : elle groupait par catégories
+   inventées par nous, identiques pour les 5 profils. Les ordres des 5 profils étaient pourtant
+   en cache depuis l'import de `/profils` — personne ne s'en servait.
+3. Seules les valeurs du profil 1 étaient en cache (les profils 2-5 n'avaient que leur ordre).
+
+**Corrigé** :
+- `GET /api/beverages?profile=n` renvoie `order` (ids dans l'ordre de la machine) + `orderProp`.
+- `/` affiche « Dans l'ordre de la machine », suivi d'une section « Non listées par ce profil »
+  pour les boissons absentes de l'ordre. Le regroupement par catégories reste le repli quand
+  l'ordre n'a pas été lu, et l'UI dit laquelle des deux règles s'applique.
+- Activer un profil **enchaîne** une relecture de sa propriété d'ordre : fenêtre de programme
+  raccourcie à 10 s, puis la file de lecture s'écoule (une seule propriété).
+
+**Vérifié de bout en bout** : `0xA9 profil 3` → `sustain(profil 3)` → `lecture d263_3_rec_priority`
+→ ordre reçu, et la page affiche « Profil C » actif avec l'ordre du profil 3 (Bean Adapt › Espresso ›
+Latte macchiato › Lait chaud …), différent de celui du profil 1.
+
+Les **valeurs** par profil ne sont toujours pas relues à l'activation (21 propriétés, ~60 s) :
+seul l'ordre l'est. Le bouton « Lire » de chaque carte reste le moyen d'obtenir les valeurs du
+profil courant pour une boisson donnée.
+
+### Sommes de contrôle 0xA3 — validation de cache (2026-08-19)
+
+Question posée : « utilises-tu la somme de contrôle des quantités par profil pour optimiser les
+échanges ? » Réponse d'alors : **non, pas du tout**. Implémenté depuis.
+
+Trame réelle obtenue de la machine (20 octets), décodée du premier coup :
+
+```
+d0 13 a3 f0 | 7a 3f | 7a 3f | c0 57 | 7a 3f | 7a 3f | b4 31 | bc f4 | 08 1a
+              prof1   prof2   prof3   prof4   prof5   perso    noms    crc
+```
+
+`size` déduit = 5 (formule `(len − 9) / 2`, il n'est pas dans la trame). **Le profil 3 se
+distingue** (`0xc057` vs `0x7a3f` pour les quatre autres) : ses quantités diffèrent réellement,
+les autres sont aux valeurs d'usine. La somme est donc bien discriminante.
+
+- `POST /api/checksums` demande la trame ; `GET /api/checksums` renvoie sommes, précédentes,
+  familles changées, et ce qui est périmé par rapport au dernier import.
+- `POST /api/profiles/import` **saute la lecture des noms** si leur somme n'a pas bougé
+  (`force:true` pour outrepasser). Les sommes ne couvrent pas l'ordre des favoris : lui est
+  toujours relu.
+- Format et sémantique documentés dans `docs/commandes-cafe.md` §9.
+
+### Bug corrigé : la présence imposait un profil (2026-08-19)
+
+En testant les sommes de contrôle, le log a montré `sustain(profil 1)` : **ma propre requête a
+ramené la machine du profil 3 au profil 1**. Cause de fond : `0xA9` servait de battement de cœur
+alors que c'est **la commande de sélection de profil**. Le correctif précédent (« envoyer
+`S.activeProfile` au lieu de 1 en dur ») ne suffisait pas, puisque `activeProfile` retombe à 1 —
+non confirmé — après un redémarrage du serveur.
+
+**Correctif** : `startProgram(..., sustain)` prend par défaut une **demande de monitor**
+`0D 05 75 0F`, qui est une lecture pure. `sustain: "profile"` ne subsiste que pour le réveil (où
+le spam `0xA9` est la recette validée) et pour la sélection de profil (réaffirmer la même valeur
+est idempotent). Voir `docs/commandes-cafe.md` §10.
+
+### Page Recettes reconstruite sur les bornes du modèle (2026-08-19)
+
+Les bornes `0xB0` sont des caractéristiques du **modèle**, communes aux 5 profils : un profil ne
+peut que choisir une valeur à l'intérieur. La page les affiche et les impose.
+
+- Elle avait sa **propre table de boissons, avec les anciens ids faux** (thé=16, cortado=18,
+  brew over ice=21) et n'en listait que 18 : elle lit désormais `/api/beverages` (28 boissons,
+  ids réels).
+- Colonnes Min / Max / Défaut machine par paramètre, curseur + champ numérique bornés, bouton
+  « défaut » pour revenir à la valeur d'usine. Saisie plafonnée (999 → 180 sur l'espresso, testé)
+  et enregistrement bloqué si une valeur sort des bornes.
+- Ne propose que les paramètres que la boisson déclare (`ingredients`) **et** dont la borne est
+  exploitable — les emplacements non configurés (défaut 0 ou 255) sont écartés.
+- Changer de boisson réinitialise aux défauts machine : garder les paramètres de la précédente
+  produirait des valeurs hors bornes.
+- Si les bornes d'une boisson n'ont pas été lues, la page le dit et renvoie vers le bouton
+  « Lire » plutôt que d'inventer un intervalle.
+
+### Page Système (2026-08-19)
+
+Nouvelle page `/systeme`, alimentée par `GET /api/system`, qui mélange trois sources **étiquetées
+comme telles** — c'est le point important : ne pas faire passer un relevé figé pour du temps réel.
+
+1. **Lu en direct** : `GET http://<machine>/regtoken.json`. J'ai sondé 8 endpoints du module ;
+   **seul celui-là répond** (HTTP 200) : `status.json`, `wifi_status.json`, `time.json`,
+   `module_info.json`, `ota.json`, `lan_ota.json`, `wifi_scan.json` renvoient tous 404 — les
+   endpoints de setup n'existent qu'en mode point d'accès. Réponse réelle :
+   `{"regtoken":"09de31","registered":1,"registration_type":"AP-Mode","host_symname":"<DSN>"}`.
+2. **Relevé cloud figé** : `src/lib/device-sheet.json`, extrait de `docs/materiel-et-firmware.md`.
+   Champs non personnels uniquement — SSID, IP publique, géolocalisation, identifiants de compte et
+   `setup_token` restent dans `docs/secrets.md`.
+3. **Notre état protocole** : session, clé LAN, keepalive, profil actif, monitor, sommes de contrôle.
+
+**OTA** — traité par la voie locale, qui est celle qui compte ici : en LAN mode c'est **la machine
+qui vient chercher l'image chez nous** (`LanOTAHandler` sert `/ota_status.json` et le chemin de
+l'image). Le serveur enregistre donc toute requête OTA reçue de la machine dans `S.otaRequests` et
+répond 404 : zéro requête = aucun OTA en cours de distribution par nous. La vérification cloud
+(`apiv1/dsns/<DSN>/ota.json`) est **optionnelle**, conditionnée à `AYLA_TOKEN` dans `.env.local`
+(documenté dans `.env.local.example`) ; sans token la page affiche « désactivée » plutôt que de
+prétendre qu'il n'y a pas de mise à jour. Le pilotage local ne doit jamais dépendre d'un token.
+
+Firmware affiché avec son âge calculé (**6,4 ans** au moment de l'écriture) et les 6 constats de
+sécurité du relevé, dont 4 en avertissement : firmware jamais mis à jour, SDK ESP-IDF 3.3.1 en fin
+de vie, aucun TLS local (`enable_ssl: null`), `regtoken` lisible sans authentification avec
+`registrable: true`.
+
+### Personnalisation des recettes par profil (2026-08-19)
+
+Question : « peut-on personnaliser les recettes par profil ? » **Oui, nativement** — et c'était
+déjà à moitié en place sans l'être vraiment.
+
+- **La machine le fait** : chaque profil a ses propres valeurs (`d039_1_rec_espresso`,
+  `d060_2_rec_espresso`, …). Les sommes de contrôle `0xA3` l'ont prouvé : le profil 3 diffère
+  (`0xc057`) des quatre autres (`0x7a3f`, valeurs d'usine).
+- **Lecture** : `GET /api/beverages?profile=n` renvoie déjà `values` par boisson. La page Recettes
+  recharge le catalogue quand le profil du brouillon change, affiche une colonne « Profil n » à
+  côté de min/max/défaut, et a un bouton « Reprendre du profil ».
+- **Écriture** — c'était le maillon manquant : `POST /api/command {"action":"saveToProfile", …}`
+  envoie `0x83` en mode **DONTCARE (0)** avec l'action **SAVE_BEVERAGE (1)**, le profil visé étant
+  encodé dans `(profileId << 2) | action`. Trame vérifiée hors ligne : espresso 40 ml / arôme 4
+  vers le profil 3 → `0d 0d 83 f0 01 00 01 00 28 02 04 0d 15 86` (dernier octet `0x0D` = (3<<2)|1).
+  Bouton « Écrire dans le profil n » avec confirmation détaillée : c'est une **écriture persistante**
+  qui remplace la recette du profil sur la machine.
+  La réponse renvoie la somme de contrôle du profil **avant** écriture, pour pouvoir vérifier
+  qu'elle a bougé au lieu de supposer que l'envoi a suffi.
+
+**Défaut corrigé au passage** : la préparation utilisait toujours `PREPARE_BEVERAGE (2)`, alors que
+l'app choisit `PREPARE_BEVERAGE_INVERSION (6)` quand le paramètre `INVERSION (12)` vaut 1
+(`RecipeData.T()`). Sur ce modèle c'est le cas du **flat white, cappuccino inversé, cortado et
+long black** (bornes lues 1/1/1) : ces quatre boissons étaient donc lancées avec la mauvaise action.
+
+**Non testé contre la machine** : l'écriture dans un profil n'a pas été déclenchée (elle modifie
+durablement l'appareil), ni la préparation avec inversion.
+
+### Détails de boisson éditables sur `/` (2026-08-19)
+
+Le panneau « Détails » de chaque boisson n'est plus en lecture seule : il contient un éditeur de la
+recette **du profil actif**, sous les bornes du modèle.
+
+- Composant `RecipeEditor`, monté seulement à l'ouverture du panneau : son état repart donc des
+  valeurs de la machine à chaque fois, sans logique de réinitialisation à écrire.
+- Les valeurs partent de la recette enregistrée du profil si elle a été lue, sinon des défauts du
+  modèle. Curseur + champ numérique bornés par min/max, bouton ↺ quand c'est modifié.
+- Deux actions : « Préparer avec ces valeurs » (0x83 START) et « Écrire dans le profil n »
+  (0x83 DONTCARE/SAVE_BEVERAGE, écriture persistante, avec confirmation détaillée).
+- Le tableau complet des paramètres reste dessous, en référence.
+
+**Piège traité** : un paramètre dont `min == max` n'est pas réglable — l'ordre lait/café d'un flat
+white vaut toujours 1 — mais il **doit rester dans la trame**, puisque c'est lui qui fait choisir
+l'action `PREPARE_BEVERAGE_INVERSION`. Il s'affiche donc en lecture seule (« 1 (imposé) ») et reste
+dans le payload. La page Recettes, elle, l'excluait carrément via `isUsable` : son écriture aurait
+produit une recette sans le drapeau d'inversion. Corrigé par un `payload()` qui rajoute les
+paramètres imposés.
+
+Vérifié dans le navigateur sur le flat white : 3 curseurs (café 20-180, arôme 0-5, lait 50-1080) et
+« Ordre lait/café : 1 (imposé) ».
+
+### Options masquées et infos techniques (2026-08-19)
+
+Deux défauts signalés, tous deux réels.
+
+**1. Des options réglables étaient masquées.** L'éditeur filtrait sur `kind === "user"` — une
+classification que **j'avais inventée**, absente du protocole — et sur `isSet` (défaut dans les
+bornes). Conséquences constatées :
+
+| Boisson | Ce qui était caché |
+|---|---|
+| Espresso, tous | « 2 tasses » (0/0/1), « Index de longueur » (0/1/4) |
+| Cappuccino | « Accessoire » |
+| **Mug de voyage** | **Café (40/0/240), Lait (60/0/460), Eau chaude (50/0/260)** |
+
+Le cas du mug est le pire : ces paramètres ont une vraie plage, mais leur **défaut vaut 0** (jamais
+configuré), donc `isSet` les écartait — impossible d'y ajouter du lait. Même chose pour les 6
+recettes perso vierges.
+
+**Corrigé** : un paramètre est réglable si `max > min`, indépendamment du défaut. Valeur de départ =
+valeur du profil si dans les bornes, sinon défaut s'il l'est, sinon **minimum**. `kind` ne sert plus
+qu'à *grouper* : les réglages « avancés » (Programmable, Visible, Index de longueur, Mélange) sont
+derrière un bouton, avec un avertissement — « Visible » retire la boisson de l'écran de la machine.
+Un paramètre à valeur unique reste affiché « (imposé) » et dans la trame.
+
+Les `kind` ont été revus dans `beverages.mjs` : « 2 tasses » et « Accessoire » passent de `meta` à
+`user`, `meta` devient `advanced`, et le commentaire dit explicitement de **ne plus filtrer** sur ce
+champ.
+
+**2. Les infos techniques étaient noyées.** Elles sont désormais derrière un bouton **« ⓘ Infos
+techniques »** dans le panneau de détails : tableau complet des paramètres (y compris ceux non
+réglables), propriété de bornes, propriété du profil, et trame brute lue.
+
+Vérifié dans le navigateur — cappuccino : 3 curseurs (café 20-180=65, arôme 0-5=3, lait 50-1080=170,
+valeurs du profil 1), 2 paramètres imposés, 3 réglages avancés, panneau technique fonctionnel.
+Mug de voyage : 5 curseurs dont le lait 60-460, là où il n'y en avait aucun.
+
+### Nom des recettes perso non repris sur `/` (2026-08-19)
+
+**Symptôme** : la recette perso 1 du profil Profil A s'appelle « Recette A » sur la machine, mais la
+page Boissons affichait « Recette perso 1 ».
+
+**Cause** : le nom était bien lu (`d036_recipe_custom_name_1_3` → « Recette A », visible sur
+`/profils`), mais `/api/beverages` ignorait ce qui avait été lu et gardait le libellé statique du
+catalogue. Deux endpoints lisaient les noms différemment — `/api/profiles` les aplatissait dans une
+fonction locale, `/api/beverages` ne les regardait pas du tout.
+
+**Correctif** : extraction d'un helper partagé `readNames(store, kind)` + `machineBeverageNames()`,
+utilisé par **les deux** endpoints. `/api/beverages` remplace désormais le libellé par le nom lu sur
+la machine et expose `catalogLabel`, `machineName`, `machineNameProp` et `icon` pour garder la
+traçabilité de l'origine du nom.
+
+Vérifié : « Recette A » s'affiche en 5ᵉ position de l'ordre du profil 1 (id 230, conforme à
+`200,11,8,1,230,…`), et les emplacements non renommés portent leurs noms d'usine machine
+(« Perso 2 »… au lieu de « Recette perso 2 »…).
+
+**Pas couvert** : le nom du Bean System (id 200) reste le libellé du catalogue. Il ne vient pas des
+propriétés de noms de recettes mais des données Bean System (`0xBA`, nom UTF-16 de 40 octets, ou
+`d251_beansystem_1`), qui ne sont pas encore lues.
+
+### Internationalisation (2026-08-19)
+
+**next-intl 4.13** installé, français seul pour l'instant. 122 chaînes extraites des 5 pages vers
+`messages/fr.json` ; typecheck et build de production verts, aucune clé manquante sur les 5 pages
+(vérifié en cherchant `MISSING_MESSAGE` dans le HTML rendu).
+
+Choix structurants :
+
+- **Pas de segment de locale dans l'URL.** `server.mjs` intercepte `/api/*` et `/local_lan/*` avant
+  Next ; un segment `[locale]` déplacerait toutes les pages (`/fr/profils`…) sans rien apporter tant
+  qu'il n'y a qu'une langue. Le point d'extension est `src/i18n/request.ts` (cookie ou
+  `Accept-Language`), qui ne touche pas aux pages.
+- **Rien de traduisible ne traverse l'API.** Le serveur envoie des identifiants de protocole —
+  `slug` pour une boisson, `name` (énum ECAM) pour un paramètre — et le client traduit via
+  `src/i18n/labels.ts`, avec repli sur le libellé serveur si la clé manque. Un **nom saisi sur la
+  machine** (« Recette A », « Grain A ») n'est jamais traduit : c'est une donnée utilisateur.
+- Les libellés français restés dans `beverages.mjs` / `profiles.mjs` servent au **log terminal**.
+
+Deux incidents de parcours :
+
+1. `pnpm dev` a cessé de démarrer : pnpm 11 exige une décision explicite pour les paquets à script
+   d'installation, et le contrôle de dépendances sortait en erreur. Réglé dans `pnpm-workspace.yaml`
+   (`allowBuilds` à `false` pour `@parcel/watcher` et `@swc/core` — ils embarquent des binaires
+   précompilés et le projet fonctionnait déjà sans).
+2. Le refactor de `handleProperty` avait **supprimé quatre fonctions** qui vivaient entre les deux
+   marqueurs du remplacement (`probeRegtoken`, `probeCloudOta`, `diffChecksums`,
+   `staleFromChecksums`) — `/api/system` renvoyait `probeRegtoken is not defined`. Restaurées.
+   Leçon : remplacer une plage entre deux marqueurs sans vérifier ce qu'elle contient.
+
+Reste non traduit (assumé) : les messages de log du serveur, et les `label` renvoyés par
+`/api/command` que quelques messages d'état réaffichent tels quels.
+
+### Propagation de l'état à l'ouverture d'une page (2026-08-20)
+
+Demande : à l'ouverture de la page Boissons, déclencher `local_reg` pour propager l'état
+marche/veille **et** le profil actif de la machine.
+
+**État marche/veille : fait.** `POST /api/presence` s'annonce puis sert une demande de monitor
+(`0D 05 75 0F`, lecture pure) ; la machine se connecte et pousse son état. La page l'appelle au
+montage **et au retour sur l'onglet** (`visibilitychange`). L'endpoint est **étranglé côté serveur** —
+monitor de moins de 30 s, programme déjà en cours, ou appel de moins de 15 s — donc plusieurs onglets
+ne provoquent pas plusieurs sessions ni de martèlement de la machine.
+
+**Profil actif : la machine ne l'expose pas.** Vérifié, pas supposé :
+- `d286_mach_sett_profile` → **aucune réponse** de la machine (la propriété n'existe pas ici).
+  `d281_mach_sett_temperature` non plus. En revanche `d270_serialnumber` répond (trame `0xA1`
+  contenant le numéro en ASCII), donc le mécanisme de lecture est bon — c'est bien la propriété
+  qui est absente.
+- L'app officielle **ne le lit pas davantage** : `EcamMachine.B()` renvoie un champ local initialisé
+  à 1, et aucun appelant hors de la classe ne l'écrit depuis une trame machine. Elle impose sa propre
+  notion, exactement comme notre serveur.
+
+Faute de pouvoir l'observer, le profil actif est désormais **persisté** dans
+`data/machine-beverages.json` et restauré au démarrage (avec son drapeau `confirmed`) : un
+redémarrage du serveur ne prétend plus « profil 1 ». Vérifié : profil 3 imposé → redémarrage →
+`profil actif restauré : 3`, `confirmed: true`, et la page surligne « Profil C ».
+
+Nouvel outil au passage : `POST /api/read {"props":[…]}` lit des propriétés Ayla arbitraires — c'est
+ce qui a permis de trancher la question ci-dessus.
+
+**Nouvel état monitor non cartographié : `0x02`** (progress 256), observé de façon stable. Connus :
+`0x00` = allumée, `0x04` = veille. La page affiche donc « État inconnu — monitor 0x02 » plutôt que de
+deviner. À confirmer en regardant l'écran de la machine pendant que le monitor vaut 0x02.
+
+### Monitor élucidé : capteurs et états (2026-08-20)
+
+L'écran de la machine (« liste des boissons, prête, carafe connectée ») a permis de trancher.
+
+**Mon champ « progress » était une erreur.** Les octets 5-6 du monitor sont un **champ de bits de
+capteurs** (`MonitorDataV2.g()` / énum `p127m6/p` : octet = 5 + groupe, bit = position). La valeur
+256 relevée signifiait « groupe 1, bit 0 » = **carafe à lait connectée**. Le serveur décode
+désormais les 13 capteurs, plus le champ d'**alarmes** 32 bits (octets 7, 8, 12, 13) qui existait
+sans être lu. Log réel : `monitor: état=0x02 · carafe à lait · alarmes 0x8`.
+
+**États (octet 4)** : `0x04` veille (confirmé), `0x02` prête (confirmé par l'écran), `0x00` en
+chauffe (déduit, relevé juste après un réveil). La logique passe de « allumée si 0x00 » à
+**« éveillée sauf 0x04 »** : l'ancienne liste blanche affichait « état inconnu » alors que la
+machine était prête. La page affiche maintenant « Prête », toggle allumé, et deux pastilles
+« carafe à lait » et « alarmes 0x8 ».
+
+**Alarme 0x8 (bit 3) non cartographiée** — signalée telle quelle plutôt que masquée.
+
+**Présence intermittente** : la machine ne pousse pas toujours son monitor à la première session.
+Une relance unique 10 s après (bornée, pas de boucle) suffit en pratique ; l'étranglement serveur
+est passé à 8 s pour la laisser passer. La relance consulte l'état via une `ref`, sinon la fermeture
+capturait un `status` nul au montage et relançait systématiquement.
+
+### Alarmes nommées, sur /pilotage (2026-08-20)
+
+Libellés trouvés dans l'APK : énum `p127m6/l`, et surtout sa méthode `a(int)` qui mappe l'index de
+bit vers l'alarme — **elle fait autorité sur les couples (groupe, bit) déclarés dans l'énum**, car
+plusieurs index y sont explicitement `IGNORE_ALARM` sur cette génération (7, 10, 13, 16, 20, 21, 23,
+24, 26-31). S'être fié aux tuples aurait donné de faux noms.
+
+18 alarmes nommées, traduites dans `messages/fr.json` (`alarm.*`), documentées dans
+`docs/commandes-cafe.md` §11.3. Les bits non répertoriés sont remontés marqués « non répertoriée »
+au lieu d'être cachés ou mal nommés.
+
+**Ta machine signale `0x00000008` → bit 3 → `REPLACE_WATER_FILTER`** — « Remplacer le filtre à eau ».
+
+La page `/pilotage` gagne deux sections : **Alarmes** (libellé, bit, champ brut) et **Capteurs**
+(pastilles). Au passage, elle affichait encore `progress` — le champ qui n'existe pas — et une liste
+blanche d'états qui disait « 0x2 » au lieu de « Prête ». Corrigé : elle affiche « 🟢 Prête ».
+
+### Page Bean Adapt (2026-08-20)
+
+Nouvelle page `/bean-adapt`. Elle fait les trois choses de la fonction officielle, **sans le cloud**.
+
+**1. Lecture des profils** (`0xBA`) : ta machine a deux entrees —
+`index 0 « Bean Adapt (ON/OFF) »` (l'interrupteur, pas un profil de cafe, marque comme tel) et
+`index 1 « Grain A »` (mouture 3, temperature 3, arome 4), liee a la boisson 200.
+
+**2. L'assistant — la vraie fonction Bean Adapt.** L'app officielle envoie le questionnaire au
+backend De'Longhi qui renvoie les reglages ; `docs/bean-adapt.md` §4 avait derive la regle par
+balayage de cette API. Elle est maintenant **rejouee localement** dans `src/lib/bean-adapt.mjs`, et
+verifiee contre la matrice de reference du doc : **9/9 conformes**.
+
+Trois questions (temps d'ecoulement, aspect de la crema, gout) -> ajustements, avec explication de
+chaque decision. Le raisonnement est celui d'un barista : l'ecoulement est le symptome, la mouture le
+correctif, et le gout n'est pris en compte que dans la fenetre 10-19 s.
+
+Deux ecarts assumes avec le backend, tous deux en notre faveur, et signales dans l'UI :
+- il **echoue** sur « ecoulement correct + gout neutre » (cas pourtant nominal) ; nous renvoyons les
+  valeurs inchangees ;
+- il ne borne pas la temperature vers le haut ; on plafonne a 5 **par prudence**, en gardant 0 comme
+  plancher pour rester conforme a la matrice. Une premiere version avait mis le plancher a 1 : elle
+  divergeait du doc (t0 attendu, t1 obtenu). Corrige — ne pas « ranger » ce 0.
+
+**3. Ecriture** (`0xBB`, 52 octets) : nom (20 caracteres, UTF-16BE sur 40 octets), mouture,
+temperature, arome, visible. Trame verifiee hors ligne contre le format du doc, offsets exacts. La
+**suppression est la meme trame avec `visible = 0`** — exposee par un bouton distinct.
+Plus l'activation d'un Bean System (`0xB9`).
+
+Bornes : mouture 1-7 et arome 1-5 sont verifiees cote backend ; la temperature n'a **aucune** borne
+connue, l'UI l'affiche « bornes non verifiees » plutot que de faire passer notre prudence pour une
+verite protocole.
+
+**Non teste contre la machine** : l'ecriture `0xBB` et l'activation `0xB9` — les deux modifient
+l'appareil. La lecture, la simulation et le rendu le sont.
+
+### Liste des grains et grain actif (2026-08-20)
+
+Tu as signale une liste de grains dont un seul actif (« Bonifleur »). Je n'avais lu que les index 0
+et 1 : il y en a **six**.
+
+| Index | Nom | Mouture | Temp. | Arome | |
+|---:|---|---:|---:|---:|---|
+| 0 | Bean Adapt (ON/OFF) | 4 | 1 | 0 | interrupteur |
+| 1 | Grain A | 3 | 3 | 4 | |
+| 2 | Grain B | 4 | 3 | 4 | |
+| 3 | Grain C | 3 | 3 | 4 | |
+| 4 | **Grain D** | 4 | 2 | 5 | **actif** |
+| 5 | Grain E | 4 | 1 | 3 | |
+
+(La machine ecrit « Grain D », sans « l ».)
+
+**Deux decouvertes de protocole, ancrees sur ton observation.**
+
+1. **L'octet 50 de la trame `0xBA` est le grain actif.** Il ne vaut 1 que pour l'index 4, et c'est
+   celui que tu decris comme actif. Cela explique aussi l'ecart de taille entre la lecture
+   (53 octets) et l'ecriture (52) : l'octet supplementaire est ce drapeau, donc **`0xBB` ne peut pas
+   designer le grain actif** - c'est le role de `0xB9`. L'octet 49, lui, est « non supprime ».
+
+2. **La propriete `d(250+n)_beansystem_n` n'a de valeur qu'apres la commande `0xBA`.** Lire la
+   propriete seule ne renvoie rien : mon premier essai sur `d252`..`d256` est revenu vide, ce qui
+   m'a fait croire que les profils n'existaient pas. Envoyer `0xBA` index 2 a fait apparaitre
+   `d252_beansystem_2`. Il faut donc une commande par grain.
+
+D'ou un nouvel endpoint `POST /api/beanadapt/scan` qui enchaine les six commandes (~65 s) et un
+bouton « Lire toute la liste » sur la page, avec suivi pendant le remplissage. La page marque le
+grain actif d'une pastille et desactive son bouton (« Deja actif »).
+
+### Confusion corrigee : nom de grain vs nom de boisson (2026-08-20)
+
+**Ma faute.** En branchant la lecture `0xBA`, j'avais ajoute dans `machineBeverageNames()` une
+correspondance « bean system n -> boisson 199 + n », puis utilise le nom lu comme **libelle de la
+boisson**. Or ce sont deux natures differentes :
+
+| Objet | Ce que c'est | Nom |
+|---|---|---|
+| Bean System 1 | une **configuration de grains** (mouture 3, temp 3, arome 4) | « Grain A » — la marque du cafe |
+| Boisson 200 | l'**espresso prepare** avec la configuration active | pas « Grain A » |
+
+Comme l'ordre du profil Jerome commence par l'id 200, la premiere carte de la page s'appelait
+« Grain A ». Le nom du grain avait ecrase celui de la tasse.
+
+**Corrige** : `machineBeverageNames()` ne traite plus que les recettes personnalisees (230-235), qui
+sont bien des noms de boisson. La configuration de grains devient un **attribut** :
+`activeBeanSystem()` expose le grain **actif** (octet 50), attache a la boisson 200 sous
+`beanSystem`, affiche en pastille « Bean Adapt : Grain D » avec mouture/temp/arome en infobulle.
+
+Noter que l'attribut expose le grain **actif** (Grain D), pas le bean system 1 (Grain A) : c'est
+la configuration selectionnee qui determine la tasse.
+
+J'ai aussi retire de `/api/beanadapt` le champ `beverageId: 199 + index` — ce lien etait specule. La
+table constructeur ne declare qu'**une** boisson Bean System (id 200, nom d'usine « Espresso BS 1 »),
+alors que l'enum `p127m6/a` prevoit `BEAN_01(200)..BEAN_06(205)`. Rien ne permet d'affirmer que
+chaque configuration a sa propre boisson sur ce modele.
+
+**Reste incertain : le nom d'affichage de la boisson 200.** Je l'ai laisse a « Espresso Bean Adapt ».
+Dans un message precedent j'ai affirme qu'elle s'appelait « Espresso Soul » sur la machine, en me
+fondant sur la methode `loadEspressoSoul` du logcat — c'est en realite un **chargeur de modele**
+(la gamme Primadonna Soul), pas un nom de boisson. Affirmation non fondee, a confirmer sur l'ecran.
+
+### Retour aux valeurs par defaut dans l'editeur de recette (2026-08-20)
+
+Demande : pouvoir remettre les valeurs par defaut sur chaque boisson, depuis la page Boissons.
+
+L'editeur avait deja un « reinitialiser », mais il revenait au **point de depart** : la valeur
+enregistree du profil. Ce n'est pas la meme chose qu'un defaut d'usine. Les deux coexistent
+maintenant, avec des libelles distincts :
+
+| Bouton | Ramene a |
+|---|---|
+| `↺ reinitialiser` (si modifie) | la valeur enregistree du profil sur la machine |
+| `⟲ valeurs par defaut` | le defaut du **modele** (table constructeur `machine-model.json`) |
+| `defaut N` (par ligne) | le defaut du modele, pour ce seul parametre |
+
+**Le cas des parametres sans defaut utilisable.** La table constructeur donne `def = 0` pour des
+parametres jamais configures - cafe, lait et eau chaude du mug de voyage - alors que leurs bornes
+sont 40-240, 60-460 et 50-260. Il n'y a donc aucune valeur d'usine a proposer. Plutot que de les
+forcer au minimum (ce qui inventerait une valeur), la ligne affiche « pas de defaut » et le bouton
+global les laisse telles quelles ; son infobulle annonce combien de parametres sont dans ce cas.
+
+Verifie dans le navigateur : Espresso (arome 5 -> 4, cafe deja a 40, retour arriere par
+« reinitialiser » -> 5), et Mug de voyage (arome et ordre lait/cafe avec defaut, les trois
+quantites marquees « pas de defaut »).
+
+Aucune ecriture machine : ces boutons ne touchent que l'etat local du formulaire, comme les
+curseurs. Il faut toujours « Preparer avec ces valeurs » ou « Ecrire dans <profil> ».
+
+### Audit du code et corrections (2026-08-20)
+
+Relecture complete de `server.mjs`, de `src/lib/` et des pages, a la recherche de bugs et
+d'optimisations. Chaque defaut ci-dessous a ete **reproduit** avant correction, et les decodeurs ont
+ete rejoues sur les 21 trames reelles du cache (`data/machine-beverages.json`) pour verifier
+qu'aucun decodage ne change : noms de profils, noms de recettes perso, 5 ordres de favoris,
+6 Bean Systems — resultat identique avant/apres.
+
+**Bugs corriges (code vivant)**
+
+1. `/systeme` affichait « progress undefined ». La page lisait `lastMonitor.progress`, champ que le
+   serveur ne produit plus depuis que les octets 5-6 ont ete identifies comme le champ de bits des
+   CAPTEURS. `/pilotage` avait ete corrige, `/systeme` etait reste en arriere. Elle affiche
+   maintenant etat + capteurs + nombre d'alarmes. Verifie dans le navigateur :
+   `etat 0x04 · capteurs 0x240 · alarmes 2`.
+
+2. `decodeUtf16be` (profiles.mjs) retirait les zeros de remplissage **octet par octet**. Un nom
+   finissant par un caractere U+xx00 laissait un tampon de longueur impaire et `swap16()` levait
+   `ERR_INVALID_BUFFER_SIZE` : le bloc de noms ENTIER etait perdu, pas seulement ce nom. Le
+   garde-fou existant (« ecrire 0 sur le dernier octet ») ne changeait pas la longueur, il ne
+   pouvait rien empecher. Depouillement par paires ; « AĀ » se decode au lieu de lever.
+
+3. `decodeBeanSystem` exigeait 48 octets mais lisait les octets 49 et 50. Sur une trame tronquee
+   ils valaient `undefined`, donc `visible: false` et surtout **`active: true`** — un grain fantome
+   annonce comme actif, alors que l'octet 50 est precisement ce qui designe le grain selectionne.
+   Minimum porte a 51 (les trames reelles font 53).
+
+4. Un `d302_monitor` vide faisait lever `stateByte.toString(16)` dans le journal. L'exception
+   remontait au `catch` du datapoint : les AUTRES proprietes du meme datapoint etaient perdues et le
+   journal accusait a tort le dechiffrement. Controle de taille + branche monitor isolee.
+
+5. Champ d'alarmes signe : `0x80 << 24` vaut -2147483648 en JS, donc l'API publiait un bitfield
+   negatif (la boucle sur les bits, elle, utilisait deja `>>>`). L'octet 13 est desormais multiplie
+   par `0x1000000`.
+
+6. `checksumsAtImport` etait ecrit des l'ENVOI de l'import, et avec toutes les familles. Deux
+   consequences : un import echoue (machine injoignable) marquait quand meme les noms « frais », et
+   un import `what:"order"` — qui ne lit aucun nom — les marquait aussi. Dans les deux cas la
+   relecture des noms etait ensuite sautee (« somme inchangee »), et seul `force:true` s'en sortait.
+   La marque est maintenant posee a la FIN de l'import, uniquement sur les familles reellement lues,
+   et seulement si tout a repondu.
+
+**Optimisations**
+
+7. `/api/system` enchainait les deux sondes en serie (regtoken 4 s + OTA cloud 8 s de delai
+   d'attente cumules) : elles sont independantes, donc en `Promise.all`.
+
+8. Ecriture atomique (`writeJsonAtomic` : fichier temporaire + `rename`) du cache machine et des
+   recettes. Le cache est reecrit EN ENTIER a chaque propriete recue, une cinquantaine de fois par
+   import ; une coupure au milieu du `writeFileSync` laissait un JSON tronque, que `readMachine`
+   avale silencieusement en repartant d'un cache VIDE.
+
+9. `/bean-adapt` : l'effet du balayage dependait de `data.scan`, un objet recree a chaque reponse
+   JSON — l'intervalle se demontait et se remontait a chaque rafraichissement. Dependance sur un
+   booleen.
+
+**Copies TypeScript shadowees**
+
+`server.mjs` sert lui-meme `/local_lan/*` et `/api/*` : les routes Next et les `src/lib/*.ts`
+qu'elles importent ne tournent jamais. Ces copies avaient derive et contenaient exactement les
+regressions que CLAUDE.md interdit :
+
+- `program.ts` utilisait `frameSendProfile(1)` comme presence soutenue — le battement de cœur `0xA9`
+  qui imposait silencieusement le profil 1 ;
+- `ecam.ts` portait les identifiants de boisson 14 et 17..21, faux pour ce modele (envoyer 21 pour
+  un « brew over ice » viserait une autre boisson) ;
+- `ecam.ts` nommait encore les octets 5-6 « progress » ;
+- `session.ts.dequeue` filtrait `c.id !== id && c !== queue[0]`, donc retirait AUSSI la tete de
+  file : un accuse pour une commande non-tete faisait disparaitre une commande jamais envoyee.
+
+Les quatre sont corrigees et les fichiers touches portent un bandeau « ce fichier ne tourne pas ».
+Elles restent une implementation en double : les supprimer est une option ouverte.
+
+**Signale, non corrige** — le DSN reste en dur comme valeur de repli dans `src/lib/config.ts` et
+`server.mjs` ; `PROFILE_BASE_CUSTOM` (beverages.mjs) ne decale pas le numero de propriete par
+profil, contrairement aux boissons standard : pour les recettes perso des profils 2..5 la propriete
+lue est `d200_2_cstm_recipe_01` et non un numero decale — deduit du code, jamais verifie sur la
+machine.
+
+`tsc --noEmit` propre, `node --check` propre. **`server.mjs` etant le point d'entree, il faut
+redemarrer le serveur de dev pour que les corrections 4 a 8 prennent effet** (la correction 1 est
+passee par HMR, elle est deja verifiee).
+
+### DSN dynamique (2026-08-20)
+
+Le numero de serie etait ecrit en dur comme valeur de repli (`process.env.MACHINE_DSN ??
+"AC000W0..."`) dans `server.mjs` et `src/lib/config.ts`. C'est une donnee d'appareil, elle n'a rien a
+faire dans le code — et elle n'a pas besoin d'y etre : **la machine la donne**.
+
+`GET http://<machine>/regtoken.json` — le seul endpoint que le module expose hors mode AP — renvoie
+`host_symname`, qui EST le DSN. Sans authentification, sans cloud. Le serveur avait deja cette
+reponse sous la main (`probeRegtoken`, utilise par la page Systeme) sans en tirer le DSN.
+
+`resolveDsn()` le resout dans cet ordre :
+
+1. `MACHINE_DSN` de `.env.local` — un reglage explicite gagne toujours ;
+2. la machine (`regtoken.json` -> `host_symname`) ;
+3. le cache local `data/machine-beverages.json` (`restoreDsn`), pour redemarrer quand la machine ne
+   repond pas.
+
+Interroge au demarrage avec `compare: true` : si un `MACHINE_DSN` explicite diverge de ce que dit la
+machine, le journal le signale au lieu de laisser passer. Resolution paresseuse aussi dans
+`handleApi` tant qu'il est inconnu, parce que le DSN part dans chaque ecriture de propriete servie a
+la machine. `dsnSource` est expose par `/api/status` et `/api/system`.
+
+`MACHINE_DSN` est desormais commente dans `.env.local` et dans `.env.local.example` : le chemin
+dynamique est celui qui tourne.
+
+Verifie sur la machine reelle, cache vide et sans variable d'environnement :
+
+```
+De'Longhi LAN server ... machine 192.168.x.x, DSN a decouvrir
+01:31:14 SYS profil actif restaure : 1
+01:31:14 SYS DSN decouvert sur la machine : AC000W0XXXXXXXX
+```
+
+puis `/api/status` -> `dsnSource: "machine (regtoken.json)"`, `/pilotage` affiche
+`192.168.x.x · AC000W0XXXXXXXX`, et le cache contient `dsn: {value, at}`.
+
+Ce redemarrage a aussi valide les corrections de l'audit contre la machine reelle : le monitor
+decode a l'arrivee donne `etat=0x04 · niveau d'eau bas, bac chocolat · alarmes EMPTY_WATER_TANK,
+REPLACE_WATER_FILTER` — nouveau controle de taille et nouvelle formule d'alarmes compris.
+
+Branche non exercee : l'avertissement de divergence (il faudrait forcer un `MACHINE_DSN` faux).
+
+### Cle LAN decouvrable par le compte De'Longhi (2026-08-20)
+
+La cle LAN etait la derniere valeur qu'il fallait extraire a la main (capture logcat + appels cloud)
+et coller dans `.env.local`. Elle est maintenant recuperable a la demande depuis la page Systeme, en
+saisissant les identifiants du compte De'Longhi.
+
+**La chaine**, quatre sauts, tous verifies contre les vrais serveurs :
+
+| # | Appel | Entree -> sortie |
+|---|---|---|
+| 1 | Gigya `accounts.login` (eu1) | e-mail + mot de passe -> `sessionInfo.cookieValue` |
+| 2 | Gigya `accounts.getJWT` | `login_token` -> `id_token` (JWT RS256, 90 j) |
+| 3 | Ayla `token_sign_in.json` | JWT + app_id/app_secret -> `access_token` (24 h) |
+| 4 | Ayla `dsns/<DSN>/lan.json` | access_token -> `lanip_key` + `lanip_key_id` |
+
+Le DSN vient de `resolveDsn()`, donc de la machine : la chaine entiere ne demande a l'utilisateur
+que son e-mail et son mot de passe.
+
+**Ce qui a ete verifie, et comment**
+
+- Etapes 3 et 4 : rejouees en direct avec le JWT de `docs/secrets.md`. HTTP 200 les deux fois, et la
+  `lanip_key` renvoyee est **identique** a celle de `.env.local` (comparaison booleenne, aucune
+  valeur affichee). Puis re-verifiees a travers le vrai code via `POST /api/lankey {jwt}` ->
+  `{ok:true, keyId:65269, keyLength:32, lanStatus:"enable", changed:false}`.
+- Etape 1 : le centre de donnees et le contrat de l'API sont etablis **sans identifiant reel**, avec
+  un compte volontairement inexistant. `eu1` repond `403042 invalid loginID or password` (donc
+  endpoint, noms de parametres et cle API corrects) ; `us1` repond `301001 This API key is served by
+  another data center` (donc eu1 est bien le bon centre). `accounts.getJWT` avec un jeton bidon
+  repond `403005`, ce qui confirme le nom du parametre `login_token`.
+- Via le vrai endpoint, un mot de passe faux ressort en
+  `accounts.login (eu1) : Invalid LoginID [403042] — invalid loginID or password` : les messages de
+  Gigya sont transmis tels quels plutot que reecrits.
+- **Preuve d'usage** : `LANIP_KEY` neutralisee dans `.env.local`, redemarrage. Le serveur reprend la
+  cle du cache (`cle LAN reprise du cache (key_id 65269)`), etablit une session avec la machine et
+  dechiffre un monitor reel (`d0 12 75 0f 04 40 02 09 ...`). Une cle obtenue par le cloud fait donc
+  bien tourner le protocole.
+
+**Ce qui n'est PAS verifie** : le chemin « mot de passe correct ». Il demande les vrais identifiants,
+que je n'ai pas et n'ai pas a avoir. Tout ce qui l'entoure l'est.
+
+**Regles tenues**
+
+- Le mot de passe n'existe que le temps de la requete : jamais journalise, jamais stocke, jamais
+  renvoye. Le formulaire l'efface des la reponse, succes ou echec.
+- **Aucun endpoint ne renvoie la cle LAN.** `/api/lankey` et `/api/status` n'exposent que `set`,
+  `keyId` et `source`. Le `key_id` n'est pas un secret : il circule en clair dans le key exchange.
+- Priorite : `LANIP_KEY` (.env.local) > `data/lan-key.json` (cache d'une decouverte, gitignore) >
+  decouverte cloud. `DELETE /api/lankey` oublie le cache.
+- Le pilotage ne depend jamais du cloud : la decouverte est sur action explicite, et une fois la cle
+  en cache plus rien n'appelle l'exterieur.
+- Changer de cle jette `S.session` : l'ancienne session etait derivee de l'ancienne cle.
+- Les trois valeurs statiques de l'APK (`GIGYA_API_KEY`, `AYLA_APP_ID`, `AYLA_APP_SECRET`) vivent
+  dans `.env.local`, pas dans le code. `GET /api/lankey` dit lesquelles manquent, et la page masque
+  le formulaire en l'expliquant plutot que d'echouer a l'envoi.
+
+**Etat final de `.env.local`** : `LANIP_KEY` reste ACTIVE. Contrairement au DSN, c'est le secret
+critique du pilotage : je n'ai pas voulu remplacer une configuration qui marche par un fichier de
+cache. Le cache existe et fonctionne (prouve ci-dessus) ; commenter `LANIP_KEY` suffit a basculer.
+
+### Statistiques d'utilisation : mecanisme etabli, 62 parametres cartographies (2026-08-20)
+
+Demande : chercher sur la machine les statistiques d'utilisation (nombre de cafes, etc.).
+
+**Elles ne passent pas par les proprietes Ayla.** L'app connait des noms parlants
+(`d701_tot_bev_b`, `d553_water_tot_qty`, `d552_cnt_calc_tot`, ... liste exacte dans
+`p258z7/w.java`), mais les lire ne renvoie rien : les 14 ont ete demandees en LAN, la machine a
+servi les 14 commandes et n'a pousse AUCUNE valeur (« import termine : 0 proprietes lues »). Meme
+piege que les Bean Systems.
+
+**La bonne voie est la commande ECAM `0xA2`** (`readSettingsParameter`), implementee :
+`0D 08 A2 0F <idHi> <idLo> <qty> <crc>`, flag `0x0F`. Reponse `D0 <len> A2 0F` puis n entrees de
+6 octets (id 16 bits BE, valeur 32 bits BE), `n = (len-5)/6`, plafonnee a 10 entrees.
+
+Verifie sur la machine du premier coup :
+
+```
+d0 0b a2 0f 0b b8 00 00 23 91 2e c0    -> id 3000 = 9105
+```
+
+Big-endian confirme par deux voies : les magnitudes seraient absurdes en little-endian, et la
+relation `3002 + 3004 = 3000` (8 + 9097 = 9105) ne tient qu'en big-endian.
+
+**La machine enumere** : un id inexistant renvoie les parametres existants SUIVANTS, en sautant les
+trous. Demander 100 renvoie `100, 101, 105, 106, 108, 109, 111, 115, 116, 3000`. J'avais d'abord
+conclu que « 23000 » etait une sentinelle « parametre inconnu » (parce que 3047 renvoie 23000) --
+c'est faux, 23000 est simplement le parametre suivant. C'est cette enumeration qui permet de
+cartographier tout l'espace par balayage.
+
+**62 parametres** sur ce modele, en quatre blocs : `1xx` (9), `3xxx` (35), `23xxx` (10), `43xxx` (8).
+Les cinq derniers ids que l'app demande (3047, 3048, 3077, 3078, 3080) n'existent pas ici.
+
+**La signification des identifiants n'est PAS etablie.** Aucune table id -> sens dans l'APK : le
+viewmodel demande des ids en dur et affiche via les proprietes `d7xx_tot_*`. Je n'ai donc etiquete
+aucun compteur. Deux pistes, la premiere gratuite : comparer avec le menu statistiques de l'ecran de
+la machine ; sinon, relever, preparer une boisson, relever a nouveau et regarder ce qui bouge.
+
+Endpoints : `POST /api/stats` (`ids[]`, ou `from`+`qty`), `GET /api/stats`. Les valeurs sont
+persistees dans `data/machine-beverages.json` (`store.stats`), gitignore -- ce sont des donnees
+d'usage personnelles, elles ne sont pas recopiees dans les docs. Voir
+`docs/commandes-cafe.md` §12.
+
+### Compteurs sur les cartes, et retrait du tableau des parametres (2026-08-20)
+
+Deux demandes enchainees.
+
+**1. Retrait du tableau « Tous les parametres »** des informations techniques d'une boisson.
+L'editeur de recette juste au-dessus montre deja chaque reglage avec ses bornes, son defaut machine
+et la valeur du profil : le tableau en dupliquait le contenu en lecture seule. Les informations
+techniques gardent ce qui ne se lit nulle part ailleurs (proprietes Ayla, trame brute). Helpers
+devenus morts supprimes au passage (`paramIds`, `fmt`, le `useTranslations("recipes")` de la carte)
+et la cle `beverages.allParams` retiree du catalogue.
+
+**2. Compteur d'usage sur chaque carte.** La recherche a livre la semantique manquante :
+`p018b7/e.java` associe explicitement des ids de parametres a l'enumeration de categories
+`p258z7/w.java$a`. Dix significations sont donc **etablies par lecture de code** :
+
+| id | sens | valeur relevee |
+|---|---|---|
+| 105 | detartrages | 10 |
+| 106 | eau, unite 0,5 ml (litres = /2000) | 1108 L |
+| 108 | filtres a eau | 5 |
+| 115 | nettoyages circuit lait | 437 |
+| 3000 | boissons sans lait | 9105 |
+| 3001 | boissons avec lait chaud | 2501 |
+| 3003 | idem, second compteur (somme avec 3001 dans l'app) | 767 |
+| 3017 | avec lait froid — Maestosa uniquement | 0 |
+| 3021 | chocolats | 0 |
+| 3025 | thes | 2 |
+
+**Point important : la machine compte par CATEGORIE, pas par boisson.** Il n'existe pas de compteur
+« nombre d'espressos » — espresso, cafe long, doppio+ et americano alimentent tous 3000. Le seul
+compteur propre a une boisson est celui du the, et la propriete `d719_id22_tea` le confirme (22 est
+bien l'id du the). La carte affiche donc « ☕ 9 105 (boissons sans lait) », avec une infobulle qui
+dit explicitement que le total couvre toute la categorie. `/api/beverages` renvoie
+`counter: {id, value, category, scope: "category"}` ; eau chaude et mug de voyage n'ont aucune
+categorie connue et n'affichent rien (le total to-go vit dans `d731`/`d732`, sans id de parametre
+connu).
+
+`/api/stats` expose en plus un bloc `known` avec les compteurs nommes et convertis.
+
+Verifie dans le navigateur : « Espresso Coffee · … · ☕ 9 105 (boissons sans lait) », « Latte
+Macchiato · … · ☕ 2 501 (boissons avec lait chaud) », plus aucun tableau sur la page, panneau
+technique intact.
+
+Incident sans consequence : en ouvrant la page, une boite de confirmation « Preparer Espresso Bean
+Adapt » restee en attente dans un onglet ouvert precedemment s'est presentee. Elle a ete
+**refusee** ; le journal serveur confirme qu'aucune commande de preparation n'a ete envoyee.
+
+### Page /statistiques (2026-08-20)
+
+Nouvelle page, ajoutee a la barre de navigation entre Recettes et Systeme.
+
+- Avertissement en tete, en clair : **la machine compte par categorie, pas par boisson**.
+- Total des boissons preparees, presente comme **notre** addition (sans lait + avec lait chaud +
+  thes + chocolats), pas comme un compteur expose par la machine. Sur cette machine : 12 375.
+- Les 10 compteurs identifies, avec libelle, identifiant brut et conversion d'unite (eau :
+  1 108 L pour 2 215 122 en unites de 0,5 ml). Mention du fait que l'app additionne 3001 et 3003 --
+  verifie dans `p018b7/e.java`, methode `m()`, `return iIntValue3 + iIntValue2`.
+- Les 52 parametres non identifies, donnes **bruts, sans etiquette inventee**, avec la note qui dit
+  comment les elucider.
+- Deux boutons de lecture. Ils exploitent le fait que la machine **enumere** : 3 requetes de plage
+  suffisent a couvrir les 10 compteurs connus (au lieu de 10 requetes unitaires), 8 pour balayer les
+  62. L'enchainement attend que le programme precedent soit clos, sinon le serveur repond 409.
+
+Verifie dans le navigateur, puis le bouton « Lire les compteurs » teste de bout en bout : les
+3 plages ont ete servies et la machine a repondu a chacune.
+
+**Piege i18n rencontre** : le message `protocolNote` contenait `<id sur 16 bits>`. next-intl lit les
+chevrons comme des balises de texte enrichi, le message ne se parse pas et l'interface affiche la
+cle brute `stats.protocolNote`. Corrige en notation entre crochets ; controle passe sur tout le
+catalogue, aucun autre message ne contient de chevrons. Consigne dans CLAUDE.md.
+
+**Releve differentiel fortuit** — deux releves complets a 26 minutes d'intervalle, une boisson sans
+lait preparee entre les deux (3001 et 3003 immobiles). Sept compteurs ont bouge :
+
+| id | delta | lecture |
+|---|---|---|
+| 3000 | +1 | boissons sans lait, coherent avec le sens etabli |
+| 3004 | +1 | suit la meme chose que 3000 |
+| 3037 | +1 | suit egalement la meme chose |
+| 106 | +112 | x 0,5 ml = 56 ml d'eau |
+| 109 | +112 | meme delta -> meme grandeur, meme unite |
+| 100 | +1120 | exactement 10 x 112 -> meme grandeur, unite dix fois plus fine |
+| 101 | +145 | non proportionnel : autre nature |
+
+Cela etablit que 3004 et 3037 s'incrementent avec 3000, et que 100/106/109 mesurent la meme
+grandeur dans trois unites. Cela n'etablit PAS ce que comptent 3004, 3037 et 101 : un seul
+echantillon, une boisson dont le type n'etait pas controle. Voir `docs/commandes-cafe.md` §12.7.
+
+### Stockage : migration des JSON vers SQLite (2026-08-20)
+
+Toute la persistance passe par **un seul fichier SQLite**, `data/lan-server.db`, via le module natif
+`node:sqlite` (`DatabaseSync`). Nouveau module : `src/lib/store.mjs`.
+
+**Ce qui posait probleme.** Le cache machine etait un unique blob JSON relu puis reecrit EN ENTIER a
+chaque propriete recue : `readMachine()` -> mutation -> `writeMachine()`. Un import de profil, c'est
+une soixantaine de proprietes, donc une soixantaine de serialisations de 80 ko -- 4,9 Mo reecrits
+pour modifier 58 lignes. Et le mode de defaillance etait silencieux : un JSON tronque etait avale par
+le `catch` de `readMachine()`, qui repartait d'un cache VIDE sans un mot dans le journal.
+
+**Le schema** (tables `STRICT`, donc une valeur du mauvais type est refusee a l'ecriture et non
+decouverte six mois plus tard dans une page qui affiche « NaN ») :
+
+| table | contenu |
+|---|---|
+| `props` | une ligne par propriete Ayla : `name`, `at`, `kind`, `data` (JSON du reste) |
+| `bean_systems` | un profil de grains par ligne |
+| `stats` | `id`, `value`, `at` en vraies colonnes |
+| `recipes` | recettes locales, `id` en cle primaire |
+| `meta` | valeurs JSON nommees : `dsn`, `activeProfile`, `checksums`, `checksumsPrev`, `checksumsAtImport`, `importedAt`, `lanKey` |
+
+**Migration automatique.** Au premier demarrage le module reprend les trois fichiers JSON puis les
+renomme en `*.json.migrated` -- conserves, pas supprimes. `PRAGMA user_version` verrouille l'affaire :
+un redemarrage ne rejoue pas la migration (verifie). Sur les donnees reelles : 58 proprietes,
+62 statistiques, 6 profils de grains, 0 recette, la cle LAN. Comparaison exhaustive champ par champ
+avec le JSON d'origine : **identique**.
+
+**Ce qui change dans le code.** Les ecritures sont ciblees (`putProp`, `putStats`, `putBeanSystem`,
+`putChecksums`, `setMeta`, `putRecipe`) ; `machineView()` ne sert plus qu'a la LECTURE d'ensemble.
+`readMachine`/`writeMachine`/`writeJsonAtomic` et les trois constantes de fichier ont disparu.
+`putChecksums` decale l'ancien releve vers `checksumsPrev` et rend le couple `{prev, current}` dans
+une seule transaction : c'est ce couple qui dit ce qui a bouge, il ne doit jamais etre a moitie ecrit.
+
+**Durabilite.** `journal_mode = WAL` et `synchronous = FULL`. Le volume est minuscule, donc la
+durabilite complete est gratuite : mesure sur 58 ecritures de propriete, **4,0 ms/propriete avec
+fsync** contre **5,9 ms sans fsync** pour l'ancien chemin JSON. SQLite est donc a la fois plus rapide
+et durable, et le cout d'une ecriture ne depend plus de la taille du cache.
+
+**Deux corrections au passage.**
+- `importedAt` n'est plus touche que par les ecritures de donnees machine. L'ancien `writeMachine()`
+  le bougeait a chaque ecriture, donc un simple enregistrement du profil actif deplacait la date de
+  « lu sur la machine » affichee par les pages.
+- `POST /api/recipes` refuse une recette sans `id` (400). Avant, elle etait ecrite sans identifiant
+  et la suivante l'ecrasait en silence.
+
+**Verifications.** 18 assertions sur le module (upsert sans doublon, `kind` nul, decalage des sommes,
+`clearLanKey` qui dit vrai puis faux, et le rollback : une entree invalide dans un lot de deux
+n'en laisse passer aucune). CRUD recettes de bout en bout en HTTP, ordre d'affichage conserve.
+Tous les endpoints relus : 28 boissons avec bornes et valeurs, 5 profils nommes, 23 favoris,
+62 statistiques, 6 profils de grains, sommes de controle. Pages rendues sans cle de traduction non
+resolue. Profil actif, DSN et cle LAN repris de SQLite apres redemarrage. `tsc --noEmit` passe.
+
+**Etat du stockage visible dans `/systeme`** : moteur et version SQLite, version de schema, mode de
+journal, nombre de lignes par table, taille du fichier -- plus l'avertissement qui compte.
+
+⚠️ **`data/lan-server.db` est du materiel secret** : il porte la cle LAN, le numero de serie et les
+noms de profils saisis sur la machine. Ne jamais le joindre a un rapport de bug. `data/` est
+gitignore en entier, `-wal`/`-shm`/`.migrated` compris.
+
+`src/lib/recipes.ts` (mort, shadowe) decrivait encore le stockage fichier : il porte desormais une
+seconde banniere disant que la persistance est passee a SQLite et qu'il ecrirait un fichier que plus
+rien ne lit.
+
+### Conteneur Docker, CI et releases GitHub (2026-08-20)
+
+**Prerequis livre au passage : l'emplacement de la base devient configurable.** Il etait code en dur
+sur `process.cwd()/data`, ce qui ne marche pas en conteneur (image en lecture seule, donnees dans un
+volume). Deux variables, testees toutes les deux, creation des repertoires intermediaires incluse :
+
+| Variable | Defaut | Effet |
+|---|---|---|
+| `DATA_DIR` | `./data` (`/data` dans l'image) | repertoire de tout l'etat persistant, et source de la migration JSON |
+| `DATABASE_FILE` | `<DATA_DIR>/lan-server.db` | chemin complet du fichier, pour le sortir de `DATA_DIR` |
+
+**Fichiers ajoutes** : `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `DOCKER.md`,
+`.github/workflows/ci.yml`, `.github/workflows/release.yml`. Plus `packageManager: pnpm@11.22.0`
+dans `package.json`, pour que corepack et les runners prennent la meme version que le poste.
+
+**L'image.** Multi-etapes sur `node:26-alpine` : dependances completes -> build Next -> dependances
+de production seules -> image finale. Pas de `output: "standalone"` de Next : le point d'entree reel
+est notre `server.mjs`, alors que le tracage de dependances de standalone part du serveur genere par
+Next. L'image installe donc ses dependances de production, plus grosse mais sans zone d'ombre.
+Utilisateur `node` (uid 1000), `VOLUME /data`, `HEALTHCHECK` sur `/api/status` via `fetch` (pas
+besoin d'ajouter curl). `.dockerignore` exclut `data/` et `.env.local` : **aucun secret dans
+l'image**.
+
+**Le point qui decide de tout, documente en tete de DOCKER.md.** Les roles etant inverses, c'est la
+cafetiere qui vient nous frapper :
+- `SERVER_IP` doit etre une adresse joignable depuis son VLAN, jamais l'IP interne du conteneur ;
+- le port doit porter **le meme numero des deux cotes**. `postLocalReg()` annonce `CFG.port`, qui est
+  aussi le port d'ecoute : un `-p 8080:3000` enverrait la machine toquer a la mauvaise porte. Verifie
+  en relisant `postLocalReg`, pas suppose.
+
+**La CI.** Le projet n'a pas de suite de tests (les changements de protocole se valident sur la vraie
+machine), donc la CI verifie ce qui se verifie sans cafetiere : `tsc --noEmit`, `node --check` sur
+`server.mjs` et tous les `src/lib/*.mjs` (leur seul filet, puisqu'ils ne passent pas par TypeScript),
+la validite du catalogue de messages **et l'absence de chevrons dedans** (le piege next-intl qui
+avait fait afficher `stats.protocolNote` en clair), `pnpm build`, l'initialisation du stockage SQLite
+avec migration d'un ancien `recipes.json`, puis la construction de l'image et son demarrage reel avec
+interrogation de `/api/status` et `/api/system`.
+
+**Les releases.** Sur etiquette `v*` : image multi-architecture `linux/amd64,linux/arm64` poussee sur
+GHCR (etiquettes version, mineure, majeure, `latest`), archive `.tar.gz` pour une installation sans
+Docker, et release GitHub avec notes generees depuis les commits. `GITHUB_TOKEN` suffit, rien a
+configurer. arm64 est construit sous emulation QEMU : lent, mais pas de runner ARM a maintenir.
+
+**Sauvegarde documentee et verifiee** : `VACUUM INTO` sur une connexion en lecture seule produit une
+copie coherente d'une base en cours d'utilisation, WAL compris — teste sur la vraie base, la copie
+contient bien les 58 proprietes et 62 statistiques. La recette a froid (arret puis copie du seul
+`.db`, le WAL etant integre a la fermeture) est egalement documentee, avec l'avertissement de ne
+jamais copier le `.db` seul a chaud.
+
+**Verifications faites** : YAML des deux workflows et du compose parses, toutes les sources des
+`COPY` du Dockerfile et tous les fichiers de l'archive de release verifies presents, les deux
+variables de stockage testees, `tsc --noEmit` passe. **Non verifie ici** : la construction de l'image
+elle-meme et son demarrage, le moteur Docker de ce poste etant a l'arret (`com.docker.service`
+arrete). C'est precisement ce que fait le job `docker` de la CI a chaque poussee.
+
+### La cle LAN dans une page dediee /cle-lan (2026-08-20)
+
+Le formulaire d'identifiants du compte De'Longhi vivait au milieu de `/systeme`, qui est une fiche
+technique en lecture seule. Il a sa propre page.
+
+**Nouvelle page `/cle-lan`**, ajoutee a la barre de navigation avant Systeme. Elle reprend ce qui
+etait dans la carte, et expose en plus deux informations que `/api/lankey` renvoyait deja sans que
+rien ne les affiche :
+
+- **Etat actuel** : presence, `key_id`, source, **date de decouverte** (`cachedAt`) et **DSN
+  interroge** (`dsn`).
+- **Recuperation** : les quatre etapes du parcours cloud sont maintenant ecrites sur la page
+  (Gigya `accounts.login` en eu1 -> `accounts.getJWT` -> Ayla `token_sign_in.json` -> Ayla
+  `dsns/[DSN]/lan.json`), avec le rappel de confidentialite.
+- **Oubli de la cle** dans sa propre section, affichee seulement s'il y a quelque chose a oublier.
+
+Le bouton **afficher / masquer** du mot de passe suit, avec ses garde-fous : `type="button"`,
+`aria-pressed`, `aria-label` et `title` traduits, `autoCapitalize` / `autoCorrect` / `spellCheck`
+desactives (en clair le champ redevient un champ texte ordinaire), et remasquage automatique dans le
+`finally`, la ou le mot de passe est deja vide.
+
+**Ce que /systeme garde.** Rien n'est duplique : le bloc « Protocole et reseau » rendait deja
+`lanKeySet` / `lanKeyId` / `lanKeySource` depuis `/api/system`, donc l'etat de la cle reste visible
+la-bas. La carte a d'abord ete remplacee par un renvoi vers la page dediee, **puis retiree
+entierement** dans un second temps : la barre de navigation y mene deja, le renvoi ne faisait que
+repeter. `/systeme` ne parle donc plus de la cle LAN que par ces trois lignes du bloc protocole, et
+les trois cles `system.lanKey*` correspondantes ont ete retirees du catalogue. Plus **aucun champ
+d'identifiant** sur `/systeme` — verifie dans le navigateur : 0 input de type email ou password.
+
+**Messages.** Les cles `system.lanKey*` deviennent un espace de noms `lankey` sans prefixe
+redondant ; `/systeme` n'en garde que trois (titre de section, texte de renvoi, libelle du lien).
+Deux libelles parlaient encore de `data/lan-key.json`, disparu avec le passage a SQLite : corriges
+en « la base locale (data/lan-server.db) ».
+
+**Piege i18n evite** : la description du parcours cloud contient un segment d'URL variable. Ecrit
+`dsns/[DSN]/lan.json` et non avec des chevrons, que next-intl lit comme des balises de texte enrichi
+— controle automatique du catalogue passe, aucun chevron nulle part.
+
+Verifie dans le navigateur : les deux pages rendues sans aucune cle de traduction non resolue,
+navigation a jour, etat lu correctement (key_id 65269, source `.env.local`, date de decouverte, DSN),
+bascule du mot de passe fonctionnelle. `tsc --noEmit` passe.
+
+### Correction : la decouverte de la cle LAN echouait sur getJWT (2026-08-20)
+
+**Symptome.** La recuperation de la cle depuis le compte De'Longhi echouait, alors que l'application
+Android fonctionnait avec le meme compte.
+
+**Diagnostic sans rien redemander.** Le journal du serveur portait deja le verdict :
+
+```
+SYS cle LAN : echec de la decouverte (accounts.getJWT (eu1) : Unauthorized user [403005])
+```
+
+Donc `accounts.login` PASSAIT et c'est le saut suivant qui refusait. (Deux autres lignes
+`403042 invalid loginID or password` etaient, elles, de simples erreurs de saisie -- a ne pas
+confondre avec le vrai bug.)
+
+**Cause.** Le code envoyait `targetEnv: "mobile"` a `accounts.login`. Sonde cote a cote sur les vrais
+serveurs, avec le meme compte :
+
+| targetEnv | `sessionInfo` contient | `accounts.getJWT` |
+|---|---|---|
+| `mobile` | `sessionToken`, `sessionSecret`, `expires_in` | **403005 Unauthorized user** |
+| defaut (browser) | `cookieName`, `cookieValue` | **OK**, `id_token` de 695 caracteres |
+
+Une session *mobile* est une session **OAuth1** : son `sessionToken` sert a SIGNER les requetes
+suivantes, ce n'est pas un `login_token`. L'app Android fonctionne parce que le SDK Gigya mobile
+signe ; notre flux REST, lui, doit demander une session navigateur et transmettre `cookieValue`.
+
+**Correction.** Retrait de `targetEnv: "mobile"`, et lecture de `sessionInfo.cookieValue` seul. Le
+repli `?? sessionInfo.sessionToken` est supprime : il ne rattrapait rien, il transmettait un jeton du
+mauvais type au lieu d'echouer avec un message clair -- c'est lui qui a transforme une erreur de
+parametre en enigme.
+
+**Verifie de bout en bout** sur `POST /api/lankey` : HTTP 200, les quatre sauts en 1,1 s
+(login -> getJWT -> token_sign_in -> lan.json), `keyId 65269`, `keyLength 32`, `lanStatus enable`,
+`keepAlive 30`, et surtout **`changed: false`** -- la cle obtenue par le cloud est identique a celle
+de `.env.local`, ce qui confirme le parcours de facon independante. La reponse ne contient aucun
+secret (`lanip_key` absent), et le mot de passe n'apparait dans aucun journal.
+
+### Coherence de l'interface quand la cle LAN est absente (2026-08-20)
+
+Cle supprimee volontairement pour verifier le comportement : `LANIP_KEY` commentee dans
+`.env.local`, `meta.lanKey` absente de la base, `lanKeySet: false`, aucune session.
+
+**Ce qui n'allait pas.**
+
+| Endroit | Constat |
+|---|---|
+| `POST /api/command` | repondait `{"program":"Eteindre","register":{"ok":true,"status":202}}` -- **un succes** |
+| page `/` | **aucun avertissement**, 88 boutons actifs (Allumer/Eteindre, profils, Lire, Preparer) |
+| page `/pilotage` | avertissait, mais le texte etait anterieur a `/cle-lan` : il ne parlait que de copier `.env.local.example` et de lire `docs/secrets.md`. En dur dans le JSX, hors catalogue. |
+| `/pilotage` (clic) | `await fetch(...)` sans lire la reponse : un refus du serveur restait **totalement muet** |
+
+La machine se presente, prend un 412 a l'echange de cles et repart : la commande etait donc acceptee
+puis perdue en silence, pendant que l'interface annoncait « envoye ».
+
+**Corrections.**
+
+1. **Refus franc cote serveur.** `NEEDS_LAN_KEY` liste les endpoints qui mettent en file une trame
+   que seule une session chiffree peut transporter. Un **POST** vers l'un d'eux sans cle renvoie
+   **409** avec `needsLanKey: true` et un message en clair. Les **GET restent servis** : le cache
+   deja constitue doit rester consultable sans cle.
+2. **`/api/lankey` volontairement hors de la liste**, dans les deux methodes -- le bloquer rendrait
+   la situation irrecuperable. Verifie : POST corps vide -> 400 (refus metier), pas 409 ; DELETE -> 200.
+3. **Banniere unique** partagee par `/` et `/pilotage` (`common.noLanKey` + lien vers `/cle-lan`),
+   affichee quand `status.config.lanKeySet` est faux. L'ancien texte en dur disparait du JSX.
+4. **`/pilotage` lit enfin ses reponses** : `send()` et `register()` affichent le retour, erreur
+   comprise, dans une zone de message nouvelle.
+
+**Verifie.** Ecritures refusees : `/api/command`, `/api/presence`, `/api/checksums`, `/api/stats`,
+`/api/profiles/import`, `/api/beverages/import` -> 409. Lectures intactes : `/api/status`,
+`/api/system`, `/api/beverages`, `/api/profiles`, `/api/stats`, `/api/checksums`, `/api/beansystem`,
+`/api/recipes`, `/api/lankey` -> 200. Dans le navigateur, la banniere s'affiche a l'identique sur les
+deux pages avec un lien actif, et un clic reel sur « Eteindre » affiche desormais
+« Erreur : cle LAN absente : aucune session chiffree n'est possible... ». Aucune cle de traduction non
+resolue. `tsc --noEmit` passe.
+
+Le garde-fou se leve tout seul des qu'une cle est presente : il ne teste que `CFG.lanKey.length`.
+
+### Le menu se reduit quand la cle LAN est absente (2026-08-20)
+
+Suite logique de la coherence des messages : sans cle, on ne propose plus les pages qui ne peuvent
+rien faire.
+
+**`src/app/Nav.tsx`**, nouveau composant client. Le layout reste un composant serveur ; il ne fait
+plus que rendre `<Nav />`. La liste des entrees porte un drapeau `needsLanKey`, et le composant
+filtre selon `/api/status`.
+
+| Sans cle | Entrees |
+|---|---|
+| masquees | Boissons, Bean Adapt, Profils, Pilotage, Recettes, Statistiques |
+| conservees | **Cle LAN** (sans quoi plus aucun chemin pour recuperer la cle) et **Systeme** (ne depend pas de la cle) |
+
+**Les pages masquees restent servies.** Une URL saisie a la main affiche toujours le cache de la
+derniere lecture, avec la banniere d'avertissement. On retire l'invitation, pas l'acces -- verifie :
+`/` repond et affiche « Boissons de la machine » avec le menu reduit.
+
+**Deux details a ne pas regresser.**
+
+1. **Etat inconnu = tout afficher.** `lanKeySet === null` (et tout echec du fetch) laisse le menu
+   complet. Masquer par defaut ferait clignoter le menu a chaque chargement dans le cas normal --
+   cle presente -- qui est le cas courant.
+2. **`/cle-lan` emet un evenement `lankey-changed`** apres une recuperation ou un oubli. C'est le
+   seul moyen de voir le menu revenir sans rechargement complet : sans lui on resterait coince sur
+   `/cle-lan` apres une recuperation reussie, puisque tous les autres liens sont masques. La
+   navigation se faisant par liens classiques, tout autre changement de page reconstruit le menu.
+
+**Verifie dans le navigateur.** Menu reduit a « Cle LAN | Systeme » sur `/cle-lan`, `/systeme` et `/`.
+Puis, en simulant la reponse de `/api/status` cote navigateur -- donc **sans toucher a la vraie
+cle** -- l'emission de `lankey-changed` fait passer le menu de 2 a 8 entrees instantanement.
+`tsc --noEmit` passe.
+
+### Adresse de la machine : saisie dans l'interface, et plus aucun defaut (2026-08-20)
+
+**Le defaut en dur disparait.** `CFG.machineIp` valait `process.env.MACHINE_IP ?? "192.168.x.x"` :
+la configuration de quelqu'un d'autre, qui donnait l'illusion d'un serveur configure alors qu'il
+parlait dans le vide. Desormais `process.env.MACHINE_IP || null`. Meme nettoyage dans
+`debug-capture.mjs` (qui exige maintenant `MACHINE_IP` comme les autres variables) et dans
+`src/lib/config.ts` (mort).
+
+**Priorite identique au DSN et a la cle LAN** : `MACHINE_IP` dans `.env.local` > `meta.machineIp` en
+base (ecrite par l'interface) > rien.
+
+**Nouvelle page `/machine`**, premiere entree du menu — l'ordre suit la dependance reelle : sans
+adresse, pas de DSN, donc pas de decouverte de cle LAN, qui a besoin du DSN.
+
+- Etat : adresse, source, date d'enregistrement, DSN decouvert et sa source, et l'adresse que nous
+  **annoncons** a la machine (`serverIp:serverPort`).
+- Saisie validee : IPv4 **ou nom d'hote** — le champ `host` de `node:http` ne fait pas la
+  difference, et un nom d'hote protege d'un changement de bail DHCP. Rejette schema, port et chemin.
+- **Test immediat** : l'enregistrement est suivi d'une sonde `regtoken.json` et d'une nouvelle
+  resolution du DSN. Une adresse enregistree mais muette est signalee tout de suite, au lieu d'etre
+  decouverte au premier echec de commande.
+- Oubli de l'adresse memorisee.
+
+**Consequences d'un changement d'adresse** : la session LAN est jetee (elle derivait d'un echange de
+cles avec l'ancienne machine) et le DSN memorise est effac -- c'est le numero de serie de l'ANCIEN
+appareil. Un `MACHINE_DSN` explicite reste prioritaire.
+
+**Garde-fous.** `probeRegtoken()` et `postLocalReg()` court-circuitent quand l'adresse est inconnue,
+au lieu de laisser `node:http` composer un hote nul. `NEEDS_LAN_KEY` devient `NEEDS_MACHINE` et
+verifie les deux prerequis dans l'ordre, avec les drapeaux `needsMachineIp` puis `needsLanKey`. Le
+menu masque les pages qui dependent des deux : il ne reste que Machine, Cle LAN et Systeme.
+
+**Verifie, en commentant temporairement `MACHINE_IP` dans `.env.local`** (sauvegarde puis restaure,
+empreinte sha256 identique verifiee) :
+
+| Controle | Resultat |
+|---|---|
+| demarrage sans adresse | « machine a configurer » + avertissement au journal |
+| `GET /api/machine` | `ip: null`, `source: inconnue` |
+| `POST /api/command` | 409 `needsMachineIp: true` |
+| adresses invalides (`http://…`, `…:80`, `a b`, vide) | 400, les quatre |
+| menu avec cle presente mais sans adresse | reduit a Machine / Cle LAN / Systeme |
+| saisie de l'adresse reelle dans l'interface | enregistree, sonde `reachable: true` HTTP 200, **DSN repasse en source « machine (regtoken.json) »** -- la sonde a donc reellement joint la machine |
+| menu apres saisie | revenu a 9 entrees, sans rechargement |
+| apres restauration de `MACHINE_IP` | `source: MACHINE_IP (.env.local)`, `envForced: true`, ecritures a nouveau autorisees (POST /api/presence -> 200) |
+
+Note : la page signale explicitement quand `MACHINE_IP` est definie dans l'environnement, pour que
+la saisie ne paraisse pas ignoree apres un redemarrage.
+
+### La saisie de l'adresse rejoint la page Cle LAN (2026-08-20)
+
+`/machine`, cree une demi-heure plus tot, est **fusionnee dans `/cle-lan`** et supprimee. La raison
+est la dependance elle-meme : chez Ayla la cle est rangee sous le DSN, et le DSN ne vient que de la
+machine — on ne peut donc pas recuperer la cle avant de connaitre l'adresse. Deux pages pour deux
+reglages qui se conditionnent obligeaient a faire l'aller-retour.
+
+**La page, dans l'ordre de la dependance :**
+
+1. « Adresse de la machine » — etat (adresse, source, DSN et sa source, l'adresse que nous
+   annoncons), saisie validee, test immediat, oubli ;
+2. « Etat actuel » de la cle ;
+3. « Recuperer la cle depuis le compte De'Longhi » ;
+4. « Oublier la cle memorisee », si elle est memorisee.
+
+Une phrase (`lankey.addressWhy`) explique pourquoi l'adresse figure sur cette page, et precise que
+le DSN une fois memorise affranchit la recuperation de cette adresse — mais pas le pilotage.
+
+**Nettoyage.** Entree de menu « Machine » retiree (il ne reste que Cle LAN et Systeme quand un
+prerequis manque), `nav.machine` retiree du catalogue, les cinq mentions « page Machine » de
+`server.mjs` corrigees, et le lien `needsDsnLink` supprime : la saisie est desormais juste au-dessus
+de l'avertissement. Les endpoints `/api/machine` gardent leur nom. `/machine` repond 404 — la page
+n'a jamais existe ailleurs que dans cette session.
+
+**Piege rencontre** : `tsc` echouait sur `.next/types/validator.ts`, qui referencait encore
+`src/app/machine/page.js`. Ce n'est pas une erreur de code mais un type genere perime — `rm -rf
+.next/types` puis rebuild.
+
+**Verifie dans le navigateur.** Menu « Cle LAN | Systeme », sections dans l'ordre attendu, trois
+champs (adresse, e-mail, mot de passe), avertissement d'adresse manquante present. Puis saisie
+reelle : « Adresse 192.168.x.x enregistree, et la machine repond. DSN : AC000W0XXXXXXXX. », plus
+aucun avertissement. Le menu reste reduit — correctement : `ready` exige les DEUX prerequis, et la
+cle est absente. `/machine` -> 404, `/cle-lan` -> 200, `tsc --noEmit` passe, le build compile.

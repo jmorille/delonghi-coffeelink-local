@@ -1,0 +1,7 @@
+# pnpm 11 demande une décision explicite pour chaque paquet ayant un script d'installation.
+# Ces deux-là sont des accélérateurs natifs livrés avec des binaires précompilés : le projet
+# fonctionnait déjà sans exécuter leurs scripts. On refuse donc de les lancer — c'est le choix
+# conservateur pour du code d'installation tiers, et rien n'en dépend ici.
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false

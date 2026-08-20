@@ -1,0 +1,18 @@
+# Ce qui ne doit SURTOUT pas entrer dans l'image : les secrets et l'état machine.
+# `data/` contient la base SQLite — clé LAN, numéro de série, noms de profils.
+.env.local
+.env*.local
+data/
+
+# Reconstruit dans l'image
+node_modules/
+.next/
+out/
+
+# Inutile au build
+.git/
+.github/
+*.tsbuildinfo
+next-env.d.ts
+debug-capture.mjs
+ETAT.md

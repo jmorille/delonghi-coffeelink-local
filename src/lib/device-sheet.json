@@ -1,0 +1,83 @@
+{
+  "_source": "Fiche appareil Ayla, relevée le 2026-08-19 : GET https://ads-eu.aylanetworks.com/apiv1/dsns/<DSN>.json (Authorization: auth_token). Snapshot figé — non rafraîchi automatiquement.",
+  "_privacy": "Champs personnels volontairement absents (SSID, IP publique, géolocalisation, identifiants de compte, setup_token) : ils restent dans docs/secrets.md, gitignoré. Les deux identifiants uniques de l'appareil — adresse MAC et aylaId — sont mis à null dans le dépôt : ce sont des données propres à une machine, pas au modèle. Tout le reste (module, firmware, plateforme) est commun à toutes les ECAM équipées de ce module.",
+  "capturedAt": "2026-08-19",
+  "hardware": {
+    "model": "AY008ESP1",
+    "oem_model": "DL-millcore",
+    "oem": "229b963f",
+    "mac": null,
+    "macVendor": "Espressif Inc.",
+    "platform": "ESP32",
+    "device_type": "Wifi",
+    "imei": null,
+    "unique_hardware_id": null,
+    "product_class": null
+  },
+  "firmware": {
+    "sw_version": "ADA 1.5.3 esp-idf-v3.3.1 2020-04-13 00:25:55 2cfd564",
+    "agent": "ADA 1.5.3",
+    "sdk": "esp-idf v3.3.1",
+    "builtAt": "2020-04-13T00:25:55Z",
+    "commit": "2cfd564",
+    "module_updated_at": "2021-03-18T04:58:48Z",
+    "neverUpdated": true,
+    "sdkEndOfLife": "ESP-IDF 3.3.x ne reçoit plus de correctifs de sécurité depuis 2022."
+  },
+  "platform": {
+    "lan_enabled": true,
+    "connection_priority": [
+      "LAN"
+    ],
+    "ans_enabled": true,
+    "ans_server": "ans-field-eu.aylanetworks.com",
+    "has_properties": true,
+    "transport_type": "http",
+    "enable_ssl": null,
+    "log_enabled": false,
+    "homekit": null,
+    "template_id": 5651
+  },
+  "lifecycle": {
+    "created_at": "2021-03-18T04:58:46Z",
+    "activated_at": "2021-03-18T04:58:46Z",
+    "module_updated_at": "2021-03-18T04:58:48Z",
+    "registered": true,
+    "registrable": true,
+    "registration_type": "AP-Mode",
+    "provisional": false,
+    "aylaId": null
+  },
+  "findings": [
+    {
+      "level": "warn",
+      "title": "Firmware jamais mis à jour",
+      "detail": "module_updated_at (2021-03-18T04:58:48Z) est à 2 secondes de activated_at : c'est l'horodatage de la première mise en service, pas d'une mise à jour. Le binaire date d'avril 2020."
+    },
+    {
+      "level": "warn",
+      "title": "SDK en fin de vie",
+      "detail": "ESP-IDF 3.3.1 ne reçoit plus de correctifs de sécurité depuis 2022."
+    },
+    {
+      "level": "warn",
+      "title": "Aucun chiffrement local",
+      "detail": "enable_ssl est null : le serveur HTTP local du module est en clair. Le chiffrement du LAN mode ne protège que le contenu des datapoints, pas le transport."
+    },
+    {
+      "level": "warn",
+      "title": "regtoken lisible sans authentification",
+      "detail": "GET /regtoken.json répond sans aucune authentification, et registrable est true : l'appareil peut encore être revendiqué par un compte. D'où l'isolement sur le VLAN IoT."
+    },
+    {
+      "level": "info",
+      "title": "Pas de Bluetooth",
+      "detail": "registration_type AP-Mode et l'absence de BLE dans connection_priority confirment côté cloud que cette machine n'a pas de Bluetooth — le pilotage local passe nécessairement par le Wi-Fi."
+    },
+    {
+      "level": "info",
+      "title": "LAN mode autorisé",
+      "detail": "lan_enabled true et connection_priority [\"LAN\"] sont les deux éléments qui rendent le pilotage 100 % local possible."
+    }
+  ]
+}

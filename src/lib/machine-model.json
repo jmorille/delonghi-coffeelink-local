@@ -1,0 +1,386 @@
+{
+  "_source": "assets/MachinesModels.json (APK it.delonghi 4.9.6), version 1.510, entree product_code 0132217055",
+  "productCode": "0132217055",
+  "type": "ECAM 610.75.MB",
+  "appModelId": "PD_SOUL",
+  "protocolVersion": 2,
+  "protocolMinorVersion": 1,
+  "connectionType": "Wi-Fi",
+  "characterSet": "1",
+  "nProfiles": 5,
+  "nStandardRecipes": 18,
+  "nCustomRecipes": 6,
+  "creationRecipes": true,
+  "customizableProfiles": true,
+  "globalTemperature": true,
+  "recipes": [
+    {
+      "id": 1,
+      "name": "Espresso Coffee",
+      "ingredients": [
+        1,
+        2,
+        4,
+        8,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Regular Coffee",
+      "ingredients": [
+        1,
+        2,
+        4,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Long Coffee",
+      "ingredients": [
+        1,
+        2,
+        4,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 4,
+      "name": "2X Espresso Coffee",
+      "ingredients": [
+        1,
+        2,
+        4,
+        8,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Doppio+",
+      "ingredients": [
+        1,
+        4,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Americano",
+      "ingredients": [
+        1,
+        2,
+        4,
+        15,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Cappuccino",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Latte Macchiato",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Caffé Latte",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Flat White",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Espresso Macchiato",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Hot Milk",
+      "ingredients": [
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 13,
+      "name": "Cappuccino Doppio+",
+      "ingredients": [
+        1,
+        4,
+        9,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 15,
+      "name": "Cappuccino Reverse",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 16,
+      "name": "Hot Water",
+      "ingredients": [
+        15,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 22,
+      "name": "Tea",
+      "ingredients": [
+        13,
+        15,
+        24,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 23,
+      "name": "Coffee pot",
+      "ingredients": [
+        1,
+        2,
+        4,
+        25,
+        27,
+        30
+      ]
+    },
+    {
+      "id": 24,
+      "name": "Cortado",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 25,
+      "name": "Long Black",
+      "ingredients": [
+        1,
+        2,
+        4,
+        12,
+        15,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 26,
+      "name": "Travel Mug",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        15,
+        24,
+        25,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 27,
+      "name": "Brew Over Ice",
+      "ingredients": [
+        1,
+        2,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 200,
+      "name": "Espresso BS 1",
+      "ingredients": [
+        1,
+        2,
+        24,
+        25,
+        27
+      ]
+    },
+    {
+      "id": 230,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    },
+    {
+      "id": 231,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    },
+    {
+      "id": 232,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    },
+    {
+      "id": 233,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    },
+    {
+      "id": 234,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    },
+    {
+      "id": 235,
+      "name": "Custom",
+      "ingredients": [
+        1,
+        2,
+        4,
+        9,
+        12,
+        24,
+        25,
+        28
+      ]
+    }
+  ]
+}

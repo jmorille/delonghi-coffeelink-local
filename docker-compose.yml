@@ -1,0 +1,50 @@
+# Déploiement du serveur LAN De'Longhi. Détails et pièges dans DOCKER.md.
+#
+# ⚠️ Deux réglages décident si ça marche ou non :
+#   - SERVER_IP doit être l'adresse joignable **depuis le VLAN de la cafetière** (pas l'IP du
+#     conteneur) : c'est celle que nous annonçons à la machine, et c'est elle qu'elle viendra
+#     frapper.
+#   - le port publié doit être **le même des deux côtés** (`3000:3000`). Nous annonçons
+#     SERVER_PORT à la machine, donc un remappage `8080:3000` la ferait toquer à la mauvaise porte.
+
+services:
+  lan-server:
+    # Image publiée par le workflow de release. Pour construire localement : `docker compose build`.
+    image: ghcr.io/OWNER/REPO:latest
+    build: .
+    container_name: delonghi-lan-server
+    restart: unless-stopped
+
+    # Les secrets restent dans .env.local, hors de l'image et hors de ce fichier.
+    env_file:
+      - .env.local
+    environment:
+      DATA_DIR: /data
+      TZ: Europe/Paris
+
+    ports:
+      - "3000:3000"
+
+    # Alternative sous Linux : le réseau de l'hôte, ce qui évite tout NAT et tout choix d'IP —
+    # SERVER_IP reste néanmoins à renseigner, c'est l'adresse que nous ANNONÇONS. Incompatible
+    # avec `ports:` ci-dessus, et indisponible sur Docker Desktop (Windows/macOS).
+    # network_mode: host
+
+    volumes:
+      # La base SQLite. Volume nommé par défaut ; pour un répertoire de l'hôte, voir la section
+      # Permissions de DOCKER.md (le conteneur tourne en uid 1000).
+      - lan-server-data:/data
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
+volumes:
+  lan-server-data:

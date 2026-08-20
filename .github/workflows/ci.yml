@@ -1,0 +1,145 @@
+# Intégration continue : le projet n'a pas de suite de tests (les changements de protocole sont
+# validés en direct sur la vraie machine), donc la CI vérifie ce qu'elle peut vérifier sans
+# cafetière : les types, la syntaxe des modules ESM, le build Next, et le fait que l'image Docker
+# démarre et répond.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# Une nouvelle poussée annule la vérification en cours sur la même branche.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Types, syntaxe et build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # La version de pnpm vient du champ `packageManager` de package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Vérifier les types
+        run: node_modules/.bin/tsc --noEmit
+
+      # `server.mjs` et les modules de `src/lib` ne passent pas par TypeScript : leur seul filet est
+      # cette vérification de syntaxe. Ils constituent le serveur réel — les copies `.ts` sont
+      # shadowées et ne tournent pas.
+      - name: Vérifier la syntaxe des modules ESM
+        run: |
+          for f in server.mjs src/lib/*.mjs; do
+            echo "  node --check $f"
+            node --check "$f"
+          done
+
+      # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
+      # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à
+      # l'exécution sans casser le build.
+      - name: Vérifier le catalogue de messages
+        run: |
+          node -e "
+            const d = require('./messages/fr.json');
+            const bad = [];
+            (function walk(o, p) {
+              for (const [k, v] of Object.entries(o)) {
+                if (typeof v === 'string') { if (/<[^>]/.test(v)) bad.push(p + k); }
+                else walk(v, p + k + '.');
+              }
+            })(d, '');
+            if (bad.length) { console.error('messages avec des chevrons :', bad); process.exit(1); }
+            console.log('catalogue valide');
+          "
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+      # Vérifie que le stockage SQLite s'initialise et migre correctement, sans machine ni réseau.
+      - name: Vérifier le stockage SQLite
+        run: |
+          # Un ancien fichier de recettes, pour que la migration JSON → SQLite soit exercée.
+          mkdir -p /tmp/ci-data
+          echo '{"recipes":[{"id":"ci","name":"CI","updatedAt":1}]}' > /tmp/ci-data/recipes.json
+          DATA_DIR=/tmp/ci-data node --input-type=module -e "
+            const S = await import('./src/lib/store.mjs');
+            const info = S.storageInfo();
+            if (info.journalMode !== 'wal') throw new Error('journal attendu WAL, obtenu ' + info.journalMode);
+            if (info.counts.recipes !== 1) throw new Error('la migration JSON n a pas repris la recette');
+            S.putStats([{ id: 3000, value: 42 }]);
+            if (S.allStats()[3000].value !== 42) throw new Error('ecriture de statistique perdue');
+            console.log('stockage OK :', JSON.stringify(info.counts), info.journalMode, 'schéma v' + info.schemaVersion);
+          "
+
+  docker:
+    name: Image Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Construite pour l'architecture du runner seulement : la CI vérifie que l'image se
+      # construit et démarre. Le multi-architecture est l'affaire du workflow de release.
+      - name: Construire l'image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: delonghi-lan-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Démarrage à vide : aucune cafetière n'est joignable, donc on pointe MACHINE_IP sur une
+      # adresse qui refuse tout de suite. Le serveur doit quand même se lever et répondre.
+      - name: Démarrer le conteneur et interroger /api/status
+        run: |
+          docker run -d --name ci-run -p 3000:3000 \
+            -e MACHINE_IP=127.0.0.1 \
+            -e SERVER_IP=127.0.0.1 \
+            delonghi-lan-server:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/status > /tmp/status.json; then
+              echo "réponse obtenue après ${i} tentative(s)"
+              break
+            fi
+            sleep 2
+          done
+          echo "--- /api/status ---"
+          cat /tmp/status.json
+          node -e "
+            const d = require('/tmp/status.json');
+            if (typeof d.config?.serverPort !== 'number') throw new Error('charge utile inattendue');
+            console.log('le serveur répond, port', d.config.serverPort);
+          "
+          echo "--- /api/system : le stockage doit annoncer SQLite ---"
+          curl -fsS http://127.0.0.1:3000/api/system | node -e "
+            const d = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+            if (d.storage?.engine !== 'sqlite') throw new Error('moteur de stockage inattendu : ' + JSON.stringify(d.storage));
+            console.log('stockage', d.storage.engine, d.storage.sqliteVersion, '· journal', d.storage.journalMode);
+          "
+
+      - name: Journal du conteneur
+        if: always()
+        run: docker logs ci-run || true
+
+      - name: Arrêter le conteneur
+        if: always()
+        run: docker rm -f ci-run || true
