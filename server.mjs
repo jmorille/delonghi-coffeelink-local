@@ -95,6 +95,7 @@ const APP = {
   aylaAppSecret: process.env.AYLA_APP_SECRET || CLOUD_APP.ayla.appSecret,
   aylaUserUrl: CLOUD_APP.ayla.userServiceUrl,
   aylaDeviceUrl: CLOUD_APP.ayla.deviceServiceUrl,
+  aylaRefreshPath: process.env.AYLA_REFRESH_PATH || CLOUD_APP.ayla.refreshPath,
 };
 const now = () => new Date().toISOString().slice(11, 23);
 
@@ -164,6 +165,11 @@ function makeMachine(row) {
     gen,
     send: gen === "striker" ? "app_data_request" : "data_request",
     mon: gen === "striker" ? "d302_monitor_machine" : "d302_monitor",
+
+    // Jeton d'accès Ayla obtenu pour cette machine, **en mémoire seulement** : il meurt avec le
+    // processus. C'est le premier niveau de la cascade — deux vérifications OTA d'affilée ne
+    // redemandent donc rien, ni au cloud ni à l'utilisateur.
+    aylaToken: null, // { token, expiresAt }
 
     session: null,
     program: null, // {active,ecamB64,label,startedAt,durationMs,counter}
@@ -1205,7 +1211,92 @@ async function gigyaCall(method, params) {
  * « Unauthorized user [403005] » — c'est exactement ce qui faisait échouer la découverte alors que
  * l'app Android fonctionnait (elle, elle signe, via le SDK Gigya mobile).
  */
-async function aylaAccessToken(m, { email, password, jwt: givenJwt }) {
+/**
+ * Session cloud mémorisée : le `refresh_token` rendu par `token_sign_in.json`.
+ *
+ * Rangée dans `settings`, pas dans le `meta` d'une machine : c'est un identifiant de **compte**, pas
+ * d'appareil, et deux machines du même compte n'ont pas à en garder deux copies.
+ *
+ * ⚠️ **C'est le seul secret de niveau COMPTE que ce serveur puisse écrire sur le disque**, et il ne
+ * l'écrit que sur demande explicite (`remember: true`). La clé LAN, elle, ne donne que le pilotage
+ * local d'une cafetière, et encore faut-il être sur le réseau. Un `refresh_token` agit sur le compte
+ * De'Longhi jusqu'à sa révocation. Aucun endpoint ne le renvoie — seulement sa présence et sa date.
+ */
+const cloudSession = () => getSetting("aylaRefresh");
+function rememberCloudSession(refresh) {
+  if (!refresh) return;
+  setSetting("aylaRefresh", { token: String(refresh), at: Date.now() });
+}
+function forgetCloudSession() {
+  const had = cloudSession() !== null;
+  clearSetting("aylaRefresh");
+  for (const m of MACHINES.values()) m.aylaToken = null;
+  return had;
+}
+
+/**
+ * Renouvelle un jeton d'accès à partir du `refresh_token`, sans Gigya ni mot de passe.
+ *
+ * Chemin et forme du corps **vérifiés** contre ce déploiement : avec un jeton bidon, Ayla répond
+ * « HTTP 401 Your refresh token is not found » — une réponse applicative, là où un mauvais chemin
+ * aurait donné un 404. Reste non éprouvé : le chemin heureux, qui demande un vrai `refresh_token`.
+ *
+ * En cas d'échec on **oublie** la session mémorisée. Garder un jeton dont on ne sait pas s'il vaut
+ * quelque chose ne ferait que retarder la demande de mot de passe en la rendant incompréhensible —
+ * et c'est vérifié aussi : après un renouvellement refusé, `/api/cloudsession` repasse à `set:
+ * false` et l'appel se termine par un 400 qui réclame les identifiants.
+ */
+async function refreshAylaToken(m) {
+  const s = cloudSession();
+  if (!s?.token) return null;
+  try {
+    const r = await fetch(`${APP.aylaUserUrl}${APP.aylaRefreshPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user: { refresh_token: s.token } }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const j = await r.json().catch(() => null);
+    if (!j?.access_token) throw new Error(`HTTP ${r.status}${j?.error ? " " + j.error : ""}`);
+    // Ayla fait tourner le refresh_token : garder l'ancien le rendrait inutilisable au coup suivant.
+    rememberCloudSession(j.refresh_token ?? s.token);
+    L("sys", "cloud : jeton renouvelé depuis la session mémorisée (sans mot de passe)", m);
+    return { token: j.access_token, expiresIn: Number(j.expires_in) || 0 };
+  } catch (e) {
+    L("sys", `cloud : renouvellement impossible (${e.message}) — session mémorisée oubliée, le mot de passe sera redemandé`, m);
+    forgetCloudSession();
+    return null;
+  }
+}
+
+/**
+ * Jeton d'accès Ayla, par la voie la moins coûteuse disponible.
+ *
+ *   1. celui qu'on a déjà **en mémoire**, s'il n'est pas expiré — aucun appel réseau ;
+ *   2. le `refresh_token` mémorisé, s'il y en a un — un appel à Ayla, ni Gigya ni mot de passe ;
+ *   3. les identifiants du compte — les quatre sauts complets ;
+ *   4. `AYLA_TOKEN` — pour qui en a déjà un sous la main.
+ *
+ * Le niveau 1 ne survit pas au processus, et c'est voulu. Le niveau 2 n'existe que si l'utilisateur
+ * l'a demandé (`remember`). Les niveaux 3 et 4 ne conservent rien.
+ */
+async function aylaToken(m, { email, password, jwt, remember } = {}) {
+  const marge = 60000; // on ne repart pas avec un jeton qui expire pendant la requête
+  if (m.aylaToken && Date.now() + marge < m.aylaToken.expiresAt) return m.aylaToken.token;
+
+  if (email || jwt) {
+    const t = await aylaAccessToken(m, { email, password, jwt, remember });
+    return t;
+  }
+  const renouvele = await refreshAylaToken(m);
+  if (renouvele) {
+    m.aylaToken = { token: renouvele.token, expiresAt: Date.now() + (renouvele.expiresIn || 3600) * 1000 };
+    return renouvele.token;
+  }
+  return process.env.AYLA_TOKEN || null;
+}
+
+async function aylaAccessToken(m, { email, password, jwt: givenJwt, remember = false }) {
   const apiKey = APP.gigyaApiKey;
   const appId = APP.aylaAppId;
   const appSecret = APP.aylaAppSecret;
@@ -1246,6 +1337,13 @@ async function aylaAccessToken(m, { email, password, jwt: givenJwt }) {
   const tj = await tr.json().catch(() => null);
   const accessToken = tj?.access_token;
   if (!accessToken) throw new Error(`token_sign_in : pas de access_token (HTTP ${tr.status}${tj?.error ? " " + tj.error : ""})`);
+  // Gardé en mémoire pour la durée annoncée : deux appels d'affilée ne refont pas les quatre sauts.
+  m.aylaToken = { token: accessToken, expiresAt: Date.now() + (Number(tj.expires_in) || 3600) * 1000 };
+  // Le refresh_token n'est écrit que si on l'a demandé. Voir cloudSession() pour ce que ça implique.
+  if (remember) {
+    if (tj.refresh_token) rememberCloudSession(tj.refresh_token);
+    else L("sys", "cloud : aucun refresh_token dans la réponse — la session ne peut pas être mémorisée", m);
+  }
   return accessToken;
 }
 
@@ -1285,13 +1383,13 @@ async function checkCloudOta(m, token) {
   return releve;
 }
 
-async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
+async function discoverLanKey(m, { email, password, jwt: givenJwt, remember = false }) {
   const dsn = await resolveDsn(m);
   // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
   // elle n'a plus besoin d'elle du tout. Le message doit donc désigner l'action qui débloque.
   if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Machines »), ou forcer MACHINE_DSN dans .env.local.");
 
-  const accessToken = await aylaAccessToken(m, { email, password, jwt: givenJwt });
+  const accessToken = await aylaAccessToken(m, { email, password, jwt: givenJwt, remember });
 
   L("sys", `clé LAN : lecture de lan.json pour ${dsn}…`, m);
   const lr = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${dsn}/lan.json`, {
@@ -1669,8 +1767,9 @@ function scanNextStat(m) {
  * Seules les écritures (POST) sont bloquées : les lectures continuent de servir le cache déjà
  * constitué, qui reste parfaitement consultable.
  */
-// `/api/lankey` et `/api/ota` en sont volontairement absents : ils parlent au cloud, pas à la
-// machine, et ce sont eux qui débloquent la situation. Les bloquer la rendrait irrécupérable.
+// `/api/lankey`, `/api/ota` et `/api/cloudsession` en sont volontairement absents : ils parlent au
+// cloud, pas à la machine, et ce sont eux qui débloquent la situation. Les bloquer la rendrait
+// irrécupérable.
 const NEEDS_MACHINE = [
   "/api/command",
   "/api/presence",
@@ -1868,7 +1967,11 @@ async function handleMachines(req, res) {
       m.import = null;
       m.program = null;
       m.session = null;
+      m.aylaToken = null;
       const cleared = m.store.reset();
+      // « Tout effacer » doit tout dire : la session cloud mémorisée est un identifiant de compte,
+      // elle ne doit pas survivre à l'effacement de la seule machine qu'on pilotait.
+      const cloudOublie = forgetCloudSession();
       setMachineLabel(m.id, null);
       const frais = makeMachine({ id: m.id, createdAt: m.createdAt, label: null });
       MACHINES.set(frais.id, frais);
@@ -1882,6 +1985,7 @@ async function handleMachines(req, res) {
         removed: false,
         reset: true,
         cleared,
+        cloudSessionForgotten: cloudOublie,
         envRestored,
         machine: machineSummary(frais),
         defaultId: defaultMachine().id,
@@ -2512,6 +2616,22 @@ async function handleApi(req, res) {
   }
 
   /**
+   * Session cloud mémorisée. `GET` dit si elle existe et depuis quand, `DELETE` l'oublie.
+   *
+   * Ne renvoie **jamais** le jeton — même règle que la clé LAN. C'est le seul secret de niveau
+   * compte que ce serveur puisse écrire, et il ne l'écrit que sur demande explicite.
+   */
+  if (url === "/api/cloudsession" && req.method === "GET") {
+    const s = cloudSession();
+    return raw(res, JSON.stringify({ set: s !== null, at: s?.at ?? null, tokenConfigured: !!process.env.AYLA_TOKEN }));
+  }
+  if (url === "/api/cloudsession" && req.method === "DELETE") {
+    const removed = forgetCloudSession();
+    L("sys", `session cloud : ${removed ? "oubliée" : "déjà absente"}`, m);
+    return raw(res, JSON.stringify({ removed, set: false }));
+  }
+
+  /**
    * Mises à jour OTA côté cloud. `GET` rapporte le dernier relevé, `POST` en fait un nouveau.
    *
    * La vérification a besoin d'un jeton Ayla. Deux façons de l'obtenir, dans cet ordre : les
@@ -2531,11 +2651,11 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ error: "DSN inconnu : la fiche OTA est rangée chez Ayla sous le numéro de série de la machine. Renseigner son adresse pour que le serveur le lise.", needsDsn: true }), 409);
     }
     try {
-      // Priorité aux identifiants fournis : ils sont explicites. AYLA_TOKEN sert de repli, pour qui
-      // en a déjà un et ne veut pas retaper son mot de passe.
-      const token = email || jwt ? await aylaAccessToken(m, { email, password, jwt }) : process.env.AYLA_TOKEN;
+      // La cascade choisit la voie la moins coûteuse : jeton en mémoire, session mémorisée,
+      // identifiants, AYLA_TOKEN. Voir aylaToken().
+      const token = await aylaToken(m, { email, password, jwt, remember: b.remember === true });
       if (!token) {
-        return raw(res, JSON.stringify({ error: "identifiants du compte De'Longhi requis (ou AYLA_TOKEN dans .env.local) : la fiche OTA n'est lisible que côté cloud.", needsCredentials: true }), 400);
+        return raw(res, JSON.stringify({ error: "identifiants du compte De'Longhi requis : la fiche OTA n'est lisible que côté cloud, et aucune session n'est mémorisée.", needsCredentials: true }), 400);
       }
       return raw(res, JSON.stringify({ ok: true, ...(await checkCloudOta(m, token)) }));
     } catch (e) {
@@ -2577,7 +2697,7 @@ async function handleApi(req, res) {
     const jwt = typeof b.jwt === "string" && b.jwt.trim() ? b.jwt.trim() : null;
     if (!jwt && (!email || !password)) return raw(res, JSON.stringify({ error: "e-mail et mot de passe requis (ou un jwt)" }), 400);
     try {
-      const found = await discoverLanKey(m, { email, password, jwt });
+      const found = await discoverLanKey(m, { email, password, jwt, remember: b.remember === true });
       const changed = applyLanKey(m, found, jwt ? "JWT fourni (cloud Ayla)" : "compte De'Longhi (cloud)");
       // La clé était le prérequis manquant : modèle et noms deviennent lisibles, on les demande
       // tout de suite plutôt que d'attendre que l'utilisateur pense à le faire.
@@ -2591,6 +2711,9 @@ async function handleApi(req, res) {
         changed,
         source: m.lanKeySource,
         initialRead,
+        // Pour que l'interface dise si la session cloud a bien été mémorisée : Ayla ne renvoie pas
+        // toujours un refresh_token, et une case cochée sans effet serait un mensonge.
+        cloudSession: cloudSession() !== null,
       }));
     } catch (e) {
       // Le message d'erreur vient de Gigya/Ayla et ne contient pas d'identifiant.

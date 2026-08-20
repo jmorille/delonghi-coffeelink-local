@@ -1625,3 +1625,47 @@ convenu.
 
 Le chemin heureux — vrais identifiants, vraie fiche OTA — demande un mot de passe : il reste à
 jouer par l'utilisateur.
+
+### Jeton Ayla : cascade à quatre niveaux (2026-08-20)
+
+Le principe retenu est celui qui valait déjà pour la clé LAN — frapper un jeton au moment du besoin,
+l'utiliser, ne rien conserver — étendu d'un niveau qui évite de retaper le mot de passe.
+
+| Niveau | Coût | Ce qui est conservé |
+|---|---|---|
+| 1. jeton d'accès en mémoire, non expiré | aucun appel | rien qui survive au processus |
+| 2. `refresh_token` mémorisé (opt-in) | un appel à Ayla | le jeton de renouvellement, sur disque |
+| 3. identifiants du compte | les quatre sauts | rien |
+| 4. `AYLA_TOKEN` | — | rien (déjà dans `.env.local`) |
+
+Le niveau 1 rend gratuite une deuxième vérification dans la même session : `m.aylaToken` garde le
+jeton pour la durée annoncée par `expires_in`, avec une marge d'une minute pour ne pas repartir avec
+un jeton qui expire pendant la requête.
+
+**Le niveau 2 est le seul secret de niveau COMPTE que ce serveur puisse écrire.** D'où : case
+décochée par défaut, étiquetée sans détour, rangée dans `settings` (c'est un identifiant de compte,
+pas d'appareil — deux machines du même compte n'en gardent pas deux copies), jamais renvoyée par un
+endpoint, oubliable, et emportée par « Tout effacer ». La clé LAN ne donne que le pilotage local
+d'une cafetière, et encore faut-il être sur le réseau ; un `refresh_token` agit sur le compte
+De'Longhi jusqu'à révocation. La distinction est écrite dans `CLAUDE.md`, section secrets.
+
+Deux détails qui viennent du protocole : Ayla **fait tourner** le `refresh_token` à chaque usage,
+donc garder l'ancien casserait l'appel suivant ; et Ayla ne renvoie pas toujours de `refresh_token`,
+donc l'interface n'annonce la mémorisation que si le serveur confirme l'avoir faite — une case cochée
+sans effet serait un mensonge.
+
+**Le chemin de renouvellement est vérifié, et c'est le banc d'essai qui l'a dit.** Avec un jeton
+bidon injecté dans la base, Ayla répond `HTTP 401 Your refresh token is not found` : une réponse
+**applicative**, là où un mauvais chemin aurait donné un 404. Le chemin (`/users/refresh_token.json`)
+et la forme du corps (`{ user: { refresh_token } }`) sont donc bons. Ma documentation les donnait
+pour non vérifiés : corrigé.
+
+| Contrôle sur le banc | Résultat |
+|---|---|
+| `GET /api/cloudsession` | `set: false` |
+| `DELETE` sur une session absente | `removed: false`, pas d'erreur |
+| `POST /api/ota` sans rien | 400 `needsCredentials` |
+| `POST /api/ota`, JWT invalide + `remember` | 502, et **aucune** session mémorisée — rien à retenir d'un échange raté |
+| renouvellement avec un faux jeton | 401 applicatif, session **oubliée**, puis 400 réclamant les identifiants |
+
+Reste non éprouvé : le chemin heureux, qui demande un vrai mot de passe.

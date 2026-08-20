@@ -64,6 +64,15 @@ export default function Machines() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ label: "", ip: "" });
+  /**
+   * Session cloud : `refresh_token` mémorisé, qui évite de retaper le mot de passe.
+   *
+   * Décoché par défaut, et ça n'est pas une précaution de façade : c'est le seul secret de niveau
+   * **compte** que ce serveur puisse écrire sur le disque. La clé LAN, elle, ne donne que le
+   * pilotage local d'une cafetière — et encore faut-il être sur le réseau.
+   */
+  const [remember, setRemember] = useState(false);
+  const [cloud, setCloud] = useState<{ set: boolean; at: number | null } | null>(null);
 
   // États par machine. Un enregistrement par identifiant plutôt qu'un état global : deux cartes
   // peuvent être en cours d'édition, et le message de l'une n'a rien à faire sous l'autre.
@@ -78,8 +87,12 @@ export default function Machines() {
     try {
       // Pas `mfetch` : cet endpoint n'est rattaché à aucune machine, et c'est justement lui qui
       // répare le cas d'un identifiant courant devenu invalide.
-      const p: Payload = await fetch("/api/machines").then((r) => r.json());
+      const [p, c] = (await Promise.all([
+        fetch("/api/machines").then((r) => r.json()),
+        fetch("/api/cloudsession").then((r) => r.json()),
+      ])) as [Payload, { set: boolean; at: number | null }];
       setD(p);
+      setCloud(c);
       // Le champ d'adresse est semé avec la valeur connue, sans jamais réécrire une saisie en cours.
       setIp((cur) => {
         const next = { ...cur };
@@ -224,14 +237,17 @@ export default function Machines() {
         const r = await fetch(forId("/api/lankey", m.id), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(cred(m.id)),
+          body: JSON.stringify({ ...cred(m.id), remember }),
         }).then((x) => x.json());
         if (r.error) return tc("error", { message: r.error });
         // La lecture qui suit est asynchrone : la machine doit se connecter et pousser les
         // propriétés. On l'annonce, sans faire attendre l'utilisateur devant un compteur.
         return (
           tk("found", { keyId: r.keyId, changed: r.changed ? tk("changed") : tk("confirmed") }) +
-          (r.initialRead?.length ? " " + t("initialRead", { count: r.initialRead.length }) : "")
+          (r.initialRead?.length ? " " + t("initialRead", { count: r.initialRead.length }) : "") +
+          // Ayla ne renvoie pas toujours un refresh_token : une case cochée sans effet serait un
+          // mensonge, donc on ne l'annonce que si le serveur confirme l'avoir mémorisée.
+          (remember && r.cloudSession ? t("cloudSessionKept") : "")
         );
       } finally {
         setCreds((c) => ({ ...c, [m.id]: { email: cred(m.id).email, password: "" } }));
@@ -256,7 +272,7 @@ export default function Machines() {
         const r = await fetch(forId("/api/ota", m.id), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(c.email ? c : {}),
+          body: JSON.stringify(c.email ? { ...c, remember } : {}),
         }).then((x) => x.json());
         if (r.error) return tc("error", { message: r.error });
         return r.updateAvailable
@@ -400,6 +416,19 @@ export default function Machines() {
       }
       return t("modelReadTimeout");
     });
+
+  /** Oublie le `refresh_token` mémorisé. Le mot de passe redeviendra nécessaire. */
+  const forgetCloud = async () => {
+    if (!confirm(t("cloudSessionForget") + " ?")) return;
+    setBusy("cloud");
+    try {
+      await fetch("/api/cloudsession", { method: "DELETE" });
+      setMsg(t("cloudSessionForgotten"));
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const select = (id: string) => {
     setCurrentMachine(id);
@@ -653,6 +682,11 @@ export default function Machines() {
                       )}
                       <span className="sub">{tk("privacy")}</span>
                     </div>
+                    <label className="row" style={{ marginTop: 6, marginBottom: 0 }}>
+                      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                      <span>{t("remember")}</span>
+                      <span className="sub">{t("rememberNote")}</span>
+                    </label>
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
                         récupération de clé obtient ouvre aussi la fiche OTA. */}
                     <div className="row" style={{ marginTop: 10 }}>
@@ -700,6 +734,21 @@ export default function Machines() {
           <span className="mono">
             {d?.server.ip ? `${d.server.ip}:${d.server.port}` : tc("dash")}
             {d?.server.problem ? " ⚠️" : ""}
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">{t("cloudSession")}</span>
+          <span className="row">
+            {cloud?.set ? (
+              <>
+                <span>{t("cloudSessionSince", { date: new Date(cloud.at ?? 0).toLocaleString("fr-FR") })}</span>
+                <button className="mini" onClick={forgetCloud} disabled={!!busy}>
+                  {t("cloudSessionForget")}
+                </button>
+              </>
+            ) : (
+              <span className="sub">{t("cloudSessionNone")}</span>
+            )}
           </span>
         </div>
         <div className="kv">
