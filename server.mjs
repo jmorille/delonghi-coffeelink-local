@@ -1185,13 +1185,33 @@ async function gigyaCall(method, params) {
  * Les valeurs statiques de l'APK (clé API Gigya, app_id/app_secret Ayla) ne sont plus à saisir :
  * elles ne sont pas secrètes et vivent dans `src/lib/cloud-app.json`. Voir `APP`.
  */
-async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
+/**
+ * Jeton d'accès Ayla à partir des identifiants du compte De'Longhi. Trois sauts, tous vérifiés
+ * contre les vrais serveurs (voir ETAT.md) :
+ *
+ *   1. Gigya `accounts.login`      e-mail + mot de passe → `sessionInfo.cookieValue`
+ *   2. Gigya `accounts.getJWT`     `login_token`         → `id_token` (JWT RS256)
+ *   3. Ayla  `token_sign_in.json`  JWT + app_id/secret   → `access_token` (24 h)
+ *
+ * Extrait de la récupération de clé parce que **deux** usages en ont besoin : `dsns/<DSN>/lan.json`
+ * pour la clé, et `dsns/<DSN>/ota.json` pour savoir si une mise à jour est proposée. Le jeton
+ * n'est **jamais mémorisé** : il vit le temps de la requête, comme le mot de passe.
+ *
+ * ⚠️ **PAS de `targetEnv: "mobile"`.** Sondé sur les vrais serveurs, avec le même compte :
+ *   targetEnv=mobile  → sessionInfo = { sessionToken, sessionSecret, expires_in }
+ *   défaut (browser)  → sessionInfo = { cookieName, cookieValue }
+ * Une session mobile est une session OAuth1 : son `sessionToken` sert à SIGNER les requêtes
+ * suivantes, ce n'est pas un `login_token`. Le passer tel quel à `accounts.getJWT` répond
+ * « Unauthorized user [403005] » — c'est exactement ce qui faisait échouer la découverte alors que
+ * l'app Android fonctionnait (elle, elle signe, via le SDK Gigya mobile).
+ */
+async function aylaAccessToken(m, { email, password, jwt: givenJwt }) {
   const apiKey = APP.gigyaApiKey;
   const appId = APP.aylaAppId;
   const appSecret = APP.aylaAppSecret;
-  // Le contrôle reste : les valeurs sont fournies par défaut, mais une variable mise à la chaîne
-  // vide — ou un cloud-app.json amputé — doit dire pourquoi la découverte ne part pas, plutôt que
-  // d'échouer trois requêtes plus loin sur un message de Gigya.
+  // Le contrôle reste utile bien que les valeurs soient fournies par défaut : une variable mise à
+  // la chaîne vide — ou un cloud-app.json amputé — doit dire pourquoi l'appel ne part pas, plutôt
+  // que d'échouer trois requêtes plus loin sur un message de Gigya.
   // (Un JWT fourni court-circuite Gigya : seules les valeurs Ayla sont alors nécessaires.)
   const missing = [
     !givenJwt && !apiKey && "clé API Gigya",
@@ -1201,32 +1221,20 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
   if (missing.length) {
     throw new Error(`configuration de découverte incomplète : ${missing.join(", ")} — valeurs statiques de l'APK, normalement fournies par src/lib/cloud-app.json`);
   }
-  const dsn = await resolveDsn(m);
-  // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
-  // elle n'a plus besoin d'elle du tout. Le message doit donc désigner l'action qui débloque.
-  if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Machines »), ou forcer MACHINE_DSN dans .env.local.");
 
   let jwt = givenJwt;
   if (jwt) {
-    L("sys", "clé LAN : JWT fourni, Gigya court-circuité", m);
+    L("sys", "cloud : JWT fourni, Gigya court-circuité", m);
   } else {
-    L("sys", "clé LAN : connexion au compte De'Longhi…", m);
-    // ⚠️ PAS de `targetEnv: "mobile"`. Sondé sur les vrais serveurs, avec le même compte :
-    //   targetEnv=mobile  → sessionInfo = { sessionToken, sessionSecret, expires_in }
-    //   défaut (browser)  → sessionInfo = { cookieName, cookieValue }
-    // Une session mobile est une session OAuth1 : son `sessionToken` sert à SIGNER les requêtes
-    // suivantes, ce n'est pas un `login_token`. Le passer tel quel à `accounts.getJWT` répond
-    // « Unauthorized user [403005] » — c'est exactement ce qui faisait échouer la découverte
-    // alors que l'app Android fonctionnait (elle, elle signe, via le SDK Gigya mobile).
+    L("sys", "cloud : connexion au compte De'Longhi…", m);
     const login = await gigyaCall("accounts.login", { apiKey, loginID: email, password });
     // Uniquement `cookieValue` : l'ancien repli sur `sessionToken` ne rattrapait rien, il
     // transmettait un jeton du mauvais type au lieu d'échouer avec un message clair.
     const loginToken = login?.sessionInfo?.cookieValue;
     if (!loginToken) throw new Error("accounts.login : pas de sessionInfo.cookieValue dans la réponse (session non navigateur ?)");
-
     jwt = (await gigyaCall("accounts.getJWT", { apiKey, login_token: loginToken }))?.id_token;
     if (!jwt) throw new Error("accounts.getJWT : aucun id_token dans la réponse");
-    L("sys", "clé LAN : identité De'Longhi obtenue, échange vers Ayla…", m);
+    L("sys", "cloud : identité De'Longhi obtenue, échange vers Ayla…", m);
   }
 
   const tr = await fetch(`${APP.aylaUserUrl}/api/v1/token_sign_in.json`, {
@@ -1238,6 +1246,52 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
   const tj = await tr.json().catch(() => null);
   const accessToken = tj?.access_token;
   if (!accessToken) throw new Error(`token_sign_in : pas de access_token (HTTP ${tr.status}${tj?.error ? " " + tj.error : ""})`);
+  return accessToken;
+}
+
+/**
+ * Interroge `dsns/<DSN>/ota.json` : Ayla y tient la mise à jour proposée pour cet appareil.
+ *
+ * C'est la **seule** façon de savoir si une image existe en amont : le module n'expose que
+ * `regtoken.json` hors mode point d'accès, et les requêtes OTA qu'il nous adresse
+ * (`S.otaRequests`) disent qu'il en veut une, pas qu'il en existe une.
+ *
+ * Le **résultat** est mémorisé (`meta.otaCheck`), pas le jeton : une page qui s'ouvre ne doit
+ * déclencher aucun appel au cloud, et rien ne doit rester qui puisse en déclencher un plus tard.
+ */
+async function checkCloudOta(m, token) {
+  if (!m.dsn) throw new Error("DSN inconnu : la fiche OTA est rangée chez Ayla sous le numéro de série de la machine.");
+  const r = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${m.dsn}/ota.json`, {
+    headers: { Authorization: `auth_token ${token}` },
+    signal: AbortSignal.timeout(20000),
+  });
+  const texte = await r.text();
+  let corps = null;
+  try { corps = JSON.parse(texte); } catch {}
+  // Ayla répond 404 quand il n'y a rien à proposer, 200 avec la fiche sinon. `ota` est la clé
+  // observée dans la réponse ; on garde le corps entier, la forme exacte n'étant pas documentée.
+  const ota = corps?.ota ?? corps ?? null;
+  const disponible = r.status === 200 && !!ota && Object.keys(ota).length > 0;
+  const releve = {
+    at: Date.now(),
+    status: r.status,
+    updateAvailable: disponible,
+    version: ota?.version ?? ota?.ota_version ?? null,
+    type: ota?.type ?? null,
+    body: corps,
+  };
+  m.store.setMeta("otaCheck", releve);
+  L("sys", `OTA : ${disponible ? `image proposée${releve.version ? ` (${releve.version})` : ""}` : `aucune mise à jour (HTTP ${r.status})`}`, m);
+  return releve;
+}
+
+async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
+  const dsn = await resolveDsn(m);
+  // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
+  // elle n'a plus besoin d'elle du tout. Le message doit donc désigner l'action qui débloque.
+  if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Machines »), ou forcer MACHINE_DSN dans .env.local.");
+
+  const accessToken = await aylaAccessToken(m, { email, password, jwt: givenJwt });
 
   L("sys", `clé LAN : lecture de lan.json pour ${dsn}…`, m);
   const lr = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${dsn}/lan.json`, {
@@ -1249,7 +1303,12 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
   if (!lanip?.lanip_key || lanip?.lanip_key_id === undefined) {
     throw new Error(`lan.json : réponse inattendue (HTTP ${lr.status})`);
   }
-  return { key: String(lanip.lanip_key), keyId: Number(lanip.lanip_key_id), status: lanip.status, keepAlive: lanip.keep_alive };
+  // Le même jeton ouvre la fiche OTA : on la relève au passage, ce qui rend la vérification
+  // gratuite au moment où l'on a de toute façon parlé au cloud. Au mieux disant : un échec ici ne
+  // doit pas faire échouer la récupération de la clé, qui est le but de l'appel.
+  let ota = null;
+  try { ota = await checkCloudOta(m, accessToken); } catch (e) { L("sys", `OTA : relevé impossible (${e.message})`, m); }
+  return { key: String(lanip.lanip_key), keyId: Number(lanip.lanip_key_id), status: lanip.status, keepAlive: lanip.keep_alive, ota };
 }
 
 /**
@@ -1520,23 +1579,18 @@ function modelState(m) {
 }
 
 /**
- * Vérification OTA côté cloud. Nécessite un token Ayla dans AYLA_TOKEN — volontairement optionnel :
- * le projet vise le 100 % local, et un token n'a pas à être exigé pour afficher cette page.
+ * Ce qu'on sait de l'OTA côté cloud : le **dernier relevé mémorisé**, jamais une requête.
+ *
+ * Avant, ouvrir la page Système déclenchait un appel au cloud à chaque affichage — pour un projet
+ * dont l'objet est le pilotage local, c'est le mauvais réglage par défaut. La vérification est
+ * maintenant une action explicite (`POST /api/ota`), et cette fonction ne fait que rapporter.
  */
-async function probeCloudOta(m) {
-  const token = process.env.AYLA_TOKEN;
-  if (!token) return { configured: false, note: "AYLA_TOKEN absent de .env.local — vérification cloud désactivée." };
-  if (!m.dsn) return { configured: false, note: "DSN encore inconnu — la machine n'a pas répondu." };
-  const url = `${APP.aylaDeviceUrl}/apiv1/dsns/${m.dsn}/ota.json`;
-  try {
-    const r = await fetch(url, { headers: { Authorization: `auth_token ${token}` }, signal: AbortSignal.timeout(8000) });
-    const text = await r.text();
-    let parsed = null;
-    try { parsed = JSON.parse(text); } catch {}
-    return { configured: true, status: r.status, updateAvailable: r.status === 200 && !!parsed, body: parsed, at: Date.now() };
-  } catch (e) {
-    return { configured: true, error: e.message, at: Date.now() };
-  }
+function cloudOtaState(m) {
+  return {
+    // Vrai si une vérification peut partir sans rien demander à l'utilisateur.
+    tokenConfigured: !!process.env.AYLA_TOKEN,
+    last: m.store.getMeta("otaCheck"),
+  };
 }
 
 /**
@@ -1615,6 +1669,8 @@ function scanNextStat(m) {
  * Seules les écritures (POST) sont bloquées : les lectures continuent de servir le cache déjà
  * constitué, qui reste parfaitement consultable.
  */
+// `/api/lankey` et `/api/ota` en sont volontairement absents : ils parlent au cloud, pas à la
+// machine, et ce sont eux qui débloquent la situation. Les bloquer la rendrait irrécupérable.
 const NEEDS_MACHINE = [
   "/api/command",
   "/api/presence",
@@ -2261,7 +2317,8 @@ async function handleApi(req, res) {
   if (url === "/api/system" && req.method === "GET") {
     const store = m.store.machineView();
     // Sondes indépendantes : en série, la page cumulait les délais d'attente (4 s + 8 s).
-    const [live, cloud] = await Promise.all([probeRegtoken(m), probeCloudOta(m)]);
+    const live = await probeRegtoken(m);
+    const cloud = cloudOtaState(m);
     return raw(res, JSON.stringify({
       deviceSheet: DEVICE_SHEET,
       model: MODEL,
@@ -2291,7 +2348,7 @@ async function handleApi(req, res) {
       },
       ota: {
         lanRequests: m.otaRequests,
-        lanNote: "En LAN mode c'est la machine qui vient chercher l'image chez nous. Aucune requête reçue = aucun OTA en cours de distribution par nous.",
+        lanNote: "En mode LAN, c'est la machine qui vient chercher l'image chez nous : aucune requête reçue signifie qu'aucun OTA n'est distribué par ce serveur.",
         cloud,
       },
       // Le stockage fait partie de la fiche technique : savoir quel moteur tourne, dans quelle
@@ -2452,6 +2509,40 @@ async function handleApi(req, res) {
       wrote: { index, name: name.slice(0, 20), grinder, temperature, aroma, visible },
       register: reg,
     }));
+  }
+
+  /**
+   * Mises à jour OTA côté cloud. `GET` rapporte le dernier relevé, `POST` en fait un nouveau.
+   *
+   * La vérification a besoin d'un jeton Ayla. Deux façons de l'obtenir, dans cet ordre : les
+   * identifiants du compte De'Longhi passés à cette requête (même chemin que la clé LAN, et le mot
+   * de passe ne survit pas à l'appel), sinon `AYLA_TOKEN` s'il est renseigné. Le jeton obtenu par
+   * les identifiants n'est pas mémorisé — seul le résultat l'est.
+   */
+  if (url === "/api/ota" && req.method === "GET") {
+    return raw(res, JSON.stringify({ ...cloudOtaState(m), dsn: m.dsn, lanRequests: m.otaRequests }));
+  }
+  if (url === "/api/ota" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const email = typeof b.email === "string" ? b.email.trim() : "";
+    const password = typeof b.password === "string" ? b.password : "";
+    const jwt = typeof b.jwt === "string" && b.jwt.trim() ? b.jwt.trim() : null;
+    if (!m.dsn) {
+      return raw(res, JSON.stringify({ error: "DSN inconnu : la fiche OTA est rangée chez Ayla sous le numéro de série de la machine. Renseigner son adresse pour que le serveur le lise.", needsDsn: true }), 409);
+    }
+    try {
+      // Priorité aux identifiants fournis : ils sont explicites. AYLA_TOKEN sert de repli, pour qui
+      // en a déjà un et ne veut pas retaper son mot de passe.
+      const token = email || jwt ? await aylaAccessToken(m, { email, password, jwt }) : process.env.AYLA_TOKEN;
+      if (!token) {
+        return raw(res, JSON.stringify({ error: "identifiants du compte De'Longhi requis (ou AYLA_TOKEN dans .env.local) : la fiche OTA n'est lisible que côté cloud.", needsCredentials: true }), 400);
+      }
+      return raw(res, JSON.stringify({ ok: true, ...(await checkCloudOta(m, token)) }));
+    } catch (e) {
+      // Le message vient de Gigya/Ayla et ne contient aucun identifiant.
+      L("sys", `OTA : vérification impossible (${e.message})`, m);
+      return raw(res, JSON.stringify({ error: e.message }), 502);
+    }
   }
 
   /**

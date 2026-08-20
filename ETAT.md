@@ -1585,3 +1585,43 @@ la machine :
 Les trames surnuméraires observées pendant le test venaient du banc lui-même : avec `SERVER_IP` en
 boucle locale, le keep-alive journalise un échec de `local_reg` toutes les 2,5 s, et chaque ligne de
 journal émet. En fonctionnement normal `local_reg` réussit sans rien écrire.
+
+### Vérifier les mises à jour OTA, sans AYLA_TOKEN (2026-08-20)
+
+Deux défauts sur le bloc OTA de la page Système. Le premier, cosmétique : il affichait
+« désactivée », puis une phrase se terminant par « vérification cloud désactivée » — le libellé et la
+note disaient la même chose. Le second, réel : la vérification exigeait un jeton Ayla brut dans
+`AYLA_TOKEN`, que personne n'a sous la main.
+
+Or la récupération de la clé LAN obtient **déjà** un `access_token` Ayla, et le jetait. Le même
+jeton ouvre `dsns/<DSN>/ota.json`. `aylaAccessToken()` est donc extrait de `discoverLanKey` — deux
+usages en ont besoin — et `checkCloudOta()` lit la fiche avec.
+
+Trois conséquences :
+
+- la récupération de la clé **relève l'OTA au passage**, au mieux disant : un échec là ne doit pas
+  faire échouer la récupération, qui est le but de l'appel ;
+- `POST /api/ota` refait la vérification à la demande — identifiants d'abord, `AYLA_TOKEN` en repli ;
+- **seul le résultat est mémorisé** (`meta.otaCheck`), jamais le jeton. Ouvrir une page ne doit
+  déclencher aucun appel au cloud, et rien ne doit rester qui puisse en déclencher un plus tard.
+
+C'est aussi ce qui corrige un défaut de fond : `GET /api/system` appelait le cloud **à chaque
+affichage** de la page Système quand `AYLA_TOKEN` était présent. Pour un projet dont l'objet est le
+pilotage local, c'était le mauvais réglage par défaut. La fonction ne fait plus que rapporter le
+dernier relevé — et la page répond en 0,27 s au lieu de jusqu'à 8 s.
+
+L'action est sur `/machines`, à côté des identifiants qu'elle réutilise ; `/systeme` affiche le
+relevé, sur **une** ligne. Le formulaire d'identifiants reste hors de la fiche technique, comme
+convenu.
+
+**Vérifié sur le banc d'essai** (Next bouchonné, port 3999, copie de la base) :
+
+| Contrôle | Résultat |
+|---|---|
+| `GET /api/ota` | `tokenConfigured: false`, `last: null`, DSN présent — aucun appel au cloud |
+| `GET /api/system` | 0,27 s, `ota.cloud` = `{tokenConfigured, last}` |
+| `POST /api/ota` sans rien | HTTP 400, `needsCredentials`, message explicite |
+| `POST /api/ota` avec un JWT invalide | vrai appel à `token_sign_in.json` d'Ayla → HTTP 422 → 502 avec le message. Branche `jwt`, donc Gigya n'est pas sollicité et aucun échec de connexion n'est enregistré pour un compte |
+
+Le chemin heureux — vrais identifiants, vraie fiche OTA — demande un mot de passe : il reste à
+jouer par l'utilisateur.

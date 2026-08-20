@@ -45,7 +45,14 @@ interface Payload {
   ota: {
     lanRequests: { at: number; url: string; method: string; from: string }[];
     lanNote: string;
-    cloud: { configured: boolean; note?: string; status?: number; updateAvailable?: boolean; body?: unknown; error?: string };
+    /**
+     * Ce qu'on SAIT, pas une requête : ouvrir cette page ne déclenche plus d'appel au cloud.
+     * `last` est le dernier relevé mémorisé, `null` si la vérification n'a jamais été faite.
+     */
+    cloud: {
+      tokenConfigured: boolean;
+      last: { at: number; status: number; updateAvailable: boolean; version: string | null; type: string | null } | null;
+    };
   };
   /** État du stockage local. Voir `src/lib/store.mjs`. */
   storage: {
@@ -204,23 +211,30 @@ export default function Systeme() {
             </tbody>
           </table>
         )}
+{/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
+            terminait par « vérification cloud désactivée » : le libellé et la note disaient la même
+            chose. Et la vérification n'est plus subordonnée à AYLA_TOKEN — elle se lance depuis la
+            page Machines, avec les identifiants du compte. */}
         <div className="kv" style={{ marginTop: 10 }}>
           <span className="k">{t("cloudCheck")}</span>
-          <span className="mono">
-            {!d.ota.cloud.configured
-              ? t("cloudDisabled")
-              : d.ota.cloud.error
-                ? tc("error", { message: d.ota.cloud.error })
-                : d.ota.cloud.updateAvailable
-                  ? t("cloudAvailable")
-                  : t("cloudNone", { status: d.ota.cloud.status ?? 0 })}
+          <span>
+            {!d.ota.cloud.last ? (
+              <span className="sub">{t("cloudNever")}</span>
+            ) : d.ota.cloud.last.updateAvailable ? (
+              <>
+                <span className="pill off">{t("cloudAvailable")}</span>{" "}
+                <span className="sub">
+                  {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
+                </span>
+              </>
+            ) : (
+              <>
+                {t("cloudNone", { status: d.ota.cloud.last.status })}{" "}
+                <span className="sub">{new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}</span>
+              </>
+            )}
           </span>
         </div>
-        {d.ota.cloud.note && (
-          <p className="sub" style={{ marginTop: 6, marginBottom: 0 }}>
-            {d.ota.cloud.note}
-          </p>
-        )}
       </div>
 
       <h2>{t("wifiModule")}</h2>

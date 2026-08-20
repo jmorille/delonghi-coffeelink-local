@@ -239,6 +239,35 @@ export default function Machines() {
       }
     });
 
+  /**
+   * Vérifie si une mise à jour OTA est proposée pour cette machine.
+   *
+   * Côté cloud, obligatoirement : le module n'expose que `regtoken.json` hors mode point d'accès, et
+   * les requêtes OTA qu'il nous adresse disent qu'il en veut une, pas qu'il en existe une.
+   *
+   * Les identifiants déjà saisis pour la clé servent ici aussi — c'est le même chemin
+   * d'authentification. S'ils sont vides, le serveur se rabat sur AYLA_TOKEN. Le mot de passe est
+   * effacé du formulaire comme pour la clé : il ne doit pas rester à l'écran d'une action à l'autre.
+   */
+  const checkOta = (m: MachineSummary) =>
+    run(m.id, async () => {
+      const c = cred(m.id);
+      try {
+        const r = await fetch(forId("/api/ota", m.id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(c.email ? c : {}),
+        }).then((x) => x.json());
+        if (r.error) return tc("error", { message: r.error });
+        return r.updateAvailable
+          ? t("otaAvailable", { version: r.version ?? t("otaNoVersion") })
+          : t("otaNone", { status: String(r.status) });
+      } finally {
+        setCreds((cur) => ({ ...cur, [m.id]: { email: c.email, password: "" } }));
+        setShowPassword((s) => ({ ...s, [m.id]: false }));
+      }
+    });
+
   const forgetKey = (m: MachineSummary) => {
     if (!confirm(tk("forgetConfirm"))) return;
     return run(m.id, async () => {
@@ -623,6 +652,14 @@ export default function Machines() {
                         </button>
                       )}
                       <span className="sub">{tk("privacy")}</span>
+                    </div>
+                    {/* Même authentification, donc même endroit : le jeton Ayla que la
+                        récupération de clé obtient ouvre aussi la fiche OTA. */}
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <button onClick={() => checkOta(m)} disabled={occupe || !m.dsn}>
+                        {t("otaCheck")}
+                      </button>
+                      <span className="sub">{t("otaNote")}</span>
                     </div>
                   </>
                 )}
