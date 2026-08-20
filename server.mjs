@@ -1433,6 +1433,30 @@ function applyIdentity(m, b64) {
   }
 }
 
+/**
+ * Lit le modèle dès que c'est possible, et une seule fois.
+ *
+ * Le modèle vient du numéro de série (`d270_serialnumber`), donc d'une **lecture de propriété
+ * Ayla** : elle exige une session chiffrée, donc la clé LAN. C'est pourquoi il ne peut PAS être
+ * calculé au moment où l'on ajoute une machine — à cet instant on n'a que son adresse et le DSN
+ * qu'elle vient de donner, jamais encore de clé.
+ *
+ * Le premier moment possible est celui où le SECOND prérequis tombe, dans un sens ou dans l'autre :
+ * clé obtenue alors que l'adresse était déjà là, ou adresse saisie alors que la clé venait de
+ * l'environnement. D'où l'appel depuis ces deux endroits, et le garde qui rend l'ordre indifférent.
+ *
+ * C'est une lecture pure, sans aucun effet sur la machine. On ne la relance pas si le modèle est
+ * déjà connu — ni par-dessus un import ou un programme en cours, que `startImport` écraserait.
+ */
+async function maybeReadModel(m) {
+  if (m.modelKey || !m.ip || !m.lanKey.length) return null;
+  if (m.import?.active || m.program?.active) return null;
+  L("sys", `adresse et clé LAN réunies : lecture du modèle (${SERIAL_PROP})`, m);
+  startImport(m, [SERIAL_PROP], 30000);
+  await postLocalReg(m);
+  return SERIAL_PROP;
+}
+
 /** Le modèle survit à un redémarrage : sinon la page Système redeviendrait muette hors session. */
 function restoreModel(m) {
   if (m.modelKey) return;
@@ -1698,6 +1722,10 @@ async function handleMachines(req, res) {
       applyMachineIp(m, ip);
       probe = await probeRegtoken(m);
       if (probe.reachable) await resolveDsn(m, { compare: true });
+      // Ne fera rien ici en pratique : une machine qu'on vient de créer n'a pas encore de clé LAN,
+      // et le modèle exige une session chiffrée. L'appel est là pour que le comportement ne dépende
+      // pas de l'ordre des saisies (voir maybeReadModel).
+      await maybeReadModel(m);
     }
     return raw(res, JSON.stringify({
       ok: true,
@@ -2287,6 +2315,8 @@ async function handleApi(req, res) {
     try {
       const found = await discoverLanKey(m, { email, password, jwt });
       const changed = applyLanKey(m, found, jwt ? "JWT fourni (cloud Ayla)" : "compte De'Longhi (cloud)");
+      // La clé était le prérequis manquant : le modèle devient lisible, on le demande tout de suite.
+      const modelRead = await maybeReadModel(m);
       return raw(res, JSON.stringify({
         ok: true,
         keyId: found.keyId,
@@ -2295,6 +2325,7 @@ async function handleApi(req, res) {
         keepAlive: found.keepAlive,
         changed,
         source: m.lanKeySource,
+        modelRead,
       }));
     } catch (e) {
       // Le message d'erreur vient de Gigya/Ayla et ne contient pas d'identifiant.
@@ -2405,6 +2436,9 @@ async function handleApi(req, res) {
     // ne faut PLUS l'imputer à un nom d'hôte : depuis `machineTarget()`, un nom qui désigne bien la
     // machine fonctionne. C'est le 404 provoqué par un `Host` non-IP qui faisait croire le contraire.
     const isMachine = probe.reachable && typeof probe.regtoken?.host_symname === "string";
+    // Ordre inverse du cas courant : la clé était déjà là (variable d'environnement, ou reprise du
+    // cache) et c'est l'adresse qui manquait. Même déclencheur, d'où le garde dans la fonction.
+    const modelRead = await maybeReadModel(m);
     return raw(res, JSON.stringify({
       ok: true,
       ip: m.ip,
@@ -2413,6 +2447,7 @@ async function handleApi(req, res) {
       probe: { reachable: probe.reachable, isMachine, status: probe.status ?? null, error: probe.error ?? null },
       dsn,
       dsnSource: m.dsnSource,
+      modelRead,
     }));
   }
   if (url === "/api/machine" && req.method === "DELETE") {

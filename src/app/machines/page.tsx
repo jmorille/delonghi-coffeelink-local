@@ -253,6 +253,46 @@ export default function Machines() {
     }
   };
 
+  /**
+   * Renomme. Un libellé vide n'est pas une erreur : il rend son nom **dérivé** à la machine
+   * (modèle lu, puis DSN, puis identifiant), ce qui est le comportement par défaut.
+   */
+  const rename = (m: MachineSummary) =>
+    patch(m, { label: renaming[m.id] ?? "" }, (r) => {
+      setRenaming((cur) => {
+        const next = { ...cur };
+        delete next[m.id];
+        return next;
+      });
+      return t("renamed", { name: r.machine.label });
+    });
+
+  /**
+   * Demande le modèle à la machine (`d270_serialnumber`). Une **lecture** : rien n'est préparé ni
+   * écrit sur l'appareil.
+   *
+   * La réponse n'arrive pas dans le corps du POST — c'est la machine qui doit se connecter à nous
+   * et pousser la propriété, en deux à quatre secondes d'après les relevés. On scrute donc la
+   * liste, borné dans le temps : sans borne, une machine éteinte laisserait la page tourner.
+   */
+  const readModel = (m: MachineSummary) =>
+    run(m.id, async () => {
+      const r = await fetch(forId("/api/model", m.id), { method: "POST" }).then((x) => x.json());
+      if (r.error) return tc("error", { message: r.error });
+      for (let i = 0; i < 10; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const p: Payload = await fetch("/api/machines").then((x) => x.json());
+        setD(p);
+        const lu = p.machines.find((x) => x.id === m.id)?.model;
+        if (lu?.key) {
+          return lu.matchesCatalog === false
+            ? t("modelReadMismatch", { key: lu.key })
+            : t("modelReadOk", { key: lu.key, name: lu.machineName ?? lu.key });
+        }
+      }
+      return t("modelReadTimeout");
+    });
+
   const select = (id: string) => {
     setCurrentMachine(id);
     setSelected(id);
@@ -272,6 +312,8 @@ export default function Machines() {
         const occupe = busy === m.id;
         const ouvert = open[m.id] ?? false;
         const c = cred(m.id);
+        // Le champ non touché reflète le libellé enregistré ; vidé, il rend son nom dérivé.
+        const nom = renaming[m.id] ?? m.custom ?? "";
         return (
           <div className="card" key={m.id}>
             <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
@@ -330,30 +372,7 @@ export default function Machines() {
 
             <div className="kv">
               <span className="k">{t("name")}</span>
-              <span className="row">
-                <input
-                  value={renaming[m.id] ?? m.custom ?? ""}
-                  placeholder={m.label}
-                  onChange={(e) => setRenaming({ ...renaming, [m.id]: e.target.value })}
-                  style={{ width: 200 }}
-                />
-                <button
-                  className="mini"
-                  disabled={!!busy || renaming[m.id] === undefined}
-                  onClick={() =>
-                    patch(m, { label: renaming[m.id] ?? "" }, (r) => {
-                      setRenaming((cur) => {
-                        const next = { ...cur };
-                        delete next[m.id];
-                        return next;
-                      });
-                      return t("renamed", { name: r.machine.label });
-                    })
-                  }
-                >
-                  {t("rename")}
-                </button>
-              </span>
+              <span>{m.custom ?? <span className="sub">{t("nameDerived", { label: m.label })}</span>}</span>
             </div>
             <div className="kv">
               <span className="k">{tm("address")}</span>
@@ -377,9 +396,20 @@ export default function Machines() {
             </div>
             <div className="kv">
               <span className="k">{t("model")}</span>
-              <span>
-                {m.model.key ? `${m.model.key}${m.model.machineName ? ` · ${m.model.machineName}` : ""}` : t("unknown")}{" "}
-                <span className="sub">({m.model.source})</span>
+              <span className="row">
+                <span>
+                  {m.model.key ? `${m.model.key}${m.model.machineName ? ` · ${m.model.machineName}` : ""}` : t("unknown")}{" "}
+                  <span className="sub">({m.model.source})</span>
+                </span>
+                {/* Le modèle est demandé automatiquement dès que les deux prérequis sont réunis
+                    (voir maybeReadModel côté serveur). Ce bouton couvre le reste : machine déjà
+                    configurée avant que ça n'existe, lecture qui a expiré, ou simple vérification.
+                    C'est une LECTURE — rien n'est préparé ni écrit. */}
+                {m.ready && (
+                  <button className="mini" onClick={() => readModel(m)} disabled={occupe}>
+                    {m.model.key ? t("modelReread") : t("modelRead")}
+                  </button>
+                )}
               </span>
             </div>
             <div className="kv">
@@ -398,15 +428,32 @@ export default function Machines() {
             {/* ------------------------------------------------ configuration, sur place */}
             {ouvert && (
               <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+                {/* 0. le nom — purement décoratif, donc en premier : c'est le réglage sans
+                       conséquence, et celui qu'on vient changer le plus souvent. */}
+                <h3 style={{ margin: "0 0 6px" }}>{t("nameHeading")}</h3>
+                <div className="row">
+                  <input
+                    value={nom}
+                    placeholder={m.label}
+                    onChange={(e) => setRenaming({ ...renaming, [m.id]: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !occupe && nom !== (m.custom ?? "")) rename(m);
+                    }}
+                    style={{ minWidth: 240 }}
+                  />
+                  <button className="primary" onClick={() => rename(m)} disabled={occupe || nom === (m.custom ?? "")}>
+                    {t("rename")}
+                  </button>
+                  {m.custom && (
+                    <button className="mini" onClick={() => setRenaming({ ...renaming, [m.id]: "" })} disabled={occupe}>
+                      {t("nameClear")}
+                    </button>
+                  )}
+                  <span className="sub">{t("nameNote")}</span>
+                </div>
+
                 {/* 1. l'adresse — elle conditionne la clé, d'où cet ordre. */}
-                <h3 style={{ margin: "0 0 4px" }}>{tm("heading")}</h3>
-                <p className="sub" style={{ marginBottom: 8 }}>
-                  {tk("addressWhy")}
-                </p>
-                {!m.ip && <div className="warn" style={{ marginBottom: 10 }}>⚠️ {tm("notConfigured")}</div>}
-                <p className="sub" style={{ marginBottom: 6 }}>
-                  {tm("setNote")}
-                </p>
+                <h3 style={{ margin: "18px 0 6px" }}>{tm("heading")}</h3>
                 {m.envForced.ip && <p className="sub">{tm("envForced")}</p>}
                 <div className="row">
                   <input
@@ -432,25 +479,16 @@ export default function Machines() {
                       {tm("forget")}
                     </button>
                   )}
+                  <span className="sub">{tm("setNote")}</span>
                 </div>
 
                 {/* 2. la clé — rangée chez Ayla sous le DSN, donc dépendante de ce qui précède. */}
-                <h3 style={{ margin: "18px 0 4px" }}>{tk("discoverHeading")}</h3>
-                <div className="kv">
-                  <span className="k">{tk("cachedAt")}</span>
-                  <span className="mono">{date(m.lanKeyCachedAt) ?? tk("neverDiscovered")}</span>
-                </div>
-                {!m.dsn && <div className="warn" style={{ margin: "10px 0" }}>⚠️ {tk("needsDsn")}</div>}
+                <h3 style={{ margin: "18px 0 6px" }}>{tk("heading")}</h3>
+                {!m.dsn && <div className="warn" style={{ marginBottom: 10 }}>⚠️ {tk("needsDsn")}</div>}
                 {d.discovery.missingConfig.length ? (
                   <p className="sub">{tk("missingConfig", { vars: d.discovery.missingConfig.join(", ") })}</p>
                 ) : (
                   <>
-                    <p className="sub" style={{ marginBottom: 4 }}>
-                      {tk("flow")}
-                    </p>
-                    <p className="sub" style={{ marginBottom: 8 }}>
-                      {tk("privacy")}
-                    </p>
                     <div className="row">
                       <input
                         type="email"
@@ -497,12 +535,8 @@ export default function Machines() {
                           {tk("forget")}
                         </button>
                       )}
+                      <span className="sub">{tk("privacy")}</span>
                     </div>
-                    {m.lanKeyCachedAt && (
-                      <p className="sub" style={{ marginBottom: 0, marginTop: 8 }}>
-                        {tk("forgetNote")}
-                      </p>
-                    )}
                   </>
                 )}
               </div>
@@ -519,7 +553,6 @@ export default function Machines() {
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>{t("addTitle")}</h2>
-        <p className="sub">{t("addNote")}</p>
         <div className="row">
           <span>
             <label>{t("nameOptional")}</label>
@@ -535,8 +568,9 @@ export default function Machines() {
         </div>
       </div>
 
+      {/* Ce qui limite le multi-machines, en trois lignes. Le détail — protocole, réseau,
+          conteneur — vit dans doc/ et DOCKER.md, pas dans un écran de saisie. */}
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>{t("limitsTitle")}</h2>
         <div className="kv">
           <span className="k">{tm("ourServer")}</span>
           <span className="mono">
@@ -544,21 +578,16 @@ export default function Machines() {
             {d?.server.problem ? " ⚠️" : ""}
           </span>
         </div>
-        <p className="sub" style={{ marginTop: 10, marginBottom: 0 }}>
-          {t("limitsCatalog")}
-        </p>
-        <p className="sub" style={{ marginBottom: 0 }}>
-          {t("limitsEnv")}
-        </p>
-        <p className="sub" style={{ marginBottom: 0 }}>
-          {t("limitsRouting")}
-        </p>
-        <p className="sub" style={{ marginBottom: 0 }}>
-          {tm("reachabilityNote")}
-        </p>
-        <p className="sub" style={{ marginBottom: 0 }}>
-          {tk("localNote")}
-        </p>
+        <div className="kv">
+          <span className="k">{t("limitsTitle")}</span>
+          <span className="sub" style={{ textAlign: "right" }}>
+            {t("limitsCatalog")}
+            <br />
+            {t("limitsEnv")}
+            <br />
+            {t("limitsRouting")}
+          </span>
+        </div>
       </div>
     </>
   );

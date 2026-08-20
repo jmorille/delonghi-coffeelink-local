@@ -1442,3 +1442,37 @@ de `machineSummary` sans redémarrage laisse l'IHM — elle, rechargée par HMR 
 l'API ne renvoie pas encore, et la page casse sur un `undefined`. Le symptôme accuse le composant ;
 la cause est le serveur qui n'a pas redémarré.
 
+### Modèle lu automatiquement, nom modifiable, écrans dégraissés (2026-08-20)
+
+**Le modèle n'était pas calculé à l'ajout d'une machine.** Il ne pouvait pas l'être : il vient du
+numéro de série (`d270_serialnumber`), donc d'une **lecture de propriété Ayla**, qui exige une
+session chiffrée — donc la clé LAN. Au moment où l'on ajoute une machine, on n'a que son adresse et
+le DSN qu'elle vient de donner. Constaté sur le cas réel : une deuxième entrée avec DSN et clé LAN
+affichait « Modèle : inconnu », parce que rien n'avait jamais demandé le numéro de série.
+
+`maybeReadModel(m)` le demande au **premier moment possible** : celui où le second prérequis tombe,
+dans un sens ou dans l'autre — clé obtenue alors que l'adresse était là, ou adresse saisie alors que
+la clé venait de l'environnement. D'où l'appel depuis `POST /api/lankey` et `POST /api/machine`, et
+un garde qui rend l'ordre indifférent (modèle déjà connu, prérequis manquant, ou import/programme en
+cours → on ne fait rien). Une lecture pure, aucun effet sur la machine. Un bouton « lire le
+modèle » / « relire » couvre le reste : machine configurée avant que ça n'existe, lecture expirée,
+simple vérification. La réponse n'arrivant pas dans le corps du POST (c'est la machine qui se
+connecte et pousse la propriété), la page scrute la liste, bornée à 15 s.
+
+**Le nom était modifiable, mais invisible.** Le champ était noyé au milieu des lignes
+d'information — qui sont des faits en lecture seule — avec un bouton grisé tant qu'on n'avait rien
+tapé : il avait l'air cassé. Il est remonté en tête du bloc de configuration, avec son propre titre,
+un bouton actif dès que la valeur change, et un bouton « vider » qui rend son nom dérivé à la
+machine. Le libellé du bouton de bascule passe de « Configurer son adresse et sa clé » à
+« Configurer », puisqu'il couvre maintenant trois réglages. Vérifié : renommage en « Cuisine », puis
+retour au nom dérivé.
+
+**Moins de texte.** Le formulaire était précédé de quatre paragraphes de prose : la dépendance
+adresse → DSN → clé, les quatre étapes du protocole Gigya/Ayla, la note sur les noms d'hôte en
+conteneur, le sort du mot de passe. Tout cela est **déjà** dans `doc/` et `DOCKER.md`, où c'est à sa
+place ; un écran de saisie n'a pas à le répéter. Il ne reste qu'une ligne courte par champ — la forme
+attendue d'une adresse, le sort du mot de passe — et les avertissements. La carte passe de plus de
+2 000 caractères à 729. Les verdicts et les confirmations, eux, ne sont pas raccourcis : ils
+n'apparaissent qu'après une action, et c'est là qu'ils servent. Dix-neuf clés devenues inutiles sont
+retirées du catalogue, qui passe de 589 à 571 messages.
+
