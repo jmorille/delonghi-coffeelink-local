@@ -596,6 +596,7 @@
     "modelReadOk": "Modèle lu sur la machine : {name} (clé {key}).",
     "modelReadMismatch": "Modèle lu : {key} — différent de celui du catalogue actif. Les lectures de recettes peuvent être fausses sans en avoir l'air, voir l'avertissement ci-dessus.",
     "modelReadTimeout": "Lecture demandée, mais la machine n'a rien renvoyé dans le délai. Elle est peut-être éteinte, ou ne peut pas joindre ce serveur — le pilotage exige que la connexion aille aussi dans ce sens-là.",
+    "initialRead": "Lecture du modèle et des noms lancée ({count} propriétés) — rafraîchissez dans quelques secondes.",
     "unknown": "inconnu",
     "read": "Lu sur la machine",
     "counts": "{props} propriétés, {stats} statistiques, {beans} profils de grains, {recipes} recettes",

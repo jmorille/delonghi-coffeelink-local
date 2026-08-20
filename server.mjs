@@ -1434,27 +1434,47 @@ function applyIdentity(m, b64) {
 }
 
 /**
- * Lit le modèle dès que c'est possible, et une seule fois.
+ * Première lecture d'une machine, dès qu'elle devient possible : son **modèle** et les **noms**
+ * qu'elle porte (profils, recettes personnalisées).
  *
- * Le modèle vient du numéro de série (`d270_serialnumber`), donc d'une **lecture de propriété
- * Ayla** : elle exige une session chiffrée, donc la clé LAN. C'est pourquoi il ne peut PAS être
- * calculé au moment où l'on ajoute une machine — à cet instant on n'a que son adresse et le DSN
- * qu'elle vient de donner, jamais encore de clé.
+ * Les deux passent par une lecture de propriété Ayla, donc par une session chiffrée, donc par la
+ * clé LAN. C'est pourquoi rien de tout cela ne peut être calculé au moment où l'on **ajoute** une
+ * machine : à cet instant on n'a que son adresse et le DSN qu'elle vient de donner.
  *
  * Le premier moment possible est celui où le SECOND prérequis tombe, dans un sens ou dans l'autre :
  * clé obtenue alors que l'adresse était déjà là, ou adresse saisie alors que la clé venait de
- * l'environnement. D'où l'appel depuis ces deux endroits, et le garde qui rend l'ordre indifférent.
+ * l'environnement. D'où l'appel depuis ces deux endroits, et un garde qui rend l'ordre indifférent.
  *
- * C'est une lecture pure, sans aucun effet sur la machine. On ne la relance pas si le modèle est
- * déjà connu — ni par-dessus un import ou un programme en cours, que `startImport` écraserait.
+ * La file est construite à partir de ce qui **manque**, propriété par propriété : la fonction est
+ * donc idempotente sans avoir besoin d'un drapeau « déjà fait », et une machine dont le modèle est
+ * connu mais les noms pas encore lus obtient quand même ses noms.
+ *
+ * Ce sont des LECTURES : rien n'est préparé, rien n'est écrit sur la machine. On ne passe pas
+ * par-dessus un import ou un programme en cours — `startImport` écraserait la file.
+ *
+ * ⚠️ Volontairement, cet import ne pose **aucune** marque « sommes à jour » (`checksumMark`). Le
+ * faire ici obligerait à répliquer la règle de `/api/profiles/import`, et une marque posée à tort
+ * fait sauter la relecture des noms jusqu'à un `force: true` — le coût d'une lecture inutile est
+ * sans commune mesure avec celui d'un nom jamais relu.
  */
-async function maybeReadModel(m) {
-  if (m.modelKey || !m.ip || !m.lanKey.length) return null;
+async function maybeInitialRead(m) {
+  if (!m.ip || !m.lanKey.length) return null;
   if (m.import?.active || m.program?.active) return null;
-  L("sys", `adresse et clé LAN réunies : lecture du modèle (${SERIAL_PROP})`, m);
-  startImport(m, [SERIAL_PROP], 30000);
+  const queue = [];
+  if (!m.modelKey) queue.push(SERIAL_PROP);
+  // Les noms de profils ET ceux des recettes personnalisées : même famille de trames, même somme
+  // de contrôle, et ce sont eux qui font qu'un emplacement renommé sur la machine s'affiche sous
+  // son nom partout (`readNames`).
+  for (const x of [...PROFILE_NAME_PROPS, ...CUSTOM_NAME_PROPS]) {
+    // Une propriété déjà lue compte comme lue, même si elle a répondu vide : `absent: true` est une
+    // réponse, pas un échec.
+    if (!m.store.getProp(x.prop)) queue.push(x.prop);
+  }
+  if (!queue.length) return null;
+  L("sys", `adresse et clé LAN réunies : première lecture (${queue.length} propriétés — modèle et noms)`, m);
+  startImport(m, queue, Math.max(45000, queue.length * 4000));
   await postLocalReg(m);
-  return SERIAL_PROP;
+  return queue;
 }
 
 /** Le modèle survit à un redémarrage : sinon la page Système redeviendrait muette hors session. */
@@ -1723,9 +1743,9 @@ async function handleMachines(req, res) {
       probe = await probeRegtoken(m);
       if (probe.reachable) await resolveDsn(m, { compare: true });
       // Ne fera rien ici en pratique : une machine qu'on vient de créer n'a pas encore de clé LAN,
-      // et le modèle exige une session chiffrée. L'appel est là pour que le comportement ne dépende
-      // pas de l'ordre des saisies (voir maybeReadModel).
-      await maybeReadModel(m);
+      // et ces lectures exigent une session chiffrée. L'appel est là pour que le comportement ne
+      // dépende pas de l'ordre des saisies (voir maybeInitialRead).
+      await maybeInitialRead(m);
     }
     return raw(res, JSON.stringify({
       ok: true,
@@ -2347,8 +2367,9 @@ async function handleApi(req, res) {
     try {
       const found = await discoverLanKey(m, { email, password, jwt });
       const changed = applyLanKey(m, found, jwt ? "JWT fourni (cloud Ayla)" : "compte De'Longhi (cloud)");
-      // La clé était le prérequis manquant : le modèle devient lisible, on le demande tout de suite.
-      const modelRead = await maybeReadModel(m);
+      // La clé était le prérequis manquant : modèle et noms deviennent lisibles, on les demande
+      // tout de suite plutôt que d'attendre que l'utilisateur pense à le faire.
+      const initialRead = await maybeInitialRead(m);
       return raw(res, JSON.stringify({
         ok: true,
         keyId: found.keyId,
@@ -2357,7 +2378,7 @@ async function handleApi(req, res) {
         keepAlive: found.keepAlive,
         changed,
         source: m.lanKeySource,
-        modelRead,
+        initialRead,
       }));
     } catch (e) {
       // Le message d'erreur vient de Gigya/Ayla et ne contient pas d'identifiant.
@@ -2470,7 +2491,7 @@ async function handleApi(req, res) {
     const isMachine = probe.reachable && typeof probe.regtoken?.host_symname === "string";
     // Ordre inverse du cas courant : la clé était déjà là (variable d'environnement, ou reprise du
     // cache) et c'est l'adresse qui manquait. Même déclencheur, d'où le garde dans la fonction.
-    const modelRead = await maybeReadModel(m);
+    const initialRead = await maybeInitialRead(m);
     return raw(res, JSON.stringify({
       ok: true,
       ip: m.ip,
@@ -2479,7 +2500,7 @@ async function handleApi(req, res) {
       probe: { reachable: probe.reachable, isMachine, status: probe.status ?? null, error: probe.error ?? null },
       dsn,
       dsnSource: m.dsnSource,
-      modelRead,
+      initialRead,
     }));
   }
   if (url === "/api/machine" && req.method === "DELETE") {

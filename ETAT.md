@@ -1502,3 +1502,28 @@ Vérifié sur une **copie** de la base réelle avant de toucher à quoi que ce s
 62 statistiques, 6 profils de grains, adresse, clé LAN, DSN et modèle effacés, l'entrée `m1`
 conservée. Le chemin HTTP, lui, n'a pas encore été joué en direct : `server.mjs` n'est pas rechargé
 à chaud et le serveur de développement tournait avec la version précédente.
+
+### Première lecture automatique : modèle ET noms (2026-08-20)
+
+`maybeReadModel` devient `maybeInitialRead` et demande aussi les **noms** — ceux des profils et ceux
+des recettes personnalisées, deux familles couvertes par la même somme de contrôle, et celles qui
+font qu'un emplacement renommé sur la machine s'affiche sous son nom partout (`readNames`).
+
+Neuf propriétés au premier passage : le numéro de série, quatre propriétés de noms de profils et
+quatre de noms de recettes perso (les variantes Striker répondent vide, ce qui compte comme lu).
+La file est construite **à partir de ce qui manque**, propriété par propriété : la fonction est donc
+idempotente sans drapeau « déjà fait », et une machine dont le modèle est connu mais les noms pas
+encore lus obtient quand même ses noms. Vérifié sur les deux états réels : file de 8 propriétés sur
+la machine dont le modèle était déjà lu, de 9 après une remise à zéro.
+
+Cet import ne pose **aucune** marque « sommes à jour ». La poser obligerait à répliquer la règle de
+`/api/profiles/import`, et une marque posée à tort fait sauter la relecture des noms jusqu'à un
+`force: true` : le coût d'une lecture inutile est sans commune mesure.
+
+**Les deux mécanismes précédents sont validés en direct — par l'usage, pas par un test.** L'ordre
+d'écriture des valeurs `meta` de la base réelle le raconte sans ambiguïté : `machineIp` et `dsn` à la
+même seconde (adresse saisie, sonde qui résout le DSN), `lanKey` 22 s plus tard (récupération
+réussie), puis `importedAt` et `model` 15 s après — c'est-à-dire la lecture du modèle déclenchée
+toute seule. Et le `createdAt` de l'entrée `m1` est inchangé alors que ses 58 propriétés, ses
+62 statistiques et ses 6 profils de grains ont disparu : c'est bien la remise à zéro sur place, pas
+une suppression suivie d'une recréation au démarrage.

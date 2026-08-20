@@ -133,12 +133,13 @@ export default function Machines() {
         body: JSON.stringify({ ip: ip[m.id] ?? "" }),
       }).then((x) => x.json());
       if (r.error) return tc("error", { message: r.error });
+      const suite = r.initialRead?.length ? " " + t("initialRead", { count: r.initialRead.length }) : "";
       const probe: Probe = r.probe;
-      return probe.isMachine
+      return (probe.isMachine
         ? tm("savedReachable", { ip: r.ip, dsn: r.dsn ?? tm("dsnNone") })
         : probe.reachable
           ? tm("savedNotAMachine", { ip: r.ip, status: String(probe.status ?? "?") })
-          : tm("savedUnreachable", { ip: r.ip, reason: probe.error ?? String(probe.status ?? "?") });
+          : tm("savedUnreachable", { ip: r.ip, reason: probe.error ?? String(probe.status ?? "?") })) + suite;
     });
 
   const forgetIp = (m: MachineSummary) => {
@@ -164,9 +165,13 @@ export default function Machines() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cred(m.id)),
         }).then((x) => x.json());
-        return r.error
-          ? tc("error", { message: r.error })
-          : tk("found", { keyId: r.keyId, changed: r.changed ? tk("changed") : tk("confirmed") });
+        if (r.error) return tc("error", { message: r.error });
+        // La lecture qui suit est asynchrone : la machine doit se connecter et pousser les
+        // propriétés. On l'annonce, sans faire attendre l'utilisateur devant un compteur.
+        return (
+          tk("found", { keyId: r.keyId, changed: r.changed ? tk("changed") : tk("confirmed") }) +
+          (r.initialRead?.length ? " " + t("initialRead", { count: r.initialRead.length }) : "")
+        );
       } finally {
         setCreds((c) => ({ ...c, [m.id]: { email: cred(m.id).email, password: "" } }));
         setShowPassword((s) => ({ ...s, [m.id]: false }));
