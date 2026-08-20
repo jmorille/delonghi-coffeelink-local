@@ -19,6 +19,9 @@ import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROP
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
 import { bootMessages as storeBootMessages, storageInfo, machineView, putProp, putBeanSystem, putStats, putChecksums, getMeta, setMeta, clearMeta, countStats, allBeanSystems, listRecipes, putRecipe, deleteRecipe, getLanKey, setLanKey, clearLanKey } from "./src/lib/store.mjs";
+// Identification du modele : la machine publie son numero de serie, et les 5 chiffres qui
+// indexent la table constructeur sont dedans. Aucun cloud — voir machine-models.mjs.
+import { MODELS, MODELS_TABLE_VERSION, SERIAL_PROP, findModel, identify as identifyModel } from "./src/lib/machine-models.mjs";
 
 // --- .env.local ---
 try {
@@ -39,6 +42,11 @@ const CFG = {
   // mémorisée en base — même priorité que le DSN et la clé LAN.
   machineIp: process.env.MACHINE_IP || null,
   machineIpSource: process.env.MACHINE_IP ? "MACHINE_IP (.env.local)" : "inconnue",
+  // Modele : DECOUVERT, pas configure — la cle de 5 chiffres est dans le numero de serie que la
+  // machine publie elle-meme (`d270_serialnumber`). Meme priorite que le DSN et la cle LAN :
+  // forcage par variable > cache local > la machine.
+  modelKey: process.env.MACHINE_MODEL_KEY || null,
+  modelSource: process.env.MACHINE_MODEL_KEY ? "MACHINE_MODEL_KEY (.env.local)" : "inconnu",
   lanKey: Buffer.from(process.env.LANIP_KEY ?? "", "utf8"),
   lanKeyId: Number(process.env.LANIP_KEY_ID ?? "0"),
   lanKeySource: process.env.LANIP_KEY ? "LANIP_KEY (.env.local)" : "inconnue",
@@ -47,6 +55,27 @@ const CFG = {
   gen: process.env.MACHINE_GENERATION ?? "classic",
 };
 const DEVICE_SHEET = JSON.parse(readFileSync(new URL("./src/lib/device-sheet.json", import.meta.url), "utf8"));
+/**
+ * Constantes statiques de l'APK servant a la decouverte de la cle LAN.
+ *
+ * Elles etaient dans `.env.local`, ou elles n'avaient rien a faire : identiques pour tout le
+ * monde, lisibles dans un binaire public, et sans pouvoir propre — sans les identifiants d'un
+ * compte De'Longhi, elles n'ouvrent rien. Les faire saisir ne protegeait personne, et rendait la
+ * decouverte indisponible a qui ne les avait pas sous la main. Le vrai secret, la cle LAN, reste
+ * en base ; le mot de passe, lui, ne survit pas a la requete.
+ *
+ * Chaque valeur reste surchargeable par sa variable d'environnement — compte hors zone
+ * europeenne, ou rotation cote De'Longhi.
+ */
+const CLOUD_APP = JSON.parse(readFileSync(new URL("./src/lib/cloud-app.json", import.meta.url), "utf8"));
+const APP = {
+  gigyaApiKey: process.env.GIGYA_API_KEY || CLOUD_APP.gigya.apiKey,
+  gigyaDatacenter: process.env.GIGYA_DATACENTER || CLOUD_APP.gigya.datacenter,
+  aylaAppId: process.env.AYLA_APP_ID || CLOUD_APP.ayla.appId,
+  aylaAppSecret: process.env.AYLA_APP_SECRET || CLOUD_APP.ayla.appSecret,
+  aylaUserUrl: CLOUD_APP.ayla.userServiceUrl,
+  aylaDeviceUrl: CLOUD_APP.ayla.deviceServiceUrl,
+};
 const SEND = CFG.gen === "striker" ? "app_data_request" : "data_request";
 const MON = CFG.gen === "striker" ? "d302_monitor_machine" : "d302_monitor";
 
@@ -56,6 +85,9 @@ const S = {
   program: null, // {active,ecamB64,label,startedAt,durationMs,counter}
   lastMonitor: null,
   lastDataResponse: null,
+  // Derniere identification du modele (decodage de `d270_serialnumber`). En cas d'echec on garde
+  // la raison ET la trame : c'est ce qui rend une decoupe fausse corrigeable en une passe.
+  identity: null,
   lastRegisterAt: 0,
   keepalive: null,
   log: [],
@@ -485,7 +517,9 @@ function collectProps(decoded) {
  *
  *   0xB0 bornes min/déf/max · 0xA6 valeurs d'un profil · 0xA4 noms de profils
  *   0xAA noms de recettes perso · 0xA8 ordre des favoris · 0xBA profil Bean System
- *   0xA3 sommes de contrôle · 0xA1 paramètres
+ *   0xA3 sommes de contrôle · 0xA2 paramètres et statistiques
+ *
+ * `0xA1` (numéro de série) fait exception : voir le routage par nom, plus bas.
  */
 function handleProperty(name, value) {
   if (name.startsWith(MON)) {
@@ -510,6 +544,17 @@ function handleProperty(name, value) {
     if (isProfileProp(name)) putProp(name, { at: Date.now(), kind: profilePropInfo(name).kind, absent: true });
     if (S.import) { S.import.ok.push(name); S.import.pending = null; }
     L("in", `${name}: absente sur ce modèle`);
+    return;
+  }
+
+  // Routage par NOM, et c'est délibéré pour celle-ci. Sa trame porte la commande `0xA1`
+  // (vérifié en direct : `d0 1b a1 0f …`), qui n'a pas de décodeur — sans cette branche elle
+  // tomberait dans `default` et resterait « non décodée ». L'app elle-même ne regarde pas cet
+  // octet : elle lit la valeur positionnellement. Nom EXACT, pas motif : c'est le routage par
+  // MOTIF (`_beansystem` → décodeur de recettes) qui avait produit les désalignements.
+  if (name === SERIAL_PROP) {
+    applyIdentity(value);
+    if (S.import) { S.import.ok.push(name); S.import.pending = null; }
     return;
   }
 
@@ -820,7 +865,7 @@ function restoreLanKey() {
  * Gigya répond toujours HTTP 200 : c'est `errorCode` qui porte le verdict.
  */
 async function gigyaCall(method, params) {
-  const dc = process.env.GIGYA_DATACENTER || "eu1";
+  const dc = APP.gigyaDatacenter;
   const r = await fetch(`https://accounts.${dc}.gigya.com/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -855,22 +900,24 @@ async function gigyaCall(method, params) {
  * renvoyé. Les jetons intermédiaires (session Gigya, JWT, token Ayla) ne sont pas conservés non
  * plus — seule la clé LAN l'est, dans `data/lan-server.db` (table `meta`, clé `lanKey`, gitignoré).
  *
- * Les trois valeurs statiques de l'APK (`GIGYA_API_KEY`, `AYLA_APP_ID`, `AYLA_APP_SECRET`) restent
- * dans `.env.local` : identiques pour tous les utilisateurs, mais ce sont des secrets applicatifs,
- * ils n'ont pas leur place dans le code.
+ * Les valeurs statiques de l'APK (clé API Gigya, app_id/app_secret Ayla) ne sont plus à saisir :
+ * elles ne sont pas secrètes et vivent dans `src/lib/cloud-app.json`. Voir `APP`.
  */
 async function discoverLanKey({ email, password, jwt: givenJwt }) {
-  const apiKey = process.env.GIGYA_API_KEY;
-  const appId = process.env.AYLA_APP_ID;
-  const appSecret = process.env.AYLA_APP_SECRET;
-  // Un JWT fourni court-circuite Gigya : seules les valeurs Ayla sont alors nécessaires.
+  const apiKey = APP.gigyaApiKey;
+  const appId = APP.aylaAppId;
+  const appSecret = APP.aylaAppSecret;
+  // Le contrôle reste : les valeurs sont fournies par défaut, mais une variable mise à la chaîne
+  // vide — ou un cloud-app.json amputé — doit dire pourquoi la découverte ne part pas, plutôt que
+  // d'échouer trois requêtes plus loin sur un message de Gigya.
+  // (Un JWT fourni court-circuite Gigya : seules les valeurs Ayla sont alors nécessaires.)
   const missing = [
-    !givenJwt && !apiKey && "GIGYA_API_KEY",
-    !appId && "AYLA_APP_ID",
-    !appSecret && "AYLA_APP_SECRET",
+    !givenJwt && !apiKey && "clé API Gigya",
+    !appId && "app_id Ayla",
+    !appSecret && "app_secret Ayla",
   ].filter(Boolean);
   if (missing.length) {
-    throw new Error(`configuration absente dans .env.local : ${missing.join(", ")} — valeurs statiques de l'APK, voir docs/secrets.md`);
+    throw new Error(`configuration de découverte incomplète : ${missing.join(", ")} — valeurs statiques de l'APK, normalement fournies par src/lib/cloud-app.json`);
   }
   const dsn = await resolveDsn();
   // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
@@ -900,7 +947,7 @@ async function discoverLanKey({ email, password, jwt: givenJwt }) {
     L("sys", "clé LAN : identité De'Longhi obtenue, échange vers Ayla…");
   }
 
-  const tr = await fetch("https://user-field-eu.aylanetworks.com/api/v1/token_sign_in.json", {
+  const tr = await fetch(`${APP.aylaUserUrl}/api/v1/token_sign_in.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: jwt, app_id: appId, app_secret: appSecret }),
@@ -911,7 +958,7 @@ async function discoverLanKey({ email, password, jwt: givenJwt }) {
   if (!accessToken) throw new Error(`token_sign_in : pas de access_token (HTTP ${tr.status}${tj?.error ? " " + tj.error : ""})`);
 
   L("sys", `clé LAN : lecture de lan.json pour ${dsn}…`);
-  const lr = await fetch(`https://ads-eu.aylanetworks.com/apiv1/dsns/${dsn}/lan.json`, {
+  const lr = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${dsn}/lan.json`, {
     headers: { Authorization: `auth_token ${accessToken}` },
     signal: AbortSignal.timeout(20000),
   });
@@ -1062,6 +1109,79 @@ function restoreDsn() {
 }
 
 /**
+ * Enregistre l'identification déduite de `d270_serialnumber`.
+ *
+ * ⚠️ Le modèle détecté n'est **pas** appliqué au catalogue. `machine-model.json` reste la seule
+ * table active : la faire dépendre d'une détection changerait l'adressage des propriétés de
+ * recette (`d{39+i+(p-1)*21}` — ce 21 est le nombre de recettes standard DU modèle), donc les
+ * lectures elles-mêmes. Ici on identifie, on mémorise, et on SIGNALE un écart. Basculer le
+ * catalogue est une décision, pas un effet de bord.
+ */
+function applyIdentity(b64) {
+  const r = identifyModel(b64);
+  if (!r.ok) {
+    S.identity = { at: Date.now(), ok: false, reason: r.reason, hex: r.hex };
+    L("in", `${SERIAL_PROP} : ${r.reason} — trame ${r.hex || "(vide)"}`);
+    return;
+  }
+  S.identity = { at: Date.now(), ok: true, serial: r.serial, machineName: r.machineName, modelKey: r.modelKey, hex: r.hex };
+  // La propriété est rangée comme les autres : `/api/system` expose déjà
+  // `machineState.serialNumber` depuis `props.d270_serialnumber`, et la trame brute permet de
+  // rejuger la découpe sans redemander à la machine.
+  putProp(SERIAL_PROP, { at: Date.now(), kind: "serialNumber", serial: r.serial, machineName: r.machineName, modelKey: r.modelKey, hex: r.hex });
+  setMeta("model", { key: r.modelKey, serial: r.serial, machineName: r.machineName, at: Date.now() });
+  if (!process.env.MACHINE_MODEL_KEY) {
+    CFG.modelKey = r.modelKey;
+    CFG.modelSource = "lu sur la machine";
+  }
+  const lu = r.model
+    ? `${r.model.type} — ${r.model.appModelId}, ${r.model.recipeCount} recettes, ${r.model.nProfiles} profils`
+    : `modèle absent de la table v${MODELS_TABLE_VERSION} (${Object.keys(MODELS).length} modèles connectés connus)`;
+  L("in", `${SERIAL_PROP} : ${r.machineName} → clé ${r.modelKey} → ${lu}`);
+  const attendu = MODEL.productCode.slice(-5);
+  if (r.modelKey !== attendu) {
+    L("sys", `⚠ écart de modèle : la machine dit ${r.modelKey}, le catalogue actif est ${MODEL.type} (${attendu}). Les identifiants de boisson et les noms de propriétés de recette ne correspondent probablement pas — voir la page Système.`);
+  }
+}
+
+/** Le modèle survit à un redémarrage : sinon la page Système redeviendrait muette hors session. */
+function restoreModel() {
+  if (CFG.modelKey) return;
+  try {
+    const saved = getMeta("model");
+    if (!saved?.key) return;
+    CFG.modelKey = saved.key;
+    CFG.modelSource = "cache local";
+    const m = findModel(saved.key);
+    S.identity = { at: saved.at ?? null, ok: true, serial: saved.serial ?? null, machineName: saved.machineName ?? null, modelKey: saved.key, hex: null, restored: true };
+    L("sys", `modèle repris du cache : ${saved.key}${m ? ` (${m.type})` : " (inconnu de la table)"}`);
+  } catch {}
+}
+
+/** Ce que les pages affichent : le modèle lu, le catalogue actif, et l'écart entre les deux. */
+function modelState() {
+  const detected = CFG.modelKey ? findModel(CFG.modelKey) : null;
+  const catalogKey = MODEL.productCode.slice(-5);
+  return {
+    key: CFG.modelKey,
+    source: CFG.modelSource,
+    serialProp: SERIAL_PROP,
+    tableVersion: MODELS_TABLE_VERSION,
+    knownModels: Object.keys(MODELS).length,
+    detected,
+    // Le catalogue réellement utilisé pour bâtir les trames et nommer les propriétés.
+    catalog: { key: catalogKey, productCode: MODEL.productCode, type: MODEL.type, appModelId: MODEL.appModelId, nProfiles: MODEL.nProfiles, nStandardRecipes: MODEL.nStandardRecipes, nCustomRecipes: MODEL.nCustomRecipes },
+    // null = pas encore lu. false = écart, et alors le catalogue actif est probablement faux.
+    matchesCatalog: CFG.modelKey ? CFG.modelKey === catalogKey : null,
+    serial: S.identity?.serial ?? null,
+    machineName: S.identity?.machineName ?? null,
+    at: S.identity?.at ?? null,
+    restored: S.identity?.restored === true,
+    lastError: S.identity && S.identity.ok === false ? { reason: S.identity.reason, hex: S.identity.hex } : null,
+  };
+}
+
+/**
  * Vérification OTA côté cloud. Nécessite un token Ayla dans AYLA_TOKEN — volontairement optionnel :
  * le projet vise le 100 % local, et un token n'a pas à être exigé pour afficher cette page.
  */
@@ -1069,7 +1189,7 @@ async function probeCloudOta() {
   const token = process.env.AYLA_TOKEN;
   if (!token) return { configured: false, note: "AYLA_TOKEN absent de .env.local — vérification cloud désactivée." };
   if (!CFG.dsn) return { configured: false, note: "DSN encore inconnu — la machine n'a pas répondu." };
-  const url = `https://ads-eu.aylanetworks.com/apiv1/dsns/${CFG.dsn}/ota.json`;
+  const url = `${APP.aylaDeviceUrl}/apiv1/dsns/${CFG.dsn}/ota.json`;
   try {
     const r = await fetch(url, { headers: { Authorization: `auth_token ${token}` }, signal: AbortSignal.timeout(8000) });
     const text = await r.text();
@@ -1160,6 +1280,7 @@ function scanNextStat() {
 const NEEDS_MACHINE = [
   "/api/command",
   "/api/presence",
+  "/api/model",
   "/api/register",
   "/api/checksums",
   "/api/stats",
@@ -1194,6 +1315,9 @@ async function handleApi(req, res) {
   if (url === "/api/status") {
     return raw(res, JSON.stringify({
       config: { dsn: CFG.dsn, dsnSource: CFG.dsnSource, machineIp: CFG.machineIp, machineIpSource: CFG.machineIpSource, serverIp: CFG.serverIp, serverPort: CFG.port, generation: CFG.gen, lanKeyId: CFG.lanKeyId, lanKeySet: CFG.lanKey.length > 0, lanKeySource: CFG.lanKeySource },
+      // Volontairement léger : /api/status est interrogé toutes les 3 s. La fiche complète du
+      // modèle est sur /api/model.
+      model: { key: CFG.modelKey, source: CFG.modelSource, matchesCatalog: CFG.modelKey ? CFG.modelKey === MODEL.productCode.slice(-5) : null },
       session: { active: !!S.session }, lastRegisterAt: S.lastRegisterAt, activeProfile: S.activeProfile, activeProfileConfirmed: S.activeProfileConfirmed,
       program: S.program ? { active: S.program.active, label: S.program.label, counter: S.program.counter } : null,
       lastMonitor: S.lastMonitor, lastDataResponse: S.lastDataResponse, log: S.log.slice(0, 50),
@@ -1456,6 +1580,7 @@ async function handleApi(req, res) {
     return raw(res, JSON.stringify({
       deviceSheet: DEVICE_SHEET,
       model: MODEL,
+      identification: modelState(),
       network: {
         machineIp: CFG.machineIp,
         serverIp: CFG.serverIp,
@@ -1509,6 +1634,19 @@ async function handleApi(req, res) {
   }
   if (url === "/api/beansystem" && req.method === "GET") {
     return raw(res, JSON.stringify({ beanSystems: allBeanSystems() }));
+  }
+
+  /**
+   * Identification du modèle. GET rapporte ce qu'on sait (y compris avant toute lecture) ; POST
+   * demande `d270_serialnumber` à la machine — une LECTURE, aucune préparation, aucune écriture.
+   */
+  if (url === "/api/model" && req.method === "GET") {
+    return raw(res, JSON.stringify(modelState()));
+  }
+  if (url === "/api/model" && req.method === "POST") {
+    startImport([SERIAL_PROP], 30000);
+    const reg = await postLocalReg();
+    return raw(res, JSON.stringify({ queued: true, prop: SERIAL_PROP, register: reg }));
   }
 
   // Lecture de propriétés Ayla arbitraires — outil d'exploration, et brique de /api/presence.
@@ -1645,7 +1783,9 @@ async function handleApi(req, res) {
       source: CFG.lanKeySource,
       cachedAt,
       // Ce qu'il manque pour pouvoir interroger le cloud.
-      missingConfig: [!process.env.GIGYA_API_KEY && "GIGYA_API_KEY", !process.env.AYLA_APP_ID && "AYLA_APP_ID", !process.env.AYLA_APP_SECRET && "AYLA_APP_SECRET"].filter(Boolean),
+      // Normalement vide : les valeurs viennent de src/lib/cloud-app.json. Ne se remplit que si
+      // ce fichier a été amputé, ou une variable mise à la chaîne vide.
+      missingConfig: [!APP.gigyaApiKey && "clé API Gigya", !APP.aylaAppId && "app_id Ayla", !APP.aylaAppSecret && "app_secret Ayla"].filter(Boolean),
       dsn: CFG.dsn,
     }));
   }
@@ -1848,6 +1988,7 @@ createServer((req, res) => {
   restoreActiveProfile();
   restoreMachineIp();
   restoreDsn();
+  restoreModel();
   restoreLanKey();
   if (!CFG.machineIp) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Clé LAN », ou par MACHINE_IP dans .env.local");
   if (!CFG.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Clé LAN » (compte De'Longhi)");

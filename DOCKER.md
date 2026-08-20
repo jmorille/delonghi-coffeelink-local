@@ -142,18 +142,24 @@ découverte.
 | `DATA_DIR` | `/data` | § 2. |
 | `DATABASE_FILE` | `<DATA_DIR>/lan-server.db` | § 2. |
 
-### Découverte de la clé par le compte De'Longhi (optionnel)
+### Découverte de la clé par le compte De'Longhi
 
-Trois valeurs statiques extraites de l'APK, identiques pour tout le monde mais qui restent des
-secrets applicatifs. Sans elles, la découverte est simplement indisponible — **le pilotage local
-n'en a aucun besoin**.
+**Rien à configurer.** Les valeurs statiques de l'APK sont livrées dans l'image
+(`src/lib/cloud-app.json`) : elles ne sont pas secrètes, et sans les identifiants d'un compte
+De'Longhi elles n'ouvrent rien. Les variables ci-dessous ne servent qu'à les **surcharger**.
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `GIGYA_API_KEY` | — | Clé API Gigya De'Longhi. |
-| `AYLA_APP_ID` | — | `app_id` du champ européen. |
-| `AYLA_APP_SECRET` | — | `app_secret` du champ européen. |
+| `GIGYA_API_KEY` | valeur de l'APK | Clé API Gigya. À surcharger pour un compte hors zone européenne — `cloud-app.json` liste les clés alternatives du manifeste. |
 | `GIGYA_DATACENTER` | `eu1` | Centre de données Gigya. `us1` répond « served by another data center ». |
+| `AYLA_APP_ID` | valeur de l'APK | `app_id` du champ européen. |
+| `AYLA_APP_SECRET` | valeur de l'APK | `app_secret` du champ européen. |
+
+### Modèle de machine
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `MACHINE_MODEL_KEY` | — | Forçage du modèle : les 5 derniers chiffres du `product_code` (`17055` = ECAM 610.75.MB). Sinon **lu sur la machine** (propriété `d270_serialnumber`) et mémorisé en base. La détection rapporte le modèle et signale un écart ; le catalogue de boissons utilisé reste `src/lib/machine-model.json`. |
 
 ### Divers
 

@@ -93,7 +93,23 @@ spécificités du conteneur, dans [DOCKER.md](DOCKER.md). L'essentiel :
 | `MACHINE_IP` | adresse de la machine — optionnelle, saisissable dans l'interface |
 | `LANIP_KEY`, `LANIP_KEY_ID` | la clé LAN — optionnelle, récupérable dans l'interface |
 | `MACHINE_DSN` | forçage du numéro de série ; découvert automatiquement sinon |
+| `MACHINE_MODEL_KEY` | forçage du modèle ; lu sur la machine sinon |
 | `DATA_DIR`, `DATABASE_FILE` | emplacement du stockage SQLite |
+
+Les valeurs statiques de l'APK nécessaires à la récupération de la clé LAN ne sont **pas** à
+saisir : elles sont livrées dans [`src/lib/cloud-app.json`](src/lib/cloud-app.json). Elles ne sont
+pas secrètes — identiques pour tout le monde, extraites d'un binaire public, et sans les
+identifiants d'un compte De'Longhi elles n'ouvrent rien.
+
+### Modèle de machine
+
+Le serveur **lit le modèle sur la machine**, sans le cloud : la propriété Ayla
+`d270_serialnumber` porte le numéro de série, et ses caractères 1 à 5 sont exactement la clé qui
+indexe la table constructeur (`0132217055` → `17055` → ECAM 610.75.MB). C'est la méthode de l'app
+officielle elle-même. La page Système l'affiche et **signale un écart** avec le catalogue actif.
+
+Ce catalogue reste celui d'une seule machine (ECAM 610.75.MB) : la détection prévient qu'il ne
+correspond pas, elle ne le remplace pas. Voir [Adapter à un autre modèle](#adapter-à-un-autre-modèle).
 
 ## Documentation du protocole
 

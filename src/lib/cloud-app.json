@@ -1,0 +1,24 @@
+{
+  "_source": "Valeurs statiques de l'APK Coffee Link (it.delonghi) : AndroidManifest.xml (meta-data com.delonghigroup.identity_kit.*) et it/delonghi/DeLonghi.java.",
+  "_nature": "NON SECRÈTES, et c'est pourquoi elles sont ici et non dans .env.local. Elles sont identiques pour tous les utilisateurs, lisibles dans un binaire public, et n'ouvrent rien par elles-mêmes : sans les identifiants d'un compte De'Longhi, elles ne donnent accès à rien. Les faire saisir ne protégeait donc personne — ça empêchait seulement d'utiliser la découverte de clé LAN.",
+  "_whatIsStillSecret": "La clé LAN (base locale, data/lan-server.db), le mot de passe du compte (jamais journalisé, stocké ni renvoyé) et AYLA_TOKEN (.env.local, optionnel).",
+  "_override": "Chaque valeur reste surchargeable par la variable d'environnement correspondante : GIGYA_API_KEY, GIGYA_DATACENTER, AYLA_APP_ID, AYLA_APP_SECRET.",
+  "gigya": {
+    "apiKey": "4_DRIMLu7jk9bkKwpRRoQOuw",
+    "datacenter": "eu1",
+    "_apiKey": "meta-data « com.delonghigroup.identity_kit.API_KEY ».",
+    "_datacenter": "Le centre de données compte : us1 répond « 301001 This API key is served by another data center ». eu1 est aussi ce que déclare GIGYA_BASE_URL dans le manifeste.",
+    "alternateApiKeys": {
+      "euUs": "3_e5qn7USZK-QtsIso1wCelqUKAK_IVEsYshRIssQ-X-k55haiZXmKWDHDRul2e5Y2",
+      "ch": "3_WP_c8OVu_yOoqYXN3Dq-Oi7nNkbS2bwqS3rQXJ6SPkodgE4FOpyuE_UVlrCuSGEm",
+      "_note": "Autres clés du même manifeste (API_KEY_EU_US, API_KEY_CH), pour d'autres périmètres du compte. Non utilisées : la découverte fonctionne avec apiKey. À essayer via GIGYA_API_KEY si un compte non européen bute sur 301001."
+    }
+  },
+  "ayla": {
+    "appId": "DLonghiCoffeeIdKit-sQ-id",
+    "appSecret": "DLonghiCoffeeIdKit-HT6b0VNd4y6CSha9ivM5k8navLw",
+    "_source": "Littéraux de it/delonghi/DeLonghi.java.",
+    "userServiceUrl": "https://user-field-eu.aylanetworks.com",
+    "deviceServiceUrl": "https://ads-eu.aylanetworks.com"
+  }
+}

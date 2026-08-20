@@ -19,6 +19,25 @@ interface Payload {
     findings: Finding[];
   };
   model: Record<string, unknown>;
+  /**
+   * Identification lue sur la machine (`d270_serialnumber`). `matchesCatalog: null` = pas encore
+   * lu ; `false` = la machine n'est pas celle du catalogue ci-dessus.
+   */
+  identification: {
+    key: string | null;
+    source: string;
+    serialProp: string;
+    tableVersion: string;
+    knownModels: number;
+    detected: Record<string, unknown> | null;
+    catalog: Record<string, unknown>;
+    matchesCatalog: boolean | null;
+    serial: string | null;
+    machineName: string | null;
+    at: number | null;
+    restored: boolean;
+    lastError: { reason: string; hex: string } | null;
+  };
   network: Record<string, unknown>;
   local: { reachable: boolean; status?: number; regtoken?: Record<string, unknown> | null; error?: string; at: number };
   protocol: Record<string, unknown>;
@@ -59,6 +78,7 @@ export default function Systeme() {
   const tc = useTranslations("common");
   const [d, setD] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
+  const [idMsg, setIdMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -72,6 +92,36 @@ export default function Systeme() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Demande la lecture du numéro de série. C'est une LECTURE : aucune préparation, aucune
+   * écriture. La machine répond de façon asynchrone (elle pousse un datapoint), d'où l'attente
+   * bornée — sans elle, la page afficherait encore l'état d'avant la demande.
+   */
+  const readModel = useCallback(async () => {
+    setBusy(true);
+    setIdMsg(t("idReading"));
+    try {
+      const before = d?.identification.at ?? 0;
+      const r = await fetch("/api/model", { method: "POST" }).then((x) => x.json());
+      if (r.error) {
+        setIdMsg(tc("error", { message: r.error }));
+        return;
+      }
+      for (let i = 0; i < 14; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const m = await fetch("/api/model").then((x) => x.json());
+        if ((m.at ?? 0) > before || m.lastError) {
+          setIdMsg(m.lastError ? t("idFailed", { reason: m.lastError.reason }) : t("idDone"));
+          break;
+        }
+        if (i === 13) setIdMsg(t("idNoAnswer"));
+      }
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }, [d, load, t, tc]);
 
   if (!d) return <p className="sub">{t("probing")}</p>;
 
@@ -223,6 +273,63 @@ export default function Systeme() {
         />
         <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
           {t("modelSource")}
+        </p>
+      </div>
+
+      <h2>{t("identification")}</h2>
+      <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
+        {d.identification.matchesCatalog === false && (
+          <p style={{ margin: "0 0 10px" }}>
+            <strong>
+              ⚠{" "}
+              {t("idMismatch", {
+                detected: d.identification.key ?? "?",
+                catalog: String(d.identification.catalog.key ?? "?"),
+                catalogType: String(d.identification.catalog.type ?? "?"),
+              })}
+            </strong>
+          </p>
+        )}
+        <Rows
+          obj={{
+            key: d.identification.key,
+            source: d.identification.source,
+            machineName: d.identification.machineName,
+            serialNumber: d.identification.serial,
+            detectedType: d.identification.detected?.type ?? null,
+            detectedAppModelId: d.identification.detected?.appModelId ?? null,
+            detectedRecipeCount: d.identification.detected?.recipeCount ?? null,
+            detectedNProfiles: d.identification.detected?.nProfiles ?? null,
+            matchesCatalog: d.identification.matchesCatalog,
+            // `Rows` ne formate pas les dates : un epoch brut ne dit rien a l'oeil.
+            readAt: d.identification.at ? new Date(d.identification.at).toLocaleString("fr-FR") : null,
+          }}
+        />
+        {d.identification.key && !d.identification.detected && (
+          <p className="sub" style={{ margin: "10px 0 0" }}>
+            {t("idUnknownModel", { key: d.identification.key, version: d.identification.tableVersion })}
+          </p>
+        )}
+        {d.identification.lastError && (
+          <p className="sub mono" style={{ margin: "10px 0 0", fontSize: ".78rem" }}>
+            {t("idFailed", { reason: d.identification.lastError.reason })} — {d.identification.lastError.hex || "(trame vide)"}
+          </p>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <button onClick={readModel} disabled={busy}>
+            {d.identification.key ? t("idReread") : t("idRead")}
+          </button>
+          {idMsg && (
+            <span className="sub" style={{ marginLeft: 10 }}>
+              {idMsg}
+            </span>
+          )}
+        </div>
+        <p className="sub" style={{ margin: "10px 0 0" }}>
+          {t("idNote", { prop: d.identification.serialProp, count: d.identification.knownModels, version: d.identification.tableVersion })}
+        </p>
+        <p className="sub" style={{ margin: "6px 0 0" }}>
+          {t("idScopeNote")}
         </p>
       </div>
 

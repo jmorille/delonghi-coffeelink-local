@@ -276,6 +276,7 @@ pour `beverageId = 200` (sauf `checkValues`).
 | Écrire un paramètre | `0D 0B 90 <flag> …` | 0x90 |
 | Sauver/supprimer Bean System | `0D 33 BB F0 …` (52 o) | 0xBB — voir `bean-adapt.md` |
 | Lire un monitor | réponse `D0 12 75 0F …` | 0x75 |
+| Lire le numéro de série (et donc le modèle) | réponse `D0 1B A1 0F …` | 0xA1 — voir § 13 |
 
 ⚠️ **Allumage / extinction : ne pas inverser.** `turnMachineOn` = `m0()` = `… 02 01`,
 `turnMachineOff` = `l0()` = `… 01 01` (vérifié dans `DeLonghiWifiConnectService` et confirmé
@@ -780,3 +781,74 @@ vivent dans `lan-server/data/machine-beverages.json` (gitignoré) et `GET /api/s
 Seules les quelques valeurs qui servent de **preuve de décodage** apparaissent ci-dessus (la trame
 de l'id 3000 et la relation `3002 + 3004 = 3000`) : sans elles, rien ne démontrerait le
 big-endian.
+
+---
+
+## 13. Identification du modèle — `d270_serialnumber` (commande `0xA1`)
+
+**Élucidé et vérifié en direct le 2026-08-20.** La machine publie son numéro de série, et les
+5 chiffres qui identifient le modèle sont dedans. Aucun cloud, aucun jeton, aucun compte.
+
+### 13.1 Ce que fait l'app
+
+`DeLonghiWifiConnectService.n1()` (« getWifiMachines ») ne demande pas le modèle au cloud. Il lit
+la propriété Ayla **`d270_serialnumber`** via `l1()`, en tire un nom, puis appelle
+`DefaultsTable.getDefaultValuesForMachine(nom)` — table `MachinesModels.json` **indexée par les
+5 derniers caractères du `product_code`** (`DefaultsTable`, ligne 197 :
+`product_code.substring(len − 5)`).
+
+### 13.2 La dérivation
+
+`l1()` convertit la valeur en chaîne hexadécimale via `z.e()`, qui écrit `" XX"` par octet — donc
+**3 caractères par octet**, l'octet *n* occupant les indices 3n+1 et 3n+2. Les indices utilisés
+(23, 26, 29, 32, 35, 71, 74) sont tous de la forme 3n+2 : c'est le **quartet bas** des octets
+7 à 11 et 23, 24. Et `m1()`, juste en dessous, lit le numéro de série comme de l'**ASCII brut à
+partir de l'octet 6**. Or pour un chiffre ASCII (`0x30`–`0x39`), le quartet bas EST le chiffre.
+
+D'où, sans passer par l'hexadécimal :
+
+```
+série  = ASCII(octets 6 …)
+nom    = "D" + série[1..5] + série[17] + série[18]
+modèle = série[1..5]
+```
+
+### 13.3 Format de la trame (relevé sur la machine)
+
+```
+octet 0     0xD0
+octet 1     len = taille totale − 1        (0x1B → 28 octets)
+octet 2     0xA1                           ← la commande ; aucun autre usage connu
+octet 3     0xF0
+octets 4-5  ?                              (non identifiés)
+octets 6..  numéro de série en ASCII        (19 caractères ici)
+puis        0x00 de fin
+2 derniers  CRC16
+```
+
+Exemple réel, chiffres du numéro de série masqués sauf la clé de modèle :
+
+```
+d0 1b a1 0f 00 cd  32 31 37 30 35 35 …  00 c3 6f
+                   ^  ^^^^^^^^^^^^^^
+                   │  « 17055 » = les 5 caractères qui donnent le modèle
+                   └─ série[0], hors clé
+→ nom « D1705596 »  →  clé 17055  →  product_code 0132217055  →  ECAM 610.75.MB (PD_SOUL)
+```
+
+`0xA1` n'a **pas** de décodeur générique dans le serveur : cette propriété est routée par son
+**nom exact**, avant l'aiguillage par octet de commande.
+
+### 13.4 Ce que ça permet, et ce que ça ne permet pas
+
+La liste des boissons, les bornes des paramètres et **les noms des propriétés de recette**
+dépendent du modèle : `d{39+i+(p−1)×21}` — ce 21 est le nombre de propriétés de recette standard
+*du modèle*. Une table de travers ne donne donc pas une erreur franche, elle donne des lectures
+qui visent à côté.
+
+L'identification permet de **le détecter et de le dire**. Elle ne suffit pas à basculer le
+catalogue : il faudrait rendre cette arithmétique dérivée du modèle, et non écrite pour un seul.
+
+La table constructeur contient **117 machines**, dont **30 non-Bluetooth** — les seules capables
+de LAN mode — en quatre familles : `PD_SOUL` (5 modèles, 28 recettes), `PD_SOUL_BETTER` (5, 22),
+`STRIKER_BEST` (7, 48) et `STRIKER_GOOD` (13, 0 recette déclarée).
