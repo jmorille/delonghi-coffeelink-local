@@ -111,7 +111,8 @@ connects back to us. Full detail in `docs/analyse-connexion-wifi.md` §7; comman
 4. Machine → `POST /local_lan/property/datapoint.json` — pushes monitor state to us.
 5. Machine → `POST /local_lan/property/datapoint/ack.json` — acknowledges, we drain the queue.
 
-Crypto (`src/lib/crypto.ts`, exact port of the decompiled `AylaEncryption`):
+Crypto — `makeSession()` in `server.mjs`, an exact port of the decompiled `AylaEncryption`. (The
+`src/lib/crypto.ts` of the same name is one of the shadowed copies: it does not run.)
 - Keys derived via double HMAC-SHA256; **"app" keys** encrypt us→machine, **"dev" keys** decrypt
   machine→us (same formula, operands swapped).
 - **`lanip_key` is used as the ASCII bytes of the base64 string — do NOT base64-decode it.**
@@ -129,7 +130,8 @@ Two hard-won environment gotchas, already fixed in code — do not regress them:
 `0D <len> <cmd> <flag> <payload…> <crc16>`; `len` = total − 1; **CRC-CCITT init `0x1D0F`** over all
 bytes except the last two. Header is `0x0D` in requests / `0xD0` in machine responses. A single
 command `0x83` prepares every beverage (beverage id at offset 4, mode/params/profile follow).
-`src/lib/ecam.ts` builds these; `docs/commandes-cafe.md` has the beverage-id and parameter tables.
+`server.mjs` builds these (`frameDispense` and friends); `src/lib/ecam.ts` is the shadowed copy.
+`docs/commandes-cafe.md` has the beverage-id and parameter tables.
 **Classic** generation (this machine) uses properties `data_request` / `d302_monitor`; the "Striker"
 generation uses `app_data_request` / `d302_monitor_machine`.
 
@@ -405,8 +407,9 @@ the non-loopback addresses seen locally, and `/` and `/pilotage` both show a ban
 that in a bridge container the useful address is the **host's**, not the container's — copying
 `172.17.x.x` reproduces the same failure.
 
-**The machine's address has no default and is entered in the UI.** `CFG.machineIp` is
-`process.env.MACHINE_IP || null` — **never** a hardcoded IP: one would be somebody else's
+**The machine's address has no default and is entered in the UI.** `m.ip` comes from
+`ENV_MACHINE.ip` (i.e. `MACHINE_IP`) for the first machine and is `null` otherwise — **never** a
+hardcoded IP: one would be somebody else's
 configuration and would make an unconfigured server look configured while talking into the void.
 Priority mirrors the DSN and the LAN key: `MACHINE_IP` in `.env.local` > `meta.machineIp` in the DB
 (written by the UI) > nothing. The **`/machines` page** carries both prerequisites, address first,
@@ -415,7 +418,7 @@ their singular name, and take `?machine=`); a `POST`
 validates the host (IPv4 **or** hostname, and a hostname survives a DHCP lease change), saves it,
 then **probes `regtoken.json` immediately** and re-resolves
 the DSN, so a saved-but-mute address is reported at once instead of being discovered at the first
-failed command. Changing the address drops `S.session` **and** the cached DSN (it is the previous
+failed command. Changing the address drops `m.session` **and** the cached DSN (it is the previous
 appliance's serial) unless `MACHINE_DSN` forces one. The two settings share one page **because the
 dependency is real**: Ayla files the key under the DSN, and the DSN only comes from the machine — so
 the key cannot be fetched before the address is known. Once the DSN is cached the discovery no
@@ -430,7 +433,7 @@ found` HTML page. Measured side by side, same destination, only the header chang
 it survives a DHCP lease change) but only if **we resolve it ourselves** and put the IP in `Host`.
 `machineTarget()` in `server.mjs` does that, with a 60 s cache (a `local_reg` fires every 2.5 s
 during a program) invalidated whenever the address changes; `probeRegtoken()` and `postLocalReg()`
-both go through it. Do not "simplify" it back to `host: CFG.machineIp` — that sends `Host: <name>`
+both go through it. Do not "simplify" it back to `host: m.ip` — that sends `Host: <name>`
 and breaks every request to the machine. This is a vicious diagnostic trap: the 404 comes back fast
 and looks like another server answering, which is exactly the wrong conclusion it once produced
 ("cafe is not the machine" — it was). In a container add `extra_hosts` or `dns_search`: a short name
@@ -459,7 +462,7 @@ only as a parameter for the duration of the request), **no endpoint ever returns
 (`/api/lankey` and `/api/status` expose only `set`, `keyId`, `source` — the key id is not a secret,
 it travels in cleartext in the key exchange), and **local control must never depend on any of
 this**: the flow is opt-in, and once the key is cached nothing calls the cloud again. Changing the
-key drops `S.session`, since the live session was derived from the old one.
+key drops `m.session`, since the live session was derived from the old one.
 
 `/systeme` is fed by `GET /api/system`, which mixes three clearly-labelled sources: a **live** probe
 of `http://<machine>/regtoken.json` (the only endpoint the module serves outside AP mode — all the
@@ -555,7 +558,8 @@ model and would say `classic`. `MACHINE_GENERATION` still wins, and only for the
 **`0xA1`**, no other known use), whose ASCII serial starts at byte 6 and whose **characters 1–5 are
 exactly the key that indexes the manufacturer table** (`product_code.slice(-5)`). That is how the
 official app does it (`DeLonghiWifiConnectService.l1()` → `DefaultsTable`), so no cloud, no token, no
-account. Verified live: `D1705596` → `17055` → ECAM 610.75.MB / PD_SOUL. `docs/commandes-cafe.md` §13
+account. Verified live on the real machine: `D17055XX` → `17055` → ECAM 610.75.MB / PD_SOUL (the
+last two characters come from the serial — markered here, like everything device-specific). `docs/commandes-cafe.md` §13
 has the frame layout and the derivation. `POST /api/model` asks for the read (a **read** — nothing is
 prepared or written), `GET /api/model` reports, `/systeme` shows it and warns on mismatch, and
 `MACHINE_MODEL_KEY` forces a value (priority mirrors the DSN: var > `meta.model` cache > machine).
@@ -590,8 +594,10 @@ inversion action. Both editing UIs show it read-only and keep it in the payload.
   protocol. A parameter is adjustable iff `max > min`; its start value is the profile's stored value
   when in range, else the model default when in range, else `min`. Filtering on `kind === "user"`
   plus "default within bounds" once hid real options — including the travel mug's coffee, milk and
-  hot water, whose defaults are 0 because they were never configured.4). Reads happen in pure LAN via an Ayla `property.json?name=`
-command served in `commands.json` — no cloud, no token.
+  hot water, whose defaults are 0 because they were never configured.
+
+Reads happen in pure LAN via an Ayla `property.json?name=` command served in `commands.json` — no
+cloud, no token.
 
 **Cache validation** — response `0xA3` (`decodeChecksums` in `profiles.mjs`) returns one 16-bit
 checksum per profile's recipe quantities plus one for custom recipes and one for names. One 6-byte
@@ -612,7 +618,7 @@ marker.
 **Usage statistics** — command **`0xA2`** (`0D 08 A2 0F <idHi> <idLo> <qty> <crc>`, flag `0x0F`),
 response `D0 <len> A2 0F` + n×(16-bit BE id, 32-bit BE value), `n = (len-5)/6`, **capped at 10
 entries** per reply. `POST /api/stats` requests (`ids[]`, or `from`+`qty`), `GET /api/stats` reads
-back; values land in `store.stats`. Two things not to relearn the hard way: the friendly Ayla
+back; values land in that machine's `stats` table (`m.store.allStats()`). Two things not to relearn the hard way: the friendly Ayla
 properties (`d7xx_tot_*`, listed in `p258z7/w.java`) **return nothing** on a plain property read —
 same trap as the Bean Systems, the ECAM command is mandatory; and **the machine enumerates** — an
 id that does not exist yields the next existing ones, skipping gaps, which is how the whole space
@@ -650,8 +656,10 @@ profile** — the last one being the persistent write, labelled `écriture`. The
 timestamp bytes are stripped, or the log would show four bytes that are not part of the command.
 `frameHex` stays in the API responses (useful from curl); no page reads it.
 
-Session and command state live in a **process-global singleton** (`src/lib/session.ts`, guarded on
-`globalThis` to survive dev HMR). Config comes from env via `src/lib/config.ts`.
+Session and command state live in the **per-machine records** of the `MACHINES` map in
+`server.mjs` — see § *Several machines*. (`src/lib/session.ts`, which describes a single
+process-global singleton guarded on `globalThis`, and `src/lib/config.ts` are shadowed copies from
+before the multi-machine refactor: they do not run, and they no longer describe the design.)
 
 ## Storage — SQLite (`src/lib/store.mjs`)
 
@@ -710,8 +718,10 @@ date (2026-08-19) is stale: the file has been appended to well past it, so trust
 not the heading.
 Summary: end-to-end local control **works** against the real machine (on/off confirmed, live
 monitor decoded); importing the beverage catalog works (28/28 properties decoded exactly); importing
-profiles works (5 names + icons, 5 favourite orders, 6 custom-recipe names). Not yet done: actually
-dispensing a beverage through the server, and the stop / profile-activation commands are untested.
+profiles works (5 names + icons, 5 favourite orders, 6 custom-recipe names). **Profile activation is
+proven** — `0xA9` demonstrably moved the machine from profile 3 back to profile 1, which is how the
+heartbeat bug was found. Still unexercised on the appliance: **dispensing** a beverage, the **stop**
+command, and a second machine of a different model.
 
 **Monitor bytes 5–6 are the sensor bitfield, not a "progress" value** (byte = `5 + group`; 256 =
 group 1 bit 0 = milk carafe connected, confirmed on the machine's own display). `/api/*` exposes it
@@ -732,11 +742,11 @@ Two behaviours that took a long time to find — do not regress them:
   a **monitor request** `0D 05 75 0F` (pure read); `sustain: "profile"` is reserved for the wake
   program (where the `0xA9` spam is the validated recipe) and for profile selection itself, where
   re-asserting the same value is idempotent. Any new command that targets a profile must also set
-  `S.activeProfile`.
+  `m.activeProfile`.
 - Opening a page calls `POST /api/presence`, which posts `local_reg` and serves a monitor request so
   the machine pushes fresh state. It is **throttled server-side** (recent monitor, program already
   running, or called <15 s ago → skipped), so several tabs cannot spawn several sessions.
-- `S.activeProfile` is a *request*, not an observation: we cannot read the machine's current
+- `m.activeProfile` is a *request*, not an observation: we cannot read the machine's current
   profile (candidate property `d286_mach_sett_profile`, encoding unverified). It is persisted to `meta.activeProfile` and restored at
   startup so a restart does not silently claim profile 1, and `/api/status` also returns `activeProfileConfirmed` — false until we have
   actually imposed a profile this session. The UI highlights no profile while unconfirmed rather
@@ -809,8 +819,9 @@ second language is added.
 
 ## Operational notes
 
-- The machine sits on an **isolated IoT VLAN (LAN3, `192.168.30.42`)**; the dev host is on LAN4.
-  LAN mode needs bidirectional reachability (machine → server:3000 must be permitted). See
-  `docs/securite.md`.
+- The machine sits on an **isolated IoT VLAN** (`VLAN_IOT` / `IP_MACHINE` in the docs); the dev host
+  is on another one. LAN mode needs bidirectional reachability (machine → server:3000 must be
+  permitted). See `docs/securite.md` for the topology, and `../docs/` for the real values — **this
+  file is versioned and published, so the redaction rule above applies to it first**.
 - Sending an "on" command triggers a physical rinse (hot water through the spout). Commands act on
   a real appliance — confirm intent before firing, and never assume a queued command is harmless.
