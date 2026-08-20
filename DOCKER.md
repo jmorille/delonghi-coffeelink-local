@@ -125,7 +125,7 @@ jamais une variable déjà définie. On peut donc au choix tout passer en `-e`, 
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `MACHINE_IP` | — | Adresse de la cafetière, IPv4 ou nom d'hôte. **Aucune valeur par défaut** : sans elle le serveur ne contacte rien. Elle peut aussi être saisie dans l'interface (page « Clé LAN »), qui la mémorise dans la base — cette variable, si présente, reste prioritaire. |
+| `MACHINE_IP` | — | Adresse de la cafetière, IPv4 ou nom d'hôte. **Aucune valeur par défaut** : sans elle le serveur ne contacte rien. Elle peut aussi être saisie dans l'interface (page « Machines »), qui la mémorise dans la base — cette variable, si présente, reste prioritaire. |
 | `MACHINE_GENERATION` | `classic` | `classic` (propriétés `data_request` / `d302_monitor`) ou `striker`. L'ECAM 610.75.MB est `classic`. |
 | `MACHINE_DSN` | — | **Optionnel.** Le serveur découvre le DSN sur la machine (`GET /regtoken.json` → `host_symname`) et le mémorise. Ne le renseigner que pour forcer une valeur : elle devient prioritaire et toute divergence est signalée dans le journal. |
 
@@ -137,7 +137,7 @@ jamais une variable déjà définie. On peut donc au choix tout passer en `-e`, 
 | `LANIP_KEY_ID` | `0` | Identifiant de la clé. Circule en clair dans l'échange de clés, ce n'est pas un secret. |
 
 Si ces variables sont absentes, le serveur démarre quand même et la page **Clé LAN**
-(`/cle-lan`) permet de découvrir la clé avec les identifiants du compte De'Longhi ; elle est alors
+(`/machines`) permet de découvrir la clé avec les identifiants du compte De'Longhi ; elle est alors
 mémorisée dans la base et le cloud n'est plus jamais appelé. Priorité : `LANIP_KEY` > base >
 découverte.
 
@@ -313,7 +313,7 @@ SERVER_IP=192.168.x.x        # adresse de l'hôte, joignable depuis le réseau d
 SERVER_PORT=3000
 MACHINE_GENERATION=classic
 # MACHINE_IP et LANIP_KEY sont facultatifs : ils se saisissent dans l'interface,
-# page « Clé LAN », et sont mémorisés dans le volume.
+# page « Machines », et sont mémorisés dans le volume.
 ```
 
 ```bash
@@ -323,7 +323,7 @@ docker compose pull && docker compose up -d    # mettre à jour
 docker compose down                            # arrêter (le volume survit)
 ```
 
-Puis ouvrir `http://<hôte>:3000/`, page « Clé LAN », et renseigner l'adresse de la machine puis la
+Puis ouvrir `http://<hôte>:3000/`, page « Machines », et renseigner l'adresse de la machine puis la
 clé. Rien d'autre n'est nécessaire.
 
 ### Variante réseau de l'hôte (Linux)
@@ -360,7 +360,7 @@ Le `docker-compose.yml` du dépôt est déjà configuré ainsi, l'image GHCR par
 |---|---|
 | L'interface s'affiche, mais aucune propriété ne remonte et le monitor reste vide | La machine n'arrive pas à nous joindre : `SERVER_IP` faux, port non publié, port différent des deux côtés, ou filtrage entre les VLAN. C'est de loin la cause la plus fréquente (§ 1). |
 | `unable to open database file` au démarrage | Droits du répertoire monté : `chown -R 1000:1000` (§ 2). |
-| `clé LAN absente` dans le journal | `LANIP_KEY` / `LANIP_KEY_ID` non transmises. Le serveur fonctionne, mais aucune session chiffrée n'est possible ; la page **Clé LAN** (`/cle-lan`) peut la découvrir. |
+| `clé LAN absente` dans le journal | `LANIP_KEY` / `LANIP_KEY_ID` non transmises. Le serveur fonctionne, mais aucune session chiffrée n'est possible ; la page **Machines** (`/machines`) peut la découvrir. |
 | `DSN inconnu : la machine n'a pas répondu à /regtoken.json` | Adresse fausse, machine éteinte, ou trafic conteneur → machine bloqué. |
 | `getaddrinfo ENOTFOUND <nom>` | **Résolution de nom dans le conteneur.** Un nom court (`cafe`) dépend du domaine de recherche DNS de l'hôte, dont un conteneur n'hérite pas. Voir juste en dessous. |
 | « Session LAN : en attente » indéfiniment, alors que `local_reg` répond `202` | `SERVER_IP` fausse — c'est l'adresse que la machine utilisera pour nous rappeler. Une boucle locale (`127.0.0.1`) ou l'IP interne du conteneur (`172.17.x.x`) donnent exactement ce symptôme : la machine accepte l'annonce puis ne trouve personne. Le journal et les pages le signalent désormais. |

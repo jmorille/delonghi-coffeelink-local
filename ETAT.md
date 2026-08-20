@@ -1398,3 +1398,47 @@ fonction qui travaille sur une machine : ce serait laisser la variable revendiqu
 machine numéro 2.
 
 **Reste à éprouver** : deux cafetières réellement raccordées en même temps.
+
+### La configuration rejoint la carte de chaque machine (2026-08-20)
+
+La page Machines renvoyait vers `/cle-lan` pour l'adresse et la clé, c'est-à-dire pour la moitié de
+ce qu'on vient y faire. Et `/cle-lan` ne travaillait que sur la machine **sélectionnée** : configurer
+la deuxième obligeait donc à basculer dessus d'abord, puis à quitter la page où on était. Deux
+allers-retours pour un réglage.
+
+Les deux réglages sont maintenant dans la carte de la machine concernée, dans l'ordre de leur
+dépendance (adresse, puis clé — la clé est rangée chez Ayla sous le DSN, que seule la machine
+fournit). Le bloc est **ouvert d'office sur une machine incomplète**, replié sur une machine prête :
+c'est le réglage qui manque qu'il faut avoir sous les yeux.
+
+Le point qui rend la chose possible : chaque requête **nomme sa machine** (`forId`), au lieu de viser
+la machine courante (`mfetch`). C'est ce qui permet de configurer une cafetière sans quitter celle
+qu'on regarde — et c'est aussi ce qui aurait envoyé la saisie à la mauvaise machine si on avait
+gardé `mfetch` par réflexe. Vérifié : avec `m1` affichée, l'enregistrement de l'adresse depuis la
+carte de `m3` ne modifie que `m3`, et le verdict de la sonde s'affiche sous cette carte-là.
+
+`/cle-lan` disparaît du menu et **redirige** (307) vers `/machines` : des liens et des onglets
+pointent encore là, et six messages du serveur nommaient cette page. Le menu ne garde donc que deux
+entrées inconditionnelles, `/machines` et `/systeme` ; `nav.lanKey` est retirée du catalogue. Les
+namespaces `lankey` et `machine` sont **réutilisés tels quels** — une quarantaine de chaînes qu'il
+aurait été absurde de dupliquer.
+
+`/api/machines` livre en une requête tout ce que la page affiche : les deux dates de mise en cache
+par machine (`ipCachedAt`, `lanKeyCachedAt`), l'adresse annoncée par le serveur, et l'état de la
+configuration de découverte. Sinon il aurait fallu interroger `/api/machine` et `/api/lankey` une
+fois par machine pour obtenir les mêmes réponses.
+
+**Un garde-fou trouvé par l'usage.** Au premier essai réel de la page, la même cafetière s'est
+retrouvée enregistrée deux fois — une fois par nom court, une fois par nom complet. C'est l'erreur
+naturelle, et elle échoue **en silence** : l'identification se faisant par adresse source, une seule
+des deux entrées reçoit la session, l'autre reste muette pour toujours sans rien dire. Un
+avertissement le signale maintenant, sur la base du **DSN** (le numéro de série : deux entrées qui le
+partagent sont le même appareil), avec l'adresse saisie ou résolue comme second indice. Vérifié en
+direct sur le cas réel : les deux cartes portent l'avertissement, `cafe` et `cafe.maison.lan` résolvant
+bien la même adresse.
+
+**Piège rencontré, à ne pas réapprendre** : `server.mjs` n'est pas rechargé à chaud. Une modification
+de `machineSummary` sans redémarrage laisse l'IHM — elle, rechargée par HMR — lire un champ que
+l'API ne renvoie pas encore, et la page casse sur un `undefined`. Le symptôme accuse le composant ;
+la cause est le serveur qui n'a pas redémarré.
+

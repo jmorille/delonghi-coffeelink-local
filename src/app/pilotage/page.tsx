@@ -89,10 +89,10 @@ export default function Dashboard() {
       </p>
 
       {/* Message unifié avec celui de la page d'accueil, et qui renvoie vers la page qui sait
-          récupérer la clé — l'ancien texte ne parlait que de .env.local, antérieur à /cle-lan. */}
+          récupérer la clé — l'ancien texte ne parlait que de .env.local, antérieur à la page. */}
       {cfg && !cfg.lanKeySet && (
         <div className="warn">
-          ⚠️ {tc("noLanKey")} <a href="/cle-lan">{tc("noLanKeyLink")}</a>
+          ⚠️ {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
         </div>
       )}
 

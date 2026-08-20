@@ -66,6 +66,17 @@ export async function mfetch(path: string, init?: RequestInit): Promise<Response
   return r;
 }
 
+/**
+ * Ajoute une machine **nommée** à un chemin d'API.
+ *
+ * À ne pas confondre avec `mfetch`, qui vise la machine *courante*. Sur la page de gestion on
+ * agit sur la machine d'une carte, qui n'est pas forcément celle affichée ailleurs : c'est
+ * exactement le cas où `mfetch` enverrait la requête à la mauvaise cafetière.
+ */
+export function forId(path: string, id: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}machine=${encodeURIComponent(id)}`;
+}
+
 /** Résumé d'une machine tel que le renvoie `/api/machines`. Ne contient aucun secret. */
 export interface MachineSummary {
   id: string;
@@ -75,11 +86,15 @@ export interface MachineSummary {
   createdAt: number;
   ip: string | null;
   ipSource: string;
+  /** Date de la saisie mémorisée : `null` = rien à oublier. */
+  ipCachedAt: number | null;
   dsn: string | null;
   dsnSource: string;
   lanKeySet: boolean;
   lanKeyId: number | null;
   lanKeySource: string;
+  /** Date de la découverte. La clé elle-même n'est jamais transmise. */
+  lanKeyCachedAt: number | null;
   model: { key: string | null; source: string; machineName: string | null; matchesCatalog: boolean | null };
   sessionActive: boolean;
   lastRegisterAt: number;
@@ -92,4 +107,6 @@ export interface MachineSummary {
   envForced: { ip: boolean; lanKey: boolean; dsn: boolean; modelKey: boolean };
   /** Les deux prérequis du pilotage réunis : adresse connue et clé LAN présente. */
   ready: boolean;
+  /** Autres entrées qui semblent désigner le même appareil — une seule recevra la session. */
+  duplicates: { id: string; label: string; reason: "dsn" | "address" }[];
 }

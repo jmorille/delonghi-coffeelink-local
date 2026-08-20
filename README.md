@@ -71,7 +71,7 @@ docker run -d --name delonghi-lan-server -p 3000:3000 -v lan-server-data:/data \
 Exemple `compose.yaml` complet et toutes les options : **[DOCKER.md](DOCKER.md)**.
 
 Deux réglages sont nécessaires avant de pouvoir piloter quoi que ce soit, et **tous deux se
-saisissent dans l'interface**, page « Clé LAN » :
+saisissent dans l'interface**, page « Machines » :
 
 1. **l'adresse de la machine** — elle n'a *aucune* valeur par défaut ; l'interface l'enregistre,
    la teste, et en déduit le numéro de série (DSN) de la machine ;

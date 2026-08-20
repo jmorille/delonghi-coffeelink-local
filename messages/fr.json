@@ -12,8 +12,7 @@
     "system": "Système",
     "beanAdapt": "Bean Adapt",
     "stats": "Statistiques",
-    "machines": "Machines",
-    "lanKey": "Clé LAN"
+    "machines": "Machines"
   },
   "common": {
     "details": "Détails",
@@ -36,7 +35,7 @@
     "profileFallback": "profil {id}",
     "profileNumbered": "Profil {id}",
     "noLanKey": "Clé LAN absente : aucune session chiffrée n'est possible, donc aucune commande n'atteint la machine et son état ne peut pas être lu. Les valeurs affichées sont celles du dernier import.",
-    "noLanKeyLink": "Récupérer la clé →",
+    "noLanKeyLink": "Configurer la machine →",
     "badServerIp": "{problem} — or c'est l'adresse que le serveur annonce à la machine pour qu'elle le rappelle. En mode LAN, c'est la machine qui se connecte à nous : avec cette valeur, aucune session ne pourra s'établir et les commandes seront perdues. Corrigez SERVER_IP avec une adresse joignable depuis le réseau de la machine, puis redémarrez le serveur. En conteneur, c'est l'adresse de l'hôte, pas celle du conteneur."
   },
   "beverages": {
@@ -527,10 +526,10 @@
     "set": "présente · key_id {keyId} · source : {source}",
     "unset": "absente — le pilotage local est impossible sans elle",
     "cachedAt": "Découverte le",
-    "neverDiscovered": "jamais découverte depuis cette page",
+    "neverDiscovered": "jamais découverte depuis l'interface",
     "dsn": "DSN interrogé",
     "dsnUnknown": "encore inconnu — la machine n'a pas répondu",
-    "needsDsn": "DSN inconnu, la récupération est impossible : la clé est rangée chez Ayla sous le numéro de série de la machine. Renseignez son adresse ci-dessus, le DSN est lu au même moment.",
+    "needsDsn": "DSN inconnu, la récupération est impossible : la clé est rangée chez Ayla sous le numéro de série de la machine. Renseignez son adresse juste au-dessus, le DSN est lu au même moment.",
     "discoverHeading": "Récupérer la clé depuis le compte De'Longhi",
     "flow": "Quatre étapes, toutes vérifiées contre les vrais serveurs : Gigya accounts.login (centre de données eu1), puis accounts.getJWT, puis Ayla token_sign_in.json, et enfin Ayla dsns/[DSN]/lan.json qui renvoie la clé et son identifiant.",
     "privacy": "Le mot de passe sert le temps de la requête et n'est ni journalisé, ni enregistré, ni renvoyé. Seule la clé obtenue est mémorisée, dans la base locale (data/lan-server.db, hors versionnement) — et aucun endpoint ne la renvoie jamais.",
@@ -553,7 +552,7 @@
     "forgotten": "Clé oubliée — {state}.",
     "stillSet": "une clé reste active (elle vient de .env.local)",
     "nowUnset": "plus aucune clé active",
-    "localNote": "Cette page est le seul endroit du serveur qui contacte le cloud, et seulement sur action explicite. Le pilotage, lui, ne dépend d'aucun appel réseau sortant une fois la clé en place."
+    "localNote": "La récupération de la clé est le seul endroit du serveur qui contacte le cloud, et seulement sur action explicite. Le pilotage, lui, ne dépend d'aucun appel réseau sortant une fois la clé en place."
   },
   "machine": {
     "heading": "Adresse de la machine",
@@ -563,7 +562,7 @@
     "address": "Adresse",
     "source": "Source",
     "savedAt": "Enregistrée le",
-    "neverSaved": "jamais enregistrée depuis cette page",
+    "neverSaved": "jamais enregistrée depuis l'interface",
     "none": "aucune",
     "dsn": "DSN découvert",
     "dsnNone": "inconnu",
@@ -614,6 +613,7 @@
     "read": "Lu sur la machine",
     "counts": "{props} propriétés, {stats} statistiques, {beans} profils de grains, {recipes} recettes",
     "configure": "Configurer son adresse et sa clé",
+    "configureHide": "Replier la configuration",
     "addTitle": "Ajouter une machine",
     "addNote": "Le nom est décoratif. L'adresse peut être saisie plus tard : si vous la donnez maintenant, elle est testée immédiatement.",
     "add": "Ajouter",
@@ -622,6 +622,9 @@
     "addedNotAMachine": "{name} ajoutée, mais l'adresse répond HTTP {status} sans se déclarer cafetière : ce n'est probablement pas la bonne adresse.",
     "addedUnreachable": "{name} ajoutée, mais l'adresse ne répond pas ({reason}). Elle est enregistrée, à corriger si besoin.",
     "modelMismatch": "Cette machine annonce le modèle {detected}, différent de celui du catalogue actif. Les identifiants de boisson et l'adressage des propriétés de recette ne correspondent probablement pas : les lectures peuvent être fausses sans en avoir l'air. Voir la page Système.",
+    "duplicate": "Cette entrée désigne le même appareil que {names} ({reason}). En mode LAN, c'est l'adresse source qui identifie la machine qui appelle : une seule des deux entrées recevra la session, l'autre restera muette sans autre explication. Supprimez celle qui est en trop.",
+    "duplicateDsn": "même DSN, donc même numéro de série",
+    "duplicateAddress": "même adresse",
     "limitsTitle": "Ce que le multi-machines ne fait pas",
     "limitsCatalog": "Le catalogue des boissons est celui d'un seul modèle, partagé par toutes les machines. Sur une machine d'un autre modèle, le nombre de recettes change, donc l'adressage des propriétés aussi — l'écart est signalé mais pas corrigé.",
     "limitsEnv": "Les variables d'environnement (MACHINE_IP, LANIP_KEY, MACHINE_DSN, MACHINE_MODEL_KEY) ne décrivent que la première machine, puisqu'une variable ne peut pas désigner deux cafetières. Les autres se configurent ici et dans l'interface, et leurs réglages sont mémorisés en base.",

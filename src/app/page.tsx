@@ -394,7 +394,7 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
 
       {status && !status.config?.lanKeySet && (
         <div className="warn">
-          ⚠️ {tc("noLanKey")} <a href="/cle-lan">{tc("noLanKeyLink")}</a>
+          ⚠️ {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
         </div>
       )}
       {data && (

@@ -587,7 +587,7 @@ function nextImportData(m) {
 async function postLocalReg(m) {
   const t = await machineTarget(m);
   if (!t) {
-    L("out", "local_reg impossible : adresse de la machine non configurée (page « Clé LAN »)", m);
+    L("out", "local_reg impossible : adresse de la machine non configurée (page « Machines »)", m);
     return { ok: false, error: "machineIp" };
   }
   if (!t.ip) {
@@ -1199,7 +1199,7 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt }) {
   const dsn = await resolveDsn(m);
   // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
   // elle n'a plus besoin d'elle du tout. Le message doit donc désigner l'action qui débloque.
-  if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Clé LAN »), ou forcer MACHINE_DSN dans .env.local.");
+  if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Machines »), ou forcer MACHINE_DSN dans .env.local.");
 
   let jwt = givenJwt;
   if (jwt) {
@@ -1580,6 +1580,34 @@ const NEEDS_MACHINE = [
 ];
 
 /**
+ * Autres entrées qui désignent visiblement le MÊME appareil.
+ *
+ * Le DSN tranche : c'est le numéro de série, deux entrées qui le partagent sont la même cafetière.
+ * L'adresse — saisie, ou celle qu'on a résolue — est un second indice, qui rattrape le cas où le
+ * DSN n'a pas encore été lu.
+ *
+ * Le cas n'est pas théorique : enregistrer la même machine deux fois, une fois par nom court et
+ * une fois par nom complet, est l'erreur naturelle quand on découvre la page. Et il est
+ * **silencieux** — c'est l'adresse source qui identifie l'appelant, donc une seule des deux
+ * entrées recevra la session, l'autre restera muette sans jamais dire pourquoi. D'où
+ * l'avertissement, plutôt qu'un doublon qui a l'air de marcher à moitié.
+ */
+function machineDuplicates(m) {
+  const out = [];
+  for (const x of MACHINES.values()) {
+    if (x.id === m.id) continue;
+    const raison =
+      x.dsn && m.dsn && x.dsn === m.dsn
+        ? "dsn"
+        : (x.ip && m.ip && x.ip === m.ip) || (x.dns?.ip && m.dns?.ip && x.dns.ip === m.dns.ip)
+          ? "address"
+          : null;
+    if (raison) out.push({ id: x.id, label: machineLabel(x), reason: raison });
+  }
+  return out;
+}
+
+/**
  * Résumé d'une machine, pour le sélecteur et la page de gestion.
  *
  * ⚠️ Ne contient **aucun secret** : la clé LAN n'apparaît que par `lanKeySet` et son `key_id`,
@@ -1593,11 +1621,15 @@ function machineSummary(m) {
     createdAt: m.createdAt,
     ip: m.ip,
     ipSource: m.ipSource,
+    // Date de la saisie mémorisée, pour savoir s'il y a quelque chose à « oublier ».
+    ipCachedAt: m.store.getMeta("machineIp")?.at ?? null,
     dsn: m.dsn,
     dsnSource: m.dsnSource,
     lanKeySet: m.lanKey.length > 0,
     lanKeyId: m.lanKeyId || null,
     lanKeySource: m.lanKeySource,
+    // Uniquement la date de la découverte : la clé elle-même ne sort jamais d'ici.
+    lanKeyCachedAt: m.store.getLanKey()?.at ?? null,
     model: {
       key: m.modelKey,
       source: m.modelSource,
@@ -1616,6 +1648,8 @@ function machineSummary(m) {
     envForced: { ip: envForced(m, "ip"), lanKey: envForced(m, "lanKey"), dsn: envForced(m, "dsn"), modelKey: envForced(m, "modelKey") },
     // Les deux prérequis de tout pilotage, résumés en un booléen.
     ready: !!m.ip && m.lanKey.length > 0,
+    // Autres entrées qui semblent désigner le même appareil. Voir machineDuplicates().
+    duplicates: machineDuplicates(m),
   };
 }
 
@@ -1635,7 +1669,15 @@ async function handleMachines(req, res) {
   const id = url.startsWith(prefixe) ? decodeURIComponent(url.slice(prefixe.length)) : null;
 
   if (url === "/api/machines" && req.method === "GET") {
-    return raw(res, JSON.stringify({ defaultId: defaultMachine().id, machines: machineList().map(machineSummary) }));
+    return raw(res, JSON.stringify({
+      defaultId: defaultMachine().id,
+      machines: machineList().map(machineSummary),
+      // Valeurs globales que la page affiche à côté de chaque machine. Les livrer ici évite
+      // d'interroger /api/machine et /api/lankey une fois par machine pour les mêmes réponses.
+      server: { ip: CFG.serverIp, port: CFG.port, problem: serverIpProblem() },
+      // Ce qui manquerait pour interroger le cloud. Normalement vide (src/lib/cloud-app.json).
+      discovery: { missingConfig: [!APP.gigyaApiKey && "clé API Gigya", !APP.aylaAppId && "app_id Ayla", !APP.aylaAppSecret && "app_secret Ayla"].filter(Boolean) },
+    }));
   }
 
   if (url === "/api/machines" && req.method === "POST") {
@@ -1728,13 +1770,13 @@ async function handleApi(req, res) {
   if (req.method === "POST" && NEEDS_MACHINE.some((p) => url === p || url.startsWith(`${p}/`))) {
     if (!m.ip) {
       return raw(res, JSON.stringify({
-        error: "adresse de la machine non configurée : la renseigner sur la page « Clé LAN », ou par MACHINE_IP dans .env.local.",
+        error: "adresse de la machine non configurée : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local.",
         needsMachineIp: true,
       }), 409);
     }
     if (!m.lanKey.length) {
       return raw(res, JSON.stringify({
-        error: "clé LAN absente : aucune session chiffrée n'est possible, la commande n'atteindrait jamais la machine. Renseigner LANIP_KEY dans .env.local, ou récupérer la clé depuis la page « Clé LAN ».",
+        error: "clé LAN absente : aucune session chiffrée n'est possible, la commande n'atteindrait jamais la machine. Renseigner LANIP_KEY dans .env.local, ou récupérer la clé depuis la page « Machines ».",
         needsLanKey: true,
       }), 409);
     }
@@ -2423,8 +2465,8 @@ for (const m of loadMachines()) {
   restoreDsn(m);
   restoreModel(m);
   restoreLanKey(m);
-  if (!m.ip) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Clé LAN », ou par MACHINE_IP dans .env.local", m);
-  if (!m.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Clé LAN » (compte De'Longhi)", m);
+  if (!m.ip) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local", m);
+  if (!m.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Machines » (compte De'Longhi)", m);
 }
 
 createServer((req, res) => {

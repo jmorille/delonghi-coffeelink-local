@@ -11,13 +11,15 @@ import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./mach
  * pour ça que la lecture d'état passe par `mfetch`. Avec deux cafetières dont une seule est
  * configurée, le menu doit suivre celle qu'on regarde.
  *
- * Trois entrées restent toujours là, et c'est délibéré :
- * - `/cle-lan`, qui règle les DEUX prérequis — l'adresse de la machine puis la clé, dans cet
- *   ordre, puisque la clé est rangée sous le DSN que seule la machine fournit. La masquer
- *   couperait le seul chemin de réparation ;
- * - `/machines`, qui permet d'en ajouter une ou de basculer sur une autre : la masquer
+ * Deux entrées restent toujours là, et c'est délibéré :
+ * - `/machines`, qui règle les DEUX prérequis pour chaque machine — l'adresse puis la clé, dans
+ *   cet ordre, puisque la clé est rangée sous le DSN que seule la machine fournit — et qui permet
+ *   aussi de basculer sur une autre. La masquer couperait le seul chemin de réparation et
  *   enfermerait dans une machine mal configurée ;
  * - `/systeme`, qui ne dépend d'aucun des deux (fiche appareil figée, protocole, stockage).
+ *
+ * `/cle-lan` n'y figure plus : ses deux réglages sont dans la carte de chaque machine, sur
+ * `/machines`. L'URL redirige, pour les liens et onglets déjà ouverts.
  *
  * Les pages masquées restent **servies** : une URL saisie à la main continue d'afficher le cache
  * de la dernière lecture, avec la bannière d'avertissement. On retire l'invitation, pas l'accès.
@@ -30,7 +32,6 @@ const ENTRIES = [
   { href: "/recipes", key: "recipes", needsMachine: true },
   { href: "/statistiques", key: "stats", needsMachine: true },
   { href: "/machines", key: "machines", needsMachine: false },
-  { href: "/cle-lan", key: "lanKey", needsMachine: false },
   { href: "/systeme", key: "system", needsMachine: false },
 ] as const;
 
@@ -68,8 +69,8 @@ export default function Nav() {
     setCourante(currentMachine());
     refresh();
     // La navigation se fait par liens classiques (rechargement complet), donc le menu se
-    // reconstruit à chaque page. Les seuls cas où l'état change sans navigation sont la page
-    // /cle-lan (prérequis) et /machines (sélection) : elles émettent ces événements.
+    // reconstruit à chaque page. Le seul cas où l'état change sans navigation est la page
+    // /machines, qui règle les prérequis et la sélection : elle émet ces deux événements.
     const onChange = () => refresh();
     window.addEventListener("lankey-changed", onChange);
     window.addEventListener(MACHINE_EVENT, onChange);
