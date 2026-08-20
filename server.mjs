@@ -2513,7 +2513,15 @@ async function handleApi(req, res) {
     const cloud = cloudOtaState(m);
     return raw(res, JSON.stringify({
       deviceSheet: DEVICE_SHEET,
-      model: { ...m.catalog.model, nBeverages: m.catalog.beverages.length },
+      // Fiche du catalogue EN SERVICE, sans la liste des recettes : elle fait 28 entrées ici et 48
+      // sur une Striker, personne ne les lit dans cette réponse, et /api/beverages les sert déjà.
+      model: {
+        ...modelSheet(m.catalog.key),
+        nBeverages: m.catalog.beverages.length,
+        /** Vrai si ce catalogue n'est pas celui du modèle détecté, mais un remplaçant. */
+        fallback: m.catalog.fallback,
+        detectedKey: m.modelKey,
+      },
       identification: modelState(m),
       network: {
         machineIp: m.ip,

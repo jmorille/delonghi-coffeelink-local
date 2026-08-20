@@ -69,6 +69,8 @@ for (const m of src.machines) {
     type: m.type,
     name: m.name,
     appModelId: m.appModelId,
+    // Lu par /systeme : sans lui la fiche affichait une ligne vide.
+    connectionType: m.connectionType,
     protocolVersion: m.protocolVersion,
     protocolMinorVersion: m.protocol_minor_version,
     nProfiles: m.nProfiles,

@@ -1732,3 +1732,38 @@ deuxième source de vérité pour les mêmes recettes.
 
 Reste non éprouvé : une machine d'un autre modèle que celle-ci. Le contrôle qui compte est donc la
 non-régression sur les noms de propriétés, faite exhaustivement.
+
+### Réalignement de l'interface après la bascule du catalogue (2026-08-20)
+
+Trois écarts laissés par le commit précédent, tous du même genre : le serveur avait changé, pas ce
+qui le lit ni ce qui le décrit.
+
+**Une ligne vide.** `/systeme` lit `model.connectionType`, que la table extraite ne portait pas —
+`extract-catalogs.mjs` ne le reprenait pas de la source. Ajouté, table régénérée : « Wi-Fi ».
+
+**Une réponse inutilement grosse.** `/api/system` expédiait `model.recipes` en entier — 28 entrées
+ici, 48 sur une Striker — à chaque affichage de la page, pour des champs que personne n'y lit et que
+`/api/beverages` sert déjà. Remplacé par la fiche courte : **524 octets** au lieu de plusieurs
+kilo-octets.
+
+**Une phrase qui disait l'inverse.** `machines.modelReadMismatch` annonçait encore que « les lectures
+de recettes peuvent être fausses sans en avoir l'air » — le discours d'avant la bascule, quand le
+catalogue ne changeait pas. Il change désormais : le message dit maintenant que le catalogue en
+service est un remplaçant.
+
+Et un quatrième, celui-là trouvé en relisant l'écran : le premier bloc de `/systeme`, titré « Modèle
+de machine », affiche la fiche du catalogue **en service**. Quand ce catalogue est un pis-aller, ce
+bloc décrit donc un modèle qui n'est pas celui de la machine — et il le taisait. `/api/system` renvoie
+maintenant `fallback` et `detectedKey`, et le bloc porte un avertissement qui nomme les deux.
+
+**Vérification systématique** plutôt que de l'œil : pour chaque page, tous les chemins `d.x.y`
+extraits de la source, confrontés à la charge utile réelle du banc d'essai.
+
+| Page | Chemins lus | Verdict |
+|---|---|---|
+| `/systeme` | 51 | tous présents (`local.error` mis à part, absent quand la sonde réussit — lecture conditionnelle) |
+| `/machines` | 32 | tous présents |
+| `/statistiques` | 3 | tous présents |
+| `/bean-adapt` | 2 | tous présents |
+
+Build de production : 12 pages.

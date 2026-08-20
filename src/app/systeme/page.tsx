@@ -19,7 +19,12 @@ interface Payload {
     lifecycle: Record<string, unknown>;
     findings: Finding[];
   };
-  model: Record<string, unknown>;
+  /**
+   * Fiche du catalogue **en service**, pas nécessairement celui de la machine : `fallback` dit
+   * quand c'est un remplaçant, et `detectedKey` ce que la machine a réellement annoncé. Les deux
+   * sont typés parce qu'on les lit ; le reste part dans `Rows` sans être nommé.
+   */
+  model: Record<string, unknown> & { fallback?: boolean; detectedKey?: string | null };
   /**
    * Identification lue sur la machine (`d270_serialnumber`). `matchesCatalog: null` = pas encore
    * lu ; `false` = la machine n'est pas celle du catalogue ci-dessus.
@@ -289,6 +294,13 @@ export default function Systeme() {
         <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
           {t("modelSource")}
         </p>
+        {/* Ce bloc décrit le catalogue EN SERVICE. Quand c'est un remplaçant, il décrit donc un
+            modèle qui n'est pas celui de la machine : le taire serait affirmer le contraire. */}
+        {d.model.fallback && (
+          <p className="warn" style={{ marginTop: 10, marginBottom: 0 }}>
+            ⚠️ {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
+          </p>
+        )}
       </div>
 
       <h2>{t("identification")}</h2>
