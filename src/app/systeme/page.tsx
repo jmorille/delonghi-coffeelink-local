@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 interface Finding {
   level: "warn" | "info";
@@ -83,7 +84,7 @@ export default function Systeme() {
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      setD(await fetch("/api/system").then((r) => r.json()));
+      setD(await mfetch("/api/system").then((r) => r.json()));
     } finally {
       setBusy(false);
     }
@@ -103,14 +104,14 @@ export default function Systeme() {
     setIdMsg(t("idReading"));
     try {
       const before = d?.identification.at ?? 0;
-      const r = await fetch("/api/model", { method: "POST" }).then((x) => x.json());
+      const r = await mfetch("/api/model", { method: "POST" }).then((x) => x.json());
       if (r.error) {
         setIdMsg(tc("error", { message: r.error }));
         return;
       }
       for (let i = 0; i < 14; i++) {
         await new Promise((res) => setTimeout(res, 1500));
-        const m = await fetch("/api/model").then((x) => x.json());
+        const m = await mfetch("/api/model").then((x) => x.json());
         if ((m.at ?? 0) > before || m.lastError) {
           setIdMsg(m.lastError ? t("idFailed", { reason: m.lastError.reason }) : t("idDone"));
           break;

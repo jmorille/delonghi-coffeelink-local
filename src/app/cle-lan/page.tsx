@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 /**
  * Prérequis du pilotage, dans l'ordre où ils se conditionnent :
@@ -72,8 +73,8 @@ export default function CleLan() {
   const load = useCallback(async () => {
     try {
       const [k, m] = await Promise.all([
-        fetch("/api/lankey").then((r) => r.json()),
-        fetch("/api/machine").then((r) => r.json()),
+        mfetch("/api/lankey").then((r) => r.json()),
+        mfetch("/api/machine").then((r) => r.json()),
       ]);
       setLanKey(k);
       setMachine(m);
@@ -93,7 +94,7 @@ export default function CleLan() {
     setMachineBusy(true);
     setMachineMsg(null);
     try {
-      const r = await fetch("/api/machine", {
+      const r = await mfetch("/api/machine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip }),
@@ -124,7 +125,7 @@ export default function CleLan() {
     setMachineBusy(true);
     setMachineMsg(null);
     try {
-      const r = await fetch("/api/machine", { method: "DELETE" }).then((x) => x.json());
+      const r = await mfetch("/api/machine", { method: "DELETE" }).then((x) => x.json());
       setMachineMsg(tm("forgotten", { state: r.ip ?? tm("none") }));
       setIp(r.ip ?? "");
       await load();
@@ -142,7 +143,7 @@ export default function CleLan() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/lankey", {
+      const r = await mfetch("/api/lankey", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(creds),
@@ -170,7 +171,7 @@ export default function CleLan() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch("/api/lankey", { method: "DELETE" }).then((x) => x.json());
+      const r = await mfetch("/api/lankey", { method: "DELETE" }).then((x) => x.json());
       setMsg(t("forgotten", { state: r.set ? t("stillSet") : t("nowUnset") }));
       await load();
       window.dispatchEvent(new Event("lankey-changed"));

@@ -117,9 +117,15 @@ jamais une variable déjà définie. On peut donc au choix tout passer en `-e`, 
 
 ### Machine
 
+> ⚠️ **Ces variables ne décrivent qu'UNE machine : la première.** Une variable ne peut pas désigner
+> deux cafetières. Le serveur en pilote plusieurs, mais les suivantes s'ajoutent et se configurent
+> dans l'interface, page « Machines » ; leurs réglages sont mémorisés dans la base, donc dans le
+> volume. En conteneur, une installation multi-machines n'a rien à passer en `-e` au-delà de la
+> première. `SERVER_IP`, `SERVER_PORT` et le stockage, eux, sont globaux.
+
 | Variable | Défaut | Description |
 |---|---|---|
-| `MACHINE_IP` | — | Adresse de la cafetière, IPv4 ou nom d'hôte. **Aucune valeur par défaut** : sans elle le serveur ne contacte rien. Elle peut aussi être saisie dans l'interface (page « Machine »), qui la mémorise dans la base — cette variable, si présente, reste prioritaire. |
+| `MACHINE_IP` | — | Adresse de la cafetière, IPv4 ou nom d'hôte. **Aucune valeur par défaut** : sans elle le serveur ne contacte rien. Elle peut aussi être saisie dans l'interface (page « Clé LAN »), qui la mémorise dans la base — cette variable, si présente, reste prioritaire. |
 | `MACHINE_GENERATION` | `classic` | `classic` (propriétés `data_request` / `d302_monitor`) ou `striker`. L'ECAM 610.75.MB est `classic`. |
 | `MACHINE_DSN` | — | **Optionnel.** Le serveur découvre le DSN sur la machine (`GET /regtoken.json` → `host_symname`) et le mémorise. Ne le renseigner que pour forcer une valeur : elle devient prioritaire et toute divergence est signalée dans le journal. |
 
@@ -139,7 +145,7 @@ découverte.
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `SERVER_IP` | `127.0.0.1` | **À renseigner.** Adresse annoncée à la machine (§ 1). Le défaut ne marche qu'en test local. |
+| `SERVER_IP` | — | **Obligatoire.** Adresse annoncée à la machine (§ 1), donc celle qu'elle utilisera pour nous rappeler. **Aucune valeur par défaut** : absente ou en boucle locale, le serveur refuse les commandes (HTTP 409) au lieu de les accepter puis de les perdre. |
 | `SERVER_PORT` | `3000` | Port d'écoute **et** port annoncé. |
 
 ### Stockage

@@ -89,7 +89,7 @@ spécificités du conteneur, dans [DOCKER.md](DOCKER.md). L'essentiel :
 
 | Variable | Rôle |
 |---|---|
-| `SERVER_IP`, `SERVER_PORT` | l'adresse que nous **annonçons** à la machine |
+| `SERVER_IP`, `SERVER_PORT` | l'adresse que nous **annonçons** à la machine (globales) |
 | `MACHINE_IP` | adresse de la machine — optionnelle, saisissable dans l'interface |
 | `LANIP_KEY`, `LANIP_KEY_ID` | la clé LAN — optionnelle, récupérable dans l'interface |
 | `MACHINE_DSN` | forçage du numéro de série ; découvert automatiquement sinon |
@@ -100,6 +100,24 @@ Les valeurs statiques de l'APK nécessaires à la récupération de la clé LAN 
 saisir : elles sont livrées dans [`src/lib/cloud-app.json`](src/lib/cloud-app.json). Elles ne sont
 pas secrètes — identiques pour tout le monde, extraites d'un binaire public, et sans les
 identifiants d'un compte De'Longhi elles n'ouvrent rien.
+
+### Plusieurs machines
+
+Le serveur pilote plusieurs cafetières. Chacune a son adresse, sa clé LAN, son DSN, son modèle et
+son cache de lectures : rien n'est partagé. La page **Machines** en ajoute, les nomme, choisit celle
+qui répond par défaut, et en supprime — une suppression emporte toutes les données de la machine.
+
+Deux limites, énoncées sur la page elle-même :
+
+- **les variables `MACHINE_*` et `LANIP_*` ne décrivent que la première machine**, puisqu'une
+  variable ne peut pas désigner deux appareils. Les suivantes se configurent dans l'interface, et
+  leurs réglages sont mémorisés dans la base — donc dans le volume, en conteneur ;
+- **le catalogue de boissons reste celui d'un seul modèle**, partagé par toutes les machines. Le
+  modèle réel de chacune est lu et comparé : un écart est signalé, pas corrigé (voir ci-dessous).
+
+Les machines nous appellent toutes sur la même adresse : c'est leur **adresse source** qui les
+distingue, et le `key_id` de leur clé LAN au moment de l'échange de clés. Deux machines derrière une
+même adresse source ne seraient donc pas distinguables.
 
 ### Modèle de machine
 
@@ -135,9 +153,9 @@ dépôt.
   délègue à Next.js que les pages. Le client HTTP de l'ESP32 est rudimentaire et rejette le
   *framing* des réponses de Next.
 - **Interface** : Next.js 16 (App Router), React 19, TypeScript, `next-intl` (français).
-- **Stockage** : un fichier SQLite via `node:sqlite`, en WAL et écritures synchrones. Il contient
-  la clé LAN et des données de votre machine : **traitez `data/` comme un fichier de mots de
-  passe**. Le répertoire est gitignoré.
+- **Stockage** : un fichier SQLite via `node:sqlite`, en WAL et écritures synchrones. Chaque table
+  porte la machine à laquelle sa ligne appartient. Il contient les clés LAN et des données de vos
+  machines : **traitez `data/` comme un fichier de mots de passe**. Le répertoire est gitignoré.
 - **Catalogue de boissons** : statique, par modèle, extrait des ressources de l'application. La
   machine ne dit jamais quelles boissons elle sait faire — elle ne fournit que des valeurs.
 
@@ -208,6 +226,11 @@ Validé sur une machine réelle : allumage/extinction, monitor décodé, import 
 boissons (28/28 propriétés), import des profils (noms, icônes, favoris, recettes personnalisées),
 statistiques, Bean Adapt en lecture, récupération de la clé LAN.
 
+Le multi-machines est validé avec **une** cafetière réelle et une seconde machine déclarée mais non
+raccordée : migration du schéma sur la vraie base, isolation des données, aiguillage de la session
+LAN vers la bonne machine, refus des écritures sur celle qui n'est pas configurée. Le cas de deux
+cafetières réellement branchées reste à éprouver.
+
 Pas encore éprouvé en conditions réelles : la préparation effective d'une boisson via le serveur,
 la commande d'arrêt, l'écriture d'une recette dans un profil, l'écriture Bean Adapt.
 
@@ -220,6 +243,13 @@ catalogue de traductions, build, initialisation du stockage, et démarrage de l'
 Le catalogue vient de `src/lib/machine-model.json`, extrait pour le `product_code` d'une
 ECAM 610.75.MB. Pour un autre modèle, il faut le remplacer par les caractéristiques correspondantes ;
 les identifiants de boissons et les bornes de paramètres changent. Le protocole, lui, est commun.
+
+C'est aussi la limite du multi-machines : le catalogue est **unique**, donc deux cafetières de
+modèles différents ne peuvent pas être servies correctement en même temps. Le nombre de recettes
+standard entre dans le calcul du nom des propriétés de recette (`(profil − 1) × 21` pour ce
+modèle) : sur un modèle à 22 recettes, chaque lecture viserait la mauvaise propriété — et une
+propriété qui répond vide est interprétée comme « absente sur ce modèle », donc l'erreur
+ressemblerait à un import normal. D'où l'avertissement, plutôt qu'une bascule automatique.
 
 ## Licence
 

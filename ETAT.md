@@ -1317,3 +1317,84 @@ champs (adresse, e-mail, mot de passe), avertissement d'adresse manquante presen
 reelle : « Adresse 192.168.x.x enregistree, et la machine repond. DSN : AC000W0XXXXXXXX. », plus
 aucun avertissement. Le menu reste reduit — correctement : `ready` exige les DEUX prerequis, et la
 cle est absente. `/machine` -> 404, `/cle-lan` -> 200, `tsc --noEmit` passe, le build compile.
+
+### Plusieurs machines (2026-08-20)
+
+Le serveur pilote désormais N cafetières. Trois couches ont bougé.
+
+**Stockage — schéma v2.** Chaque table de données porte une colonne `machine` et une clé primaire
+composite, avec `REFERENCES machines(id) ON DELETE CASCADE` ; les réglages qui n'appartiennent à
+aucune machine vivent dans une table `settings` à part, plutôt que sous une machine sentinelle qui
+aurait fait mentir la clé étrangère. Toute lecture ou écriture passe par `forMachine(id)` : il
+n'existe volontairement **aucune** version sans machine de ces fonctions, parce qu'un appel qui
+aurait oublié de préciser laquelle écrirait dans la mauvaise sans que rien ne le signale.
+
+SQLite ne sait pas changer une clé primaire : la migration recrée les tables et recopie, en une
+seule transaction, en rattachant toutes les lignes existantes à `m1` — la seule lecture possible,
+une base v1 ne pouvant décrire qu'une machine.
+
+| Vérification de la migration | Résultat |
+|---|---|
+| copie de la vraie base (58 propriétés, 62 statistiques, 6 grains, 7 valeurs `meta`) | tout repris sous `m1`, DSN, adresse, modèle, clé LAN et profil actif intacts |
+| la vraie base, en place | idem, et le serveur redémarre en lisant tout depuis le cache |
+| deuxième démarrage | aucune remigration (`user_version` fait barrage) |
+| base plus récente que le code | refus immédiat avec un message, au lieu d'échouer plus loin sur une colonne inconnue |
+| suppression d'une machine | ses lignes partent par cascade, celles des autres sont intactes |
+
+La CI joue maintenant cette migration sur une base v1 fabriquée pour l'occasion : c'est la seule
+opération du projet capable de détruire les données de quelqu'un.
+
+**Serveur — l'état devient un enregistrement par machine.** `CFG` ne garde que ce qui appartient au
+serveur (`serverIp`, `port`). Adresse, cache DNS, DSN et son étranglement, clé LAN, modèle,
+génération, session, programme, file de lecture, monitor, keep-alive, profil actif, balayages,
+requêtes OTA : tout est par machine. Le journal reste **unique**, chaque ligne portant sa machine —
+deux journaux auraient obligé l'interface à recoudre une chronologie, or c'est exactement ce qu'on
+regarde quand une commande ne passe pas. Le préfixe `[m1]` n'apparaît qu'à partir de deux machines,
+donc la sortie d'une installation mono-machine est inchangée.
+
+**Qui nous appelle ?** C'est le point qui décidait de l'architecture. Les endpoints device-facing ne
+portent **aucune** identité : le `uri` annoncé dans `local_reg` est commun, et seul
+`key_exchange.json` transporte un `key_id`. L'identification se fait donc sur l'**adresse source**,
+la seule information présente sur les trois endpoints : une seule machine connue → c'est elle sans
+condition (une installation mono-machine ne peut pas régresser) ; sinon correspondance avec
+l'adresse configurée ou résolue ; sinon avec l'adresse déjà reconnue lors d'un échange de clés. Au
+key exchange seulement, le `key_id` sert de second recours. Deux machines derrière une même adresse
+source ne seraient pas distinguables — c'est dit dans l'interface.
+
+La piste d'un `uri` par machine dans `local_reg` a été écartée : rien ne prouve que l'ESP32 respecte
+une base arbitraire, et le module a déjà montré qu'il est pointilleux sur ce genre de détail
+(l'en-tête `Host`). L'adresse source ne dépend d'aucun comportement non vérifié.
+
+**Interface.** Un sélecteur dans la barre de navigation (à partir de deux machines), une page
+`/machines` pour ajouter, nommer, désigner la machine par défaut et supprimer, et surtout : les
+38 appels d'API des pages passent tous par `mfetch`, qui ajoute la machine courante. Un `fetch` nu
+viserait la machine **par défaut du serveur**, pas celle qui est affichée — sur des commandes qui
+agissent sur un appareil réel, ce n'est pas un détail d'affichage. Le choix vit dans
+`localStorage` : un « courant » global aurait fait changer la page sous les yeux de quelqu'un
+pendant qu'un autre onglet choisissait autrement.
+
+| Vérifié dans le navigateur | Résultat |
+|---|---|
+| une seule machine | sélecteur absent, menu et journal identiques à avant |
+| ajout d'une deuxième | sélecteur présent, `m2` sans adresse ni clé, 0 donnée |
+| bascule sur `m2` | menu réduit à Machines / Clé LAN / Système, `/cle-lan` montre bien l'état de `m2` |
+| retour sur `m1` | 28 boissons, ordre de la machine, profils nommés, compteurs, session LAN |
+| `/api/status?machine=m99` | HTTP 404 `unknownMachine`, **pas** de repli silencieux sur la machine par défaut |
+| POST vers `m2` | HTTP 409 `needsMachineIp` — le refus est par machine |
+| présence sur `m1`, avec `m2` déclarée | échange de clés et datapoints routés vers `m1` par adresse source, monitor décodé |
+| suppression de la dernière machine | refusée (409 `lastMachine`) |
+
+**Ce que ça ne fait pas, et il faut le dire.** Le catalogue de boissons reste celui d'un seul modèle,
+partagé par toutes les machines. Le modèle réel de chacune est lu et comparé ; un écart est signalé
+en bandeau sur `/machines`, dans le journal et sur `/systeme` — mais pas corrigé. La raison est celle
+déjà consignée : le nombre de recettes standard entre dans le nom des propriétés de recette
+(`(profil − 1) × 21` ici), et sur un modèle à 22 recettes chaque lecture viserait la mauvaise
+propriété, qui répondrait vide, donc serait interprétée comme « absente sur ce modèle ». L'erreur
+ressemblerait à un import normal. Deux cafetières du **même** modèle n'ont, elles, rien à craindre.
+
+Les variables d'environnement ne décrivent que la première machine (`envForced(m, champ)`), puisque
+`MACHINE_IP` ne peut pas désigner deux appareils. Ne jamais tester `process.env.MACHINE_*` dans une
+fonction qui travaille sur une machine : ce serait laisser la variable revendiquer l'adresse de la
+machine numéro 2.
+
+**Reste à éprouver** : deux cafetières réellement raccordées en même temps.

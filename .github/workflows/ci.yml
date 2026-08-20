@@ -84,9 +84,63 @@ jobs:
             const info = S.storageInfo();
             if (info.journalMode !== 'wal') throw new Error('journal attendu WAL, obtenu ' + info.journalMode);
             if (info.counts.recipes !== 1) throw new Error('la migration JSON n a pas repris la recette');
-            S.putStats([{ id: 3000, value: 42 }]);
-            if (S.allStats()[3000].value !== 42) throw new Error('ecriture de statistique perdue');
+            if (info.machines !== 1) throw new Error('une machine attendue sur une base neuve, obtenu ' + info.machines);
+            const m1 = S.forMachine(S.DEFAULT_MACHINE);
+            m1.putStats([{ id: 3000, value: 42 }]);
+            if (m1.allStats()[3000].value !== 42) throw new Error('ecriture de statistique perdue');
+            // Isolation : c'est tout l'intérêt de la dimension machine, donc c'est ce qu'il faut vérifier.
+            const m2 = S.forMachine(S.createMachine({ label: 'CI' }).id);
+            if (m2.countStats() !== 0) throw new Error('la nouvelle machine hérite des donnees de la premiere');
+            m2.putStats([{ id: 3000, value: 7 }]);
+            if (m1.allStats()[3000].value !== 42) throw new Error('ecriture croisee entre machines');
+            // Suppression en cascade : aucune ligne ne doit survivre a sa machine.
+            S.deleteMachine(m2.id);
+            if (S.storageInfo().counts.stats !== 1) throw new Error('les donnees de la machine supprimee sont restees');
             console.log('stockage OK :', JSON.stringify(info.counts), info.journalMode, 'schéma v' + info.schemaVersion);
+          "
+
+      # La migration v1 → v2 est la seule opération capable de détruire les données d'un
+      # utilisateur : on la joue sur une base v1 fabriquée ici, plutôt que de la découvrir chez lui.
+      - name: Vérifier la migration de schéma v1 vers v2
+        run: |
+          mkdir -p /tmp/ci-v1
+          node --input-type=module -e "
+            import { DatabaseSync } from 'node:sqlite';
+            const db = new DatabaseSync('/tmp/ci-v1/lan-server.db');
+            db.exec('PRAGMA journal_mode = WAL');
+            db.exec('CREATE TABLE props (name TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT, data TEXT NOT NULL) STRICT');
+            db.exec('CREATE TABLE bean_systems (idx INTEGER PRIMARY KEY, at INTEGER NOT NULL, data TEXT NOT NULL) STRICT');
+            db.exec('CREATE TABLE stats (id INTEGER PRIMARY KEY, value INTEGER NOT NULL, at INTEGER NOT NULL) STRICT');
+            db.exec('CREATE TABLE recipes (id TEXT PRIMARY KEY, updatedAt INTEGER NOT NULL, data TEXT NOT NULL) STRICT');
+            db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, at INTEGER NOT NULL) STRICT');
+            db.exec(\"INSERT INTO props VALUES ('d302_monitor', 1, 'monitor', '{}')\");
+            db.exec(\"INSERT INTO stats VALUES (3000, 99, 1)\");
+            db.exec(\"INSERT INTO bean_systems VALUES (1, 1, '{}')\");
+            db.exec(\"INSERT INTO recipes VALUES ('r1', 1, '{}')\");
+            db.exec(\"INSERT INTO meta VALUES ('dsn', '{}', 1)\");
+            db.exec('PRAGMA user_version = 1');
+            db.close();
+            console.log('base v1 fabriquée');
+          "
+          DATA_DIR=/tmp/ci-v1 node --input-type=module -e "
+            const S = await import('./src/lib/store.mjs');
+            const info = S.storageInfo();
+            if (info.schemaVersion !== 2) throw new Error('schema v2 attendu, obtenu v' + info.schemaVersion);
+            if (info.machines !== 1) throw new Error('une machine attendue, obtenu ' + info.machines);
+            const st = S.forMachine(S.DEFAULT_MACHINE);
+            const c = st.counts();
+            if (c.props !== 1 || c.stats !== 1 || c.beanSystems !== 1 || c.recipes !== 1) {
+              throw new Error('donnees perdues a la migration : ' + JSON.stringify(c));
+            }
+            if (st.getMeta('dsn') === null) throw new Error('la table meta n a pas ete reprise');
+            if (!S.bootMessages.some((x) => x.includes('v1'))) throw new Error('la migration ne s est pas annoncee');
+            console.log('migration v1 → v2 OK :', JSON.stringify(c));
+          "
+          # Deuxième démarrage : la migration ne doit pas rejouer.
+          DATA_DIR=/tmp/ci-v1 node --input-type=module -e "
+            const S = await import('./src/lib/store.mjs');
+            if (S.bootMessages.length) throw new Error('la migration a rejoue : ' + S.bootMessages.join(' | '));
+            console.log('deuxieme demarrage : aucune remigration');
           "
 
   docker:

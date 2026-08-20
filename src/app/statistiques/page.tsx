@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import { mfetch } from "../machine";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -57,7 +58,7 @@ export default function Statistiques() {
 
   const load = useCallback(async () => {
     try {
-      setD(await fetch("/api/stats").then((r) => r.json()));
+      setD(await mfetch("/api/stats").then((r) => r.json()));
     } catch {
       /* la page reste lisible avec ce qu'elle a déjà */
     }
@@ -85,7 +86,7 @@ export default function Statistiques() {
     setMsg(t("reading", { what: label }));
     try {
       for (const [from, qty] of ranges) {
-        const r = await fetch("/api/stats", {
+        const r = await mfetch("/api/stats", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ from, qty }),
@@ -97,7 +98,7 @@ export default function Statistiques() {
         // Attente bornée : la machine répond en 2-3 s, le programme dure 9 s.
         for (let i = 0; i < 20; i++) {
           await new Promise((res) => setTimeout(res, 1500));
-          const s = await fetch("/api/stats").then((x) => x.json());
+          const s = await mfetch("/api/stats").then((x) => x.json());
           setD(s);
           if (!s.scan) break;
         }
