@@ -232,16 +232,100 @@ stockage (moteur, version de schéma, mode de journal, nombre de lignes, taille 
 
 ## 7. Compose
 
-`docker-compose.yml` est fourni. Ajuster l'image, puis :
+L'image est **construite et publiée par GitHub Actions** : il n'y a rien à compiler pour l'utiliser.
 
-```bash
-docker compose up -d          # démarrer
-docker compose logs -f        # suivre
-docker compose pull && docker compose up -d   # mettre à jour
-docker compose build          # construire localement au lieu de tirer l'image
+| Étiquette | Contenu |
+|---|---|
+| `:edge` | suit la branche principale — republiée à chaque poussée dont la CI passe, test de démarrage du conteneur inclus |
+| `:latest` | dernière version étiquetée `v*` |
+| `:0.1.0`, `:0.1`, `:0` | une version précise — **à préférer en production** |
+| architectures | `linux/amd64` et `linux/arm64` (les images de release ; `:edge` suit celle du runner) |
+
+### Exemple complet
+
+Deux fichiers à côté l'un de l'autre : `compose.yaml` et `.env.local`.
+
+```yaml
+# compose.yaml
+services:
+  lan-server:
+    image: ghcr.io/jmorille/delonghi-coffeelink-local:edge
+    container_name: delonghi-lan-server
+    restart: unless-stopped
+
+    # Les secrets restent dans .env.local, jamais dans ce fichier ni dans l'image.
+    env_file:
+      - .env.local
+    environment:
+      DATA_DIR: /data
+      TZ: Europe/Paris
+
+    # ⚠️ Le même numéro des deux côtés : nous annonçons SERVER_PORT à la machine (§ 1).
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - lan-server-data:/data
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
+volumes:
+  lan-server-data:
 ```
 
-Il lit `.env.local` par `env_file`, ce qui évite de recopier les secrets dans le fichier Compose.
+```bash
+# .env.local — le strict minimum
+SERVER_IP=192.168.x.x        # adresse de l'hôte, joignable depuis le réseau de la cafetière
+SERVER_PORT=3000
+MACHINE_GENERATION=classic
+# MACHINE_IP et LANIP_KEY sont facultatifs : ils se saisissent dans l'interface,
+# page « Clé LAN », et sont mémorisés dans le volume.
+```
+
+```bash
+docker compose up -d                           # démarrer
+docker compose logs -f                         # suivre le journal
+docker compose pull && docker compose up -d    # mettre à jour
+docker compose down                            # arrêter (le volume survit)
+```
+
+Puis ouvrir `http://<hôte>:3000/`, page « Clé LAN », et renseigner l'adresse de la machine puis la
+clé. Rien d'autre n'est nécessaire.
+
+### Variante réseau de l'hôte (Linux)
+
+Évite tout NAT, mais incompatible avec `ports:` et indisponible sur Docker Desktop :
+
+```yaml
+services:
+  lan-server:
+    image: ghcr.io/jmorille/delonghi-coffeelink-local:edge
+    network_mode: host
+    env_file: [.env.local]
+    volumes:
+      - lan-server-data:/data
+```
+
+`SERVER_IP` reste à renseigner : c'est l'adresse que nous **annonçons**, pas celle d'écoute — le
+serveur écoute toujours sur `0.0.0.0`.
+
+### Construire localement plutôt que tirer l'image
+
+```bash
+docker compose build      # nécessite le dépôt cloné, et `build: .` décommenté dans le compose
+```
+
+Le `docker-compose.yml` du dépôt est déjà configuré ainsi, l'image GHCR par défaut et la ligne
+`build: .` en commentaire.
 
 ---
 

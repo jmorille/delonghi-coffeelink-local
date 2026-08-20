@@ -9,9 +9,13 @@
 
 services:
   lan-server:
-    # Image publiée par le workflow de release. Pour construire localement : `docker compose build`.
-    image: ghcr.io/OWNER/REPO:latest
-    build: .
+    # Image construite et publiée par GitHub Actions.
+    #   :edge    suit la branche principale, publiée à chaque poussée dont la CI passe ;
+    #   :latest  dernière version étiquetée `v*` (n'existe qu'après la première release) ;
+    #   :0.1.0   une version précise, à préférer en production.
+    image: ghcr.io/jmorille/delonghi-coffeelink-local:edge
+    # Pour construire localement au lieu de tirer l'image, décommentez :
+    # build: .
     container_name: delonghi-lan-server
     restart: unless-stopped
 

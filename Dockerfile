@@ -13,7 +13,10 @@
 # les devDependencies.
 FROM node:26-alpine AS deps
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
+# Node ne livre plus corepack depuis la version 25 — `corepack: not found`, exit 127. On
+# installe donc pnpm par npm, qui est present dans l'image officielle. Version figee, la
+# meme que `packageManager` dans package.json.
+RUN npm install -g pnpm@11.22.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -28,7 +31,10 @@ RUN pnpm build
 # ------------------------------------------------------------------ dépendances de production
 FROM node:26-alpine AS prod-deps
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
+# Node ne livre plus corepack depuis la version 25 — `corepack: not found`, exit 127. On
+# installe donc pnpm par npm, qui est present dans l'image officielle. Version figee, la
+# meme que `packageManager` dans package.json.
+RUN npm install -g pnpm@11.22.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod

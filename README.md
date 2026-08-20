@@ -59,7 +59,16 @@ cp .env.local.example .env.local     # puis renseignez SERVER_IP
 pnpm dev                             # http://localhost:3000
 ```
 
-En production : `pnpm build && pnpm start`. En conteneur : voir **[DOCKER.md](DOCKER.md)**.
+En production : `pnpm build && pnpm start`.
+
+En conteneur, l'image est publiée par GitHub Actions — rien à compiler :
+
+```bash
+docker run -d --name delonghi-lan-server -p 3000:3000 -v lan-server-data:/data \
+  -e SERVER_IP=<adresse de l hote> ghcr.io/jmorille/delonghi-coffeelink-local:edge
+```
+
+Exemple `compose.yaml` complet et toutes les options : **[DOCKER.md](DOCKER.md)**.
 
 Deux réglages sont nécessaires avant de pouvoir piloter quoi que ce soit, et **tous deux se
 saisissent dans l'interface**, page « Clé LAN » :
