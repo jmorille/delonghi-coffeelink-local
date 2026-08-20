@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import { attendreLibre, useMachinePush } from "../events";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -68,14 +69,20 @@ export default function Statistiques() {
     load();
   }, [load]);
 
-  // Pendant un balayage les valeurs arrivent trame par trame : on suit. Dépendance sur un
-  // booléen, pas sur l'objet `scan`, qui est recréé à chaque réponse JSON.
+  /**
+   * Les valeurs arrivent trame par trame, et le serveur nous le dit : chaque réponse `0xA2` passe
+   * par `putStats`, qui horodate `importedAt`. Plus de minuteur.
+   */
+  const { live, busy: pending, busyRef } = useMachinePush(load);
+
+  // Repli : si le flux n'a pas pu s'établir, on retombe sur une scrutation, et seulement pendant
+  // qu'un balayage tourne.
   const scanning = !!d?.scan;
   useEffect(() => {
-    if (!scanning) return;
+    if (live || !scanning) return;
     const id = setInterval(load, 3000);
     return () => clearInterval(id);
-  }, [scanning, load]);
+  }, [live, scanning, load]);
 
   /**
    * Enchaîne les plages côté client : le serveur refuse une seconde lecture tant que la
@@ -95,12 +102,19 @@ export default function Statistiques() {
           setMsg(tc("error", { message: r.error }));
           return;
         }
-        // Attente bornée : la machine répond en 2-3 s, le programme dure 9 s.
-        for (let i = 0; i < 20; i++) {
-          await new Promise((res) => setTimeout(res, 1500));
-          const s = await mfetch("/api/stats").then((x) => x.json());
-          setD(s);
-          if (!s.scan) break;
+        // Le serveur refuse une seconde lecture tant que la précédente tourne (409) : on attend
+        // donc qu'il soit libre. `attendreLibre` scrute l'état POUSSÉ, en mémoire — aucune requête
+        // ne part, là où cette boucle interrogeait /api/stats toutes les 1,5 s, vingt fois par
+        // plage. Le repli garde l'ancienne attente quand le flux est indisponible.
+        if (live) {
+          await attendreLibre(busyRef);
+        } else {
+          for (let i = 0; i < 20; i++) {
+            await new Promise((res) => setTimeout(res, 1500));
+            const s = await mfetch("/api/stats").then((x) => x.json());
+            setD(s);
+            if (!s.scan) break;
+          }
         }
       }
       setMsg(t("readDone"));
@@ -148,6 +162,11 @@ export default function Statistiques() {
     <>
       <h1>{t("heading")}</h1>
       <p className="sub">{t("intro")}</p>
+
+      {/* Ce que le flux dit de l'activité de la machine. Sans ça, une lecture demandée n'a aucune
+          trace à l'écran entre le clic et l'arrivée des valeurs. */}
+      {pending && <p className="sub">{t("pushWaiting")}</p>}
+      {!live && <p className="sub">{t("pushOff")}</p>}
 
       <div className="card warn" style={{ marginBottom: 16 }}>
         <strong>⚠ {t("categoryWarningTitle")}</strong>

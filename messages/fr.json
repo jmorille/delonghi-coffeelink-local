@@ -10,7 +10,7 @@
     "dashboard": "Pilotage",
     "recipes": "Recettes",
     "system": "Système",
-    "beanAdapt": "Bean Adapt",
+    "beans": "Grains",
     "stats": "Statistiques",
     "machines": "Machines"
   },
@@ -183,7 +183,9 @@
     "customSlot": "Perso {n}",
     "unnamed": "non nommée",
     "customsNote": "Un nom par défaut (« Perso 2 ») ne veut pas dire que la recette est configurée : la machine nomme tous les emplacements d'office. Pour savoir lesquels contiennent vraiment quelque chose, regarder leurs bornes sur la page Boissons — un emplacement vierge y a des défauts non définis.",
-    "iconColumn": "Icône"
+    "iconColumn": "Icône",
+    "pushWaiting": "lecture en cours sur la machine — la page se met à jour d'elle-même",
+    "pushOff": "flux temps réel indisponible : repli sur une interrogation périodique"
   },
   "recipes": {
     "heading": "Recettes",
@@ -534,7 +536,9 @@
     "raw": "brut {value}",
     "rawHint": "Valeur telle que la machine la renvoie, avant conversion d'unité.",
     "hotMilkSum": "L'application additionne 3001 et 3003 pour son total « avec lait chaud » : {total}.",
-    "protocolNote": "{count} paramètre(s) en cache. Requête 0D 08 A2 0F [id sur 16 bits] [nombre] [crc] ; la réponse porte jusqu'à 10 entrées de 6 octets (id 16 bits, valeur 32 bits, big-endian)."
+    "protocolNote": "{count} paramètre(s) en cache. Requête 0D 08 A2 0F [id sur 16 bits] [nombre] [crc] ; la réponse porte jusqu'à 10 entrées de 6 octets (id 16 bits, valeur 32 bits, big-endian).",
+    "pushWaiting": "lecture en cours sur la machine — les valeurs arrivent d'elles-mêmes",
+    "pushOff": "flux temps réel indisponible : repli sur une interrogation périodique"
   },
   "lankey": {
     "heading": "Clé LAN",

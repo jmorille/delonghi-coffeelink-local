@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MachineSummary, currentMachine } from "./machine";
 
 /**
@@ -72,3 +72,63 @@ export function pickPushed(p: PushState): MachineSummary | null {
  * C'est ce qui justifie d'attendre une nouvelle donnée plutôt que de conclure.
  */
 export const isBusy = (m: MachineSummary | null) => !!m && (!!m.reading || !!m.running);
+
+/**
+ * État poussé de la machine courante, prêt à l'emploi — **la règle « quand relire », en un endroit**.
+ *
+ * Trois pages en avaient besoin (`/beans`, `/profils`, `/statistiques`) et chacune l'écrivait à sa
+ * façon, avec son propre minuteur. La règle est la même partout, et elle tient en deux signaux :
+ *
+ * - `importedAt` a bougé → la machine a écrit une donnée. Toute écriture de donnée lue passe par
+ *   `putProp` / `putStats` / `putBeanSystem`, qui l'horodatent : c'est le signal exact ;
+ * - une lecture ou un programme vient de **se terminer** → le moment de relire, même si rien n'a
+ *   été écrit (machine muette, fenêtre expirée).
+ *
+ * Rend aussi `busyRef` : une référence, pas un état, pour qu'un enchaînement `await` puisse attendre
+ * que la machine soit libre **sans** relancer de requête. C'est ce qui remplace les boucles qui
+ * interrogeaient `/api/…` toutes les 1,5 s pour savoir si elles pouvaient continuer.
+ */
+export function useMachinePush(onChange: () => void): {
+  live: boolean;
+  busy: boolean;
+  busyRef: React.RefObject<boolean>;
+} {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const marqueur = useRef<{ importedAt: number | null; busy: boolean } | null>(null);
+  const cb = useRef(onChange);
+  cb.current = onChange;
+
+  const { live } = useMachineEvents(
+    useCallback((p: PushState) => {
+      const mine = pickPushed(p);
+      const occupe = isBusy(mine);
+      const importedAt = mine?.importedAt ?? null;
+      const avant = marqueur.current;
+      marqueur.current = { importedAt, busy: occupe };
+      busyRef.current = occupe;
+      setBusy(occupe);
+      // Le premier état poussé n'est pas un changement : la page vient de charger ses données.
+      if (!avant) return;
+      if (importedAt !== avant.importedAt || (avant.busy && !occupe)) cb.current();
+    }, []),
+  );
+
+  return { live, busy, busyRef };
+}
+
+/**
+ * Attend que la machine soit libre, d'après l'état poussé. Purement local : on scrute une
+ * référence en mémoire, aucune requête ne part.
+ *
+ * Rend `false` si le délai expire — un enchaînement doit pouvoir renoncer plutôt que de tourner
+ * indéfiniment sur une machine qui ne répond pas.
+ */
+export async function attendreLibre(busyRef: React.RefObject<boolean>, timeoutMs = 30000): Promise<boolean> {
+  const fin = Date.now() + timeoutMs;
+  while (Date.now() < fin) {
+    if (!busyRef.current) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}

@@ -1820,3 +1820,35 @@ n'apprendrait jamais que la bibliothèque a changé.
 
 `alignItems: start` sur les grilles : sans lui une carte courte s'étirait à la hauteur de la plus
 grande de sa ligne, ce qui laissait des blancs et faisait croire à une donnée manquante.
+
+### Le flux poussé sur /profils et /statistiques, et une règle unique (2026-08-20)
+
+Les deux dernières pages qui attendaient avec un minuteur y passent : `setInterval(refresh, 2000)`
+pendant un import de profils, `setInterval(load, 3000)` pendant un balayage de statistiques.
+
+Comme quatre pages partagent désormais la même question — « quand relire ? » — la règle est remontée
+dans un seul crochet, `useMachinePush(onChange)` : il tient le marqueur, expose `live` / `busy` /
+`busyRef`, et déclenche le rappel sur les deux signaux qui veulent dire « il y a du neuf » —
+`importedAt` qui bouge, ou une lecture qui vient de se terminer. `/beans` y est repassée aussi : elle
+portait la première version de cette logique, écrite à la main.
+
+**Une boucle de scrutation réseau en moins, et pas la moindre.** L'enchaînement des plages de
+statistiques interrogeait `/api/stats` toutes les 1,5 s, jusqu'à vingt fois **par plage**, dans le
+seul but de savoir si le serveur était libre (il refuse une seconde lecture en 409). Il attend
+maintenant `attendreLibre(busyRef)`, qui scrute une **référence en mémoire** : aucune requête ne part.
+
+Le libellé du menu passe de « Bean Adapt » à **« Grains »**, et la clé de message suit la route
+(`nav.beans`). « Bean Adapt » reste le titre de la page : c'est le nom De'Longhi de la fonction
+d'ajustement, pas celui de la liste des grains.
+
+| Vérifié dans le navigateur, sur l'application complète | Résultat |
+|---|---|
+| `/statistiques` : lecture demandée | badge « lecture en cours » affiché |
+| `/statistiques` : fin de la fenêtre | relecture de `/api/stats` déclenchée (1 → 2 requêtes), badge retiré |
+| `/profils` : lecture demandée | badge affiché |
+| `/profils` : fin de la fenêtre | relecture de `/api/profiles` déclenchée (1 → 2), badge retiré |
+| console | aucune erreur, aucun avertissement |
+| menu | Boissons · Grains · Profils · Pilotage · Recettes · Statistiques · Machines · Système |
+
+Chaque page garde son repli : flux indisponible → scrutation, seulement pendant qu'une lecture
+tourne, et une ligne le dit.

@@ -1,8 +1,8 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
-import { isBusy, pickPushed, useMachineEvents } from "../events";
+import { useMachinePush } from "../events";
 
 interface Bean {
   index: number;
@@ -95,38 +95,8 @@ export default function Beans() {
     refresh();
   }, [refresh]);
 
-  /**
-   * Ce que le flux nous apprend, et ce qu'on en fait.
-   *
-   * Deux signaux, et deux seulement :
-   *
-   * - `importedAt` a bougé → la machine a écrit une donnée. Un grain lu par `0xBA` passe par
-   *   `putBeanSystem`, qui l'horodate : c'est donc le signal exact d'une nouvelle valeur à lire ;
-   * - une lecture ou un programme vient de **se terminer** → un balayage enchaîne un programme par
-   *   grain, et sa fin est le moment de relire, même si rien n'a été écrit (machine muette).
-   *
-   * Le reste des poussées ne déclenche rien : elles décrivent des changements qui ne concernent pas
-   * cette page.
-   */
-  const [live, setLive] = useState(true);
-  const [pending, setPending] = useState(false);
-  const marqueur = useRef<{ importedAt: number | null; busy: boolean } | null>(null);
-  const flux = useMachineEvents(
-    useCallback(
-      (p) => {
-        const mine = pickPushed(p);
-        const busy = isBusy(mine);
-        const importedAt = mine?.importedAt ?? null;
-        const avant = marqueur.current;
-        marqueur.current = { importedAt, busy };
-        setPending(busy);
-        if (!avant) return;
-        if (importedAt !== avant.importedAt || (avant.busy && !busy)) refresh();
-      },
-      [refresh],
-    ),
-  );
-  useEffect(() => setLive(flux.live), [flux.live]);
+  // La règle « quand relire » vit dans `useMachinePush` : trois pages la partagent.
+  const { live, busy: pending } = useMachinePush(refresh);
 
   // Repli : si le flux n'a pas pu s'établir, on retombe sur une scrutation — mais seulement
   // pendant qu'un balayage tourne, et en le disant.

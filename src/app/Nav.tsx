@@ -26,7 +26,7 @@ import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./mach
  */
 const ENTRIES = [
   { href: "/", key: "beverages", needsMachine: true },
-  { href: "/beans", key: "beanAdapt", needsMachine: true },
+  { href: "/beans", key: "beans", needsMachine: true },
   { href: "/profils", key: "profiles", needsMachine: true },
   { href: "/pilotage", key: "dashboard", needsMachine: true },
   { href: "/recipes", key: "recipes", needsMachine: true },

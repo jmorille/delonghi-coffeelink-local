@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import { useMachinePush } from "../events";
 
 interface OrderEntry {
   id: number;
@@ -62,12 +63,24 @@ export default function Profils() {
     refresh();
   }, [refresh]);
 
-  // La machine répond au fil de ses connexions : on suit pendant l'import.
+  /**
+   * La machine répond au fil de ses connexions : on est **prévenu** plutôt que de demander.
+   *
+   * Un import de profils lit des propriétés de noms et de priorités ; chaque valeur reçue passe par
+   * `putProp`, qui horodate `importedAt`. C'est donc le signal exact d'une réponse arrivée, là où le
+   * `setInterval(refresh, 2000)` d'avant re-téléchargeait la page entière deux fois par seconde de
+   * trop, et se trompait de toute façon sur le moment.
+   */
+  const { live, busy: pending } = useMachinePush(refresh);
+
+  // Repli : si le flux n'a pas pu s'établir, on retombe sur une scrutation, et seulement pendant
+  // qu'un import tourne.
+  const importing = !!data?.import?.active;
   useEffect(() => {
-    if (!data?.import?.active) return;
+    if (live || !importing) return;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [data?.import?.active, refresh]);
+  }, [live, importing, refresh]);
 
   const startImport = async () => {
     setBusy(true);
@@ -108,6 +121,11 @@ export default function Profils() {
     <>
       <h1>{t("heading")}</h1>
       <p className="sub">{t("intro", { count: data?.model.nProfiles ?? 5, customs: data?.model.nCustomRecipes ?? 6 })}</p>
+
+      {/* Ce que le flux dit de l'activité de la machine. Sans ça, une lecture demandée n'a aucune
+          trace à l'écran entre le clic et l'arrivée des valeurs. */}
+      {pending && <p className="sub">{t("pushWaiting")}</p>}
+      {!live && <p className="sub">{t("pushOff")}</p>}
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>{t("importHeading")}</h2>
