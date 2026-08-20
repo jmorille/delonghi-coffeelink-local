@@ -10,6 +10,10 @@
  * Lancer : npm run build && node server.mjs   (ou npm start)
  */
 import { createServer, request as httpRequest } from "node:http";
+// Résolution explicite du nom de la machine : voir `machineTarget()` — le module refuse un
+// en-tête `Host` qui ne soit pas son adresse IP.
+import { lookup as dnsLookup } from "node:dns/promises";
+import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
@@ -50,7 +54,10 @@ const CFG = {
   lanKey: Buffer.from(process.env.LANIP_KEY ?? "", "utf8"),
   lanKeyId: Number(process.env.LANIP_KEY_ID ?? "0"),
   lanKeySource: process.env.LANIP_KEY ? "LANIP_KEY (.env.local)" : "inconnue",
-  serverIp: process.env.SERVER_IP ?? "127.0.0.1",
+  // Volontairement laissée telle quelle si absente : `serverIpProblem()` la juge, et le
+  // démarrage le dit fort. Voir le commentaire de cette fonction.
+  serverIp: process.env.SERVER_IP || null,
+  serverIpSource: process.env.SERVER_IP ? "SERVER_IP (.env.local)" : "non définie",
   port: Number(process.env.SERVER_PORT ?? "3000"),
   gen: process.env.MACHINE_GENERATION ?? "classic",
 };
@@ -416,16 +423,28 @@ function nextImportData() {
 }
 
 // --- local_reg (node:http, Content-Length explicite) ---
-function postLocalReg() {
-  if (!CFG.machineIp) {
+async function postLocalReg() {
+  const t = await machineTarget();
+  if (!t) {
     L("out", "local_reg impossible : adresse de la machine non configurée (page « Clé LAN »)");
-    return Promise.resolve({ ok: false, error: "machineIp" });
+    return { ok: false, error: "machineIp" };
+  }
+  if (!t.ip) {
+    L("out", `local_reg impossible : ${t.error}`);
+    return { ok: false, error: "dns" };
+  }
+  const probleme = serverIpProblem();
+  if (probleme) {
+    // On n'envoie pas : la machine accepterait (202) une adresse à laquelle elle ne peut pas
+    // revenir, et le serveur croirait s'être annoncé.
+    L("out", `local_reg impossible : ${probleme} — c'est l'adresse que la machine utilisera pour nous joindre`);
+    return { ok: false, error: "serverIp" };
   }
   const notify = S.program?.active || S.import?.active ? 1 : 0;
   const b = Buffer.from(JSON.stringify({ local_reg: { ip: CFG.serverIp, port: CFG.port, uri: "/local_lan", notify } }), "utf8");
   return new Promise((resolve) => {
     const r = httpRequest(
-      { host: CFG.machineIp, port: 80, path: "/local_reg.json", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": b.length, Connection: "close" } },
+      { host: t.ip, port: 80, path: "/local_reg.json", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": b.length, Host: t.ip, Connection: "close" } },
       (res) => { res.on("data", () => {}); res.on("end", () => { S.lastRegisterAt = Date.now(); resolve({ ok: res.statusCode < 300, status: res.statusCode }); }); },
     );
     r.on("error", (e) => { L("out", `local_reg erreur: ${e.message}`); resolve({ ok: false }); });
@@ -812,26 +831,104 @@ function applyChecksumMark(im) {
   L("sys", `somme des noms mémorisée (0x${Number(mark.names).toString(16)}) : inutile de les relire tant qu'elle ne bouge pas`);
 }
 
+/**
+ * Résout l'adresse configurée en IPv4, et dit quel `Host` envoyer.
+ *
+ * ⚠️ **Le serveur HTTP du module refuse tout `Host` qui n'est pas sa propre adresse IP** : il
+ * répond une page 404 à `GET /regtoken.json` si l'en-tête porte un nom d'hôte. Mesuré côte à
+ * côte, même destination, seul l'en-tête changeant :
+ *
+ *     192.168.x.x + `Host: cafe`          → 404
+ *     cafe        + `Host: 192.168.x.x`   → 200
+ *
+ * Un nom d'hôte est donc bien utilisable — c'est même préférable, il survit à un changement de
+ * bail DHCP — mais **à condition de le résoudre nous-mêmes** et de mettre l'IP dans `Host`. Sans
+ * ça, saisir un nom faisait échouer toutes les requêtes vers la machine avec un 404 qui ressemble
+ * à « ce n'est pas la cafetière » : c'est exactement le diagnostic erroné que ça a produit.
+ *
+ * Le cache évite une résolution par `local_reg`, c'est-à-dire toutes les 2,5 s pendant un
+ * programme ; 60 s laisse un changement de bail se propager rapidement.
+ */
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+let dnsCache = null; // { configured, ip, error, at }
+async function machineTarget() {
+  const configured = CFG.machineIp;
+  if (!configured) return null;
+  if (IPV4.test(configured)) return { configured, ip: configured };
+  if (dnsCache?.configured === configured && Date.now() - dnsCache.at < 60000) return dnsCache;
+  try {
+    const { address } = await dnsLookup(configured, { family: 4 });
+    if (dnsCache?.ip !== address) L("sys", `« ${configured} » résolu en ${address}`);
+    dnsCache = { configured, ip: address, at: Date.now() };
+  } catch (e) {
+    dnsCache = {
+      configured,
+      ip: null,
+      // Le message nomme la cause la plus fréquente : en conteneur, un nom court ne bénéficie pas
+      // du domaine de recherche DNS de l'hôte.
+      error: `nom d'hôte « ${configured} » non résolu (${e.code ?? e.message}) — en conteneur, un nom court n'hérite pas du domaine de recherche DNS de l'hôte : utiliser le nom complet, l'adresse IP, ou dns_search / extra_hosts (voir DOCKER.md)`,
+      at: Date.now(),
+    };
+  }
+  return dnsCache;
+}
+
+/**
+ * `SERVER_IP` est l'adresse que nous **annonçons** à la machine dans `local_reg` — c'est elle qui
+ * viendra nous chercher. Une adresse de boucle locale y est toujours fausse : la machine se
+ * connecterait à elle-même. Et le symptôme est trompeur, parce que rien n'échoue visiblement :
+ * `local_reg` répond 202, la file de commandes se remplit, l'interface dit « envoyé », et la
+ * session reste « en attente » indéfiniment.
+ *
+ * Même faute que le `MACHINE_IP` écrit en dur qu'on a retiré : une valeur par défaut qui fait
+ * passer un serveur non configuré pour configuré.
+ */
+const LOOPBACK = /^(127\.|0\.0\.0\.0$|::1$|localhost$)/i;
+function serverIpProblem() {
+  if (!CFG.serverIp) return "SERVER_IP n'est pas définie";
+  if (LOOPBACK.test(CFG.serverIp)) return `SERVER_IP vaut ${CFG.serverIp}, une adresse de boucle locale`;
+  return null;
+}
+
+/**
+ * Adresses IPv4 non locales vues d'ici, pour que le message dise quoi mettre.
+ *
+ * ⚠️ Dans un conteneur en réseau bridge, ce sont les adresses du CONTENEUR (172.17.x.x) : la
+ * machine ne les atteint pas. C'est l'adresse de l'HÔTE qu'il faut annoncer. Le message le dit,
+ * plutôt que de laisser croire qu'il suffit de recopier la première ligne.
+ */
+function candidateServerIps() {
+  const out = [];
+  for (const [name, addrs] of Object.entries(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) out.push(`${a.address} (${name})`);
+    }
+  }
+  return out;
+}
+
 /** GET http://<machine>/regtoken.json — le seul endpoint que le module expose hors mode AP. */
-function probeRegtoken() {
+async function probeRegtoken() {
   // Sans adresse, il n'y a personne à interroger : on répond « injoignable » plutôt que de
   // laisser node:http composer un hôte nul.
-  if (!CFG.machineIp) return Promise.resolve({ reachable: false, error: "adresse de la machine non configurée", at: Date.now() });
+  const t = await machineTarget();
+  if (!t) return { reachable: false, error: "adresse de la machine non configurée", at: Date.now() };
   // `host` est renvoyé avec le résultat : l'adresse peut changer pendant que la requête est en
   // vol, et le résultat doit rester attribuable à l'adresse réellement interrogée.
-  const host = CFG.machineIp;
+  const host = t.configured;
+  if (!t.ip) return { host, reachable: false, error: t.error, at: Date.now() };
   return new Promise((resolve) => {
-    const r = httpRequest({ host, port: 80, path: "/regtoken.json", method: "GET" }, (res) => {
+    const r = httpRequest({ host: t.ip, port: 80, path: "/regtoken.json", method: "GET", headers: { Host: t.ip } }, (res) => {
       const c = [];
       res.on("data", (d) => c.push(d));
       res.on("end", () => {
         const body = Buffer.concat(c).toString("utf8");
         let parsed = null;
         try { parsed = JSON.parse(body); } catch {}
-        resolve({ host, reachable: true, status: res.statusCode, regtoken: parsed, at: Date.now() });
+        resolve({ host, ip: t.ip, reachable: true, status: res.statusCode, regtoken: parsed, at: Date.now() });
       });
     });
-    r.on("error", (e) => resolve({ host, reachable: false, error: e.message, at: Date.now() }));
+    r.on("error", (e) => resolve({ host, ip: t.ip, reachable: false, error: e.message, at: Date.now() }));
     r.setTimeout(4000, () => r.destroy(new Error("timeout")));
     r.end();
   });
@@ -1001,6 +1098,7 @@ function applyLanKey({ key, keyId }, source) {
  * au lieu de la laisser passer.
  */
 let dernierEssaiDsn = 0;
+let dernierMessageDsn = null; // dernier verdict journalisé, pour ne pas le répéter à l'identique
 async function resolveDsn({ compare = false } = {}) {
   if (CFG.dsn && !compare) return CFG.dsn;
   // Sans cela, la resolution paresseuse en tete de handleApi lance une sonde de 4 s a CHAQUE
@@ -1024,17 +1122,24 @@ async function resolveDsn({ compare = false } = {}) {
   if (typeof found !== "string" || !/^[A-Za-z0-9-]{6,}$/.test(found)) {
     // « Joignable » ne veut pas dire « c'est la machine » : n'importe quel serveur HTTP à cette
     // adresse répond quelque chose. Distinguer les deux cas est ce qui rend le diagnostic possible.
+    // Ne pas répéter le même verdict toutes les 30 s : sur un serveur mal configuré, ce message
+    // remplissait le journal du conteneur indéfiniment. On le redit quand la RAISON change.
     if (!CFG.dsn) {
-      L("sys", r?.reachable
+      const msg = r?.reachable
         ? `DSN inconnu : ${r.host} a répondu HTTP ${r.status} à /regtoken.json, mais sans host_symname — ce n'est probablement pas la cafetière`
-        : `DSN inconnu : aucune réponse de ${r?.host ?? "(adresse non configurée)"} (${r?.error ?? "pas de détail"}), et MACHINE_DSN n'est pas défini`);
+        : `DSN inconnu : aucune réponse de ${r?.host ?? "(adresse non configurée)"} (${r?.error ?? "pas de détail"}), et MACHINE_DSN n'est pas défini`;
+      if (msg !== dernierMessageDsn) {
+        dernierMessageDsn = msg;
+        L("sys", msg);
+      }
     }
     return CFG.dsn;
   }
   if (CFG.dsn && CFG.dsn !== found) {
     L("sys", `⚠ DSN divergent : ${CFG.dsnSource} donne ${CFG.dsn}, la machine annonce ${found}. Le réglage explicite reste prioritaire — retirer MACHINE_DSN de .env.local pour suivre la machine.`);
   } else if (!CFG.dsn) {
-    CFG.dsn = found;
+    dernierMessageDsn = null;
+  CFG.dsn = found;
     CFG.dsnSource = "machine (regtoken.json)";
     L("sys", `DSN découvert sur la machine : ${found}`);
   }
@@ -1044,8 +1149,9 @@ async function resolveDsn({ compare = false } = {}) {
 }
 
 /**
- * Adresse de la machine : nom d'hôte ou IPv4. On accepte les deux — le champ `host` de `node:http`
- * ne fait pas la différence, et un nom d'hôte protège d'un changement de bail DHCP.
+ * Adresse de la machine : nom d'hôte ou IPv4. On accepte les deux, et un nom d'hôte protège d'un
+ * changement de bail DHCP — mais il est **résolu par nous** avant chaque requête, parce que le
+ * module refuse un en-tête `Host` qui ne soit pas son IP. Voir `machineTarget()`.
  */
 const MACHINE_HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 function validMachineHost(v) {
@@ -1078,6 +1184,7 @@ function applyMachineIp(ip) {
   // l'effacer là faisait perdre un DSN parfaitement valide juste après un oubli d'adresse, laissant
   // la récupération de clé sans rien à quoi se raccrocher.
   const remplace = changed && CFG.machineIp !== null;
+  if (changed) dnsCache = null; // sinon un nom réutilisé garderait l'IP de l'ancien appareil
   CFG.machineIp = value;
   CFG.machineIpSource = "saisie dans l'interface";
   setMeta("machineIp", { value, at: Date.now() });
@@ -1311,10 +1418,20 @@ async function handleApi(req, res) {
         needsLanKey: true,
       }), 409);
     }
+    // Troisième prérequis, aussi décisif que les deux autres et bien plus discret : l'adresse que
+    // nous annonçons. En boucle locale, la machine ne peut pas revenir vers nous — la commande
+    // serait acceptée puis perdue, ce que ce refus existe précisément pour empêcher.
+    const problemeIp = serverIpProblem();
+    if (problemeIp) {
+      return raw(res, JSON.stringify({
+        error: `${problemeIp} : c'est l'adresse que nous annonçons à la machine pour qu'elle nous rappelle. En mode LAN, c'est ELLE qui se connecte à nous — avec cette valeur, la commande serait acceptée puis perdue. Renseigner SERVER_IP avec une adresse joignable depuis le réseau de la machine (voir DOCKER.md § 1).`,
+        needsServerIp: true,
+      }), 409);
+    }
   }
   if (url === "/api/status") {
     return raw(res, JSON.stringify({
-      config: { dsn: CFG.dsn, dsnSource: CFG.dsnSource, machineIp: CFG.machineIp, machineIpSource: CFG.machineIpSource, serverIp: CFG.serverIp, serverPort: CFG.port, generation: CFG.gen, lanKeyId: CFG.lanKeyId, lanKeySet: CFG.lanKey.length > 0, lanKeySource: CFG.lanKeySource },
+      config: { dsn: CFG.dsn, dsnSource: CFG.dsnSource, machineIp: CFG.machineIp, machineIpSource: CFG.machineIpSource, serverIp: CFG.serverIp, serverIpSource: CFG.serverIpSource, serverIpProblem: serverIpProblem(), serverPort: CFG.port, generation: CFG.gen, lanKeyId: CFG.lanKeyId, lanKeySet: CFG.lanKey.length > 0, lanKeySource: CFG.lanKeySource },
       // Volontairement léger : /api/status est interrogé toutes les 3 s. La fiche complète du
       // modèle est sur /api/model.
       model: { key: CFG.modelKey, source: CFG.modelSource, matchesCatalog: CFG.modelKey ? CFG.modelKey === MODEL.productCode.slice(-5) : null },
@@ -1917,8 +2034,9 @@ async function handleApi(req, res) {
     const probe = await probeRegtoken();
     const dsn = probe.reachable ? await resolveDsn({ compare: true }) : CFG.dsn;
     // Trois verdicts, pas deux : injoignable / quelque chose répond mais ce n'est pas la cafetière /
-    // c'est bien elle. Le cas du milieu est le plus trompeur — une adresse ou un nom d'hôte qui
-    // désigne un autre serveur répond très bien, en 404.
+    // c'est bien elle. Le cas du milieu reste possible (un autre serveur à cette adresse), mais il
+    // ne faut PLUS l'imputer à un nom d'hôte : depuis `machineTarget()`, un nom qui désigne bien la
+    // machine fonctionne. C'est le 404 provoqué par un `Host` non-IP qui faisait croire le contraire.
     const isMachine = probe.reachable && typeof probe.regtoken?.host_symname === "string";
     return raw(res, JSON.stringify({
       ok: true,
@@ -1992,6 +2110,11 @@ createServer((req, res) => {
   restoreLanKey();
   if (!CFG.machineIp) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Clé LAN », ou par MACHINE_IP dans .env.local");
   if (!CFG.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Clé LAN » (compte De'Longhi)");
+  const problemeServerIp = serverIpProblem();
+  if (problemeServerIp) {
+    const vues = candidateServerIps();
+    L("sys", `⚠ ${problemeServerIp} — or c'est l'adresse que nous ANNONÇONS à la machine : en mode LAN, c'est elle qui se connecte à nous. Aucune session ne pourra s'établir. Adresses non locales vues d'ici : ${vues.length ? vues.join(", ") : "aucune"}. En conteneur bridge, annoncer l'adresse de l'HÔTE, pas celle du conteneur.`);
+  }
   // `compare` : on interroge la machine même quand le DSN est déjà connu, pour signaler une
   // divergence au démarrage plutôt que de la découvrir au premier échec de commande.
   if (CFG.machineIp) resolveDsn({ compare: true }).catch(() => {});

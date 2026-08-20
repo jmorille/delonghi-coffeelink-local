@@ -35,7 +35,8 @@
     "profileFallback": "profil {id}",
     "profileNumbered": "Profil {id}",
     "noLanKey": "Clé LAN absente : aucune session chiffrée n'est possible, donc aucune commande n'atteint la machine et son état ne peut pas être lu. Les valeurs affichées sont celles du dernier import.",
-    "noLanKeyLink": "Récupérer la clé →"
+    "noLanKeyLink": "Récupérer la clé →",
+    "badServerIp": "{problem} — or c'est l'adresse que le serveur annonce à la machine pour qu'elle le rappelle. En mode LAN, c'est la machine qui se connecte à nous : avec cette valeur, aucune session ne pourra s'établir et les commandes seront perdues. Corrigez SERVER_IP avec une adresse joignable depuis le réseau de la machine, puis redémarrez le serveur. En conteneur, c'est l'adresse de l'hôte, pas celle du conteneur."
   },
   "beverages": {
     "heading": "Boissons de la machine",
@@ -567,13 +568,13 @@
     "dsnNone": "inconnu",
     "ourServer": "Notre serveur (annoncé)",
     "setHeading": "Définir l'adresse",
-    "setNote": "IPv4 ou nom d'hôte, sans schéma ni port ni chemin. Un nom d'hôte protège d'un changement de bail DHCP. L'adresse est enregistrée puis testée immédiatement.",
+    "setNote": "IPv4 ou nom d'hôte, sans schéma ni port ni chemin. Un nom d'hôte protège d'un changement de bail DHCP : il est résolu par le serveur avant chaque requête. En conteneur, préférez le nom complet ou l'adresse IP — un nom court n'hérite pas du domaine de recherche DNS de l'hôte. L'adresse est enregistrée puis testée immédiatement.",
     "envForced": "MACHINE_IP est définie dans .env.local : la saisie fonctionne, mais c'est la variable d'environnement qui reprendra la main au redémarrage.",
     "placeholder": "192.168.x.x ou nom d'hôte",
     "save": "enregistrer et tester",
     "testing": "test en cours…",
     "savedReachable": "Adresse {ip} enregistrée, et la machine répond. DSN : {dsn}.",
-    "savedNotAMachine": "Adresse {ip} enregistrée, mais ce n'est pas la cafetière : quelque chose a bien répondu à cette adresse (HTTP {status}), sans fournir le numéro de série que la machine renvoie sur /regtoken.json. Vérifiez l'adresse — un nom d'hôte qui ne désigne pas la machine, ou un autre serveur sur le réseau, répond de cette façon.",
+    "savedNotAMachine": "Adresse {ip} enregistrée, mais ce n'est pas la cafetière : quelque chose a bien répondu à cette adresse (HTTP {status}), sans fournir le numéro de série que la machine renvoie sur /regtoken.json. C'est le cas d'un autre serveur du réseau à cette adresse.",
     "savedUnreachable": "Adresse {ip} enregistrée, mais la machine n'a pas répondu ({reason}). Vérifiez l'adresse, que la machine est allumée, et que le trafic est autorisé entre ce serveur et son réseau.",
     "forget": "oublier l'adresse enregistrée",
     "forgetConfirm": "Oublier l'adresse enregistrée ? Sans MACHINE_IP dans .env.local, le serveur ne pourra plus contacter la machine jusqu'à une nouvelle saisie.",

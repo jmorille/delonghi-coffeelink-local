@@ -46,7 +46,7 @@ interface Beverage {
 }
 interface Status {
   /** Configuration du serveur. `lanKeySet` faux = aucun pilotage possible, il faut le dire. */
-  config: { lanKeySet: boolean };
+  config: { lanKeySet: boolean; serverIpProblem: string | null };
   session: { active: boolean };
   /** Dernier profil que le serveur a demandé à la machine. */
   activeProfile: number;
@@ -385,6 +385,12 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
       <h1>{t("heading")}</h1>
       {/* Sans clé LAN, rien de ce que propose cette page ne peut atteindre la machine : le dire ici
           plutôt que de laisser cliquer 88 boutons voués à un échec silencieux. */}
+      {status?.config?.serverIpProblem && (
+        <div className="warn">
+          ⚠️ {tc("badServerIp", { problem: status.config.serverIpProblem })}
+        </div>
+      )}
+
       {status && !status.config?.lanKeySet && (
         <div className="warn">
           ⚠️ {tc("noLanKey")} <a href="/cle-lan">{tc("noLanKeyLink")}</a>

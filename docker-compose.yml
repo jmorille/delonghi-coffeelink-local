@@ -20,6 +20,13 @@ services:
     restart: unless-stopped
 
     # Les secrets restent dans .env.local, hors de l'image et hors de ce fichier.
+    # Nom d'hote de la machine : un conteneur n'herite pas du domaine de recherche DNS de
+    # l'hote, donc un nom court echoue en `getaddrinfo ENOTFOUND`. Decommenter l'une des deux
+    # lignes si vous saisissez un nom plutot qu'une IP (cf. DOCKER.md section 8).
+    # extra_hosts:
+    #   - "cafe:192.168.x.x"
+    # dns_search:
+    #   - maison.lan
     env_file:
       - .env.local
     environment:

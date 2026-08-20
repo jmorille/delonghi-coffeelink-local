@@ -31,7 +31,14 @@ Deux conséquences qu'aucun réglage Docker ne rattrape :
 |---|---|
 | **`SERVER_IP` = adresse joignable depuis le VLAN de la cafetière** | C'est la valeur que nous annonçons. L'IP interne du conteneur (`172.17.x.x`) n'est pas routable depuis son VLAN : la machine n'arriverait jamais. Mettre l'IP de l'**hôte**. |
 | **Même numéro de port des deux côtés** | Nous annonçons `SERVER_PORT`, qui est aussi le port d'écoute. Avec `-p 8080:3000`, la machine irait toquer sur 8080 alors que rien n'y répond côté hôte du point de vue de la machine — utiliser `-p 3000:3000`, ou changer `SERVER_PORT` **et** la publication ensemble. |
-| **Le flux machine → serveur doit être autorisé** | La cafetière est sur un VLAN isolé (LAN3 ici). Il faut une règle qui laisse passer `machine → hôte:3000`. Voir `../docs/securite.md`. |
+| **Le flux machine → serveur doit être autorisé** | La cafetière est en général sur un VLAN isolé. Il faut une règle qui laisse passer `machine → hôte:3000`. Voir [`doc/securite.md`](doc/securite.md). |
+
+> **`SERVER_IP` n'a aucune valeur par défaut, et c'est voulu.** Une valeur de repli en boucle
+> locale ferait passer un serveur non configuré pour configuré : `local_reg` répond `202`, la file
+> de commandes se remplit, l'interface annonce « envoyé »… et la session reste « en attente » pour
+> toujours, parce que la machine se connecte à elle-même. Le serveur **refuse maintenant** les
+> commandes dans ce cas (HTTP 409, `needsServerIp`), l'annonce au démarrage, et les pages
+> l'affichent en bandeau.
 
 Deux modes de réseau fonctionnent :
 
@@ -348,9 +355,31 @@ Le `docker-compose.yml` du dépôt est déjà configuré ainsi, l'image GHCR par
 | L'interface s'affiche, mais aucune propriété ne remonte et le monitor reste vide | La machine n'arrive pas à nous joindre : `SERVER_IP` faux, port non publié, port différent des deux côtés, ou filtrage entre les VLAN. C'est de loin la cause la plus fréquente (§ 1). |
 | `unable to open database file` au démarrage | Droits du répertoire monté : `chown -R 1000:1000` (§ 2). |
 | `clé LAN absente` dans le journal | `LANIP_KEY` / `LANIP_KEY_ID` non transmises. Le serveur fonctionne, mais aucune session chiffrée n'est possible ; la page **Clé LAN** (`/cle-lan`) peut la découvrir. |
-| `DSN inconnu : la machine n'a pas répondu à /regtoken.json` | `MACHINE_IP` faux, machine éteinte, ou trafic conteneur → machine bloqué. |
+| `DSN inconnu : la machine n'a pas répondu à /regtoken.json` | Adresse fausse, machine éteinte, ou trafic conteneur → machine bloqué. |
+| `getaddrinfo ENOTFOUND <nom>` | **Résolution de nom dans le conteneur.** Un nom court (`cafe`) dépend du domaine de recherche DNS de l'hôte, dont un conteneur n'hérite pas. Voir juste en dessous. |
+| « Session LAN : en attente » indéfiniment, alors que `local_reg` répond `202` | `SERVER_IP` fausse — c'est l'adresse que la machine utilisera pour nous rappeler. Une boucle locale (`127.0.0.1`) ou l'IP interne du conteneur (`172.17.x.x`) donnent exactement ce symptôme : la machine accepte l'annonce puis ne trouve personne. Le journal et les pages le signalent désormais. |
 | Les données ont disparu après une mise à jour | Le volume n'était pas monté : sans `-v … :/data`, l'état vit dans la couche du conteneur et part avec lui. |
 | L'image `arm64` est lente à publier | Elle est construite sous émulation QEMU dans le workflow de release. Normal. |
+
+### Nom d'hôte de la machine dans un conteneur
+
+Le serveur accepte un nom d'hôte aussi bien qu'une IPv4, et le **résout lui-même** avant chaque
+requête (nécessaire : le module refuse un en-tête `Host` qui ne soit pas son adresse IP). Mais le
+conteneur doit pouvoir résoudre ce nom, et il n'hérite pas du domaine de recherche DNS de l'hôte :
+un nom court qui marche sur la machine de développement donne `getaddrinfo ENOTFOUND` dans le
+conteneur.
+
+Quatre façons de s'en sortir, de la plus simple à la plus souple :
+
+| Solution | Comment |
+|---|---|
+| **L'adresse IP** | Le plus simple. Perd la protection contre un changement de bail DHCP — à compenser par un bail réservé sur le routeur. |
+| **Le nom complet** | `cafe.maison.lan` plutôt que `cafe`, si le résolveur du conteneur atteint le même serveur DNS. |
+| `extra_hosts` | Dans le compose : `extra_hosts: ["cafe:192.168.x.x"]`. Fige la correspondance, sans dépendre du DNS. |
+| `dns_search` | Dans le compose : `dns_search: [maison.lan]`. Redonne au conteneur le domaine de recherche, donc les noms courts. |
+
+Le journal affiche la résolution quand elle réussit (`« cafe » résolu en 192.168.x.x`), et la
+cause quand elle échoue.
 
 ---
 

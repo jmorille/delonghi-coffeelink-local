@@ -95,6 +95,15 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* L'adresse annoncée était affichée comme un fait neutre, alors qu'une boucle locale rend
+          tout pilotage impossible. La page montrait « 127.0.0.1:80 » et « Session LAN : en
+          attente » sans jamais relier les deux. */}
+      {cfg?.serverIpProblem && (
+        <div className="warn">
+          ⚠️ {tc("badServerIp", { problem: cfg.serverIpProblem })}
+        </div>
+      )}
+
       {msg && <p className="sub">{msg}</p>}
 
       <div className="card">
@@ -113,7 +122,8 @@ export default function Dashboard() {
             <div className="kv">
               <span className="k">{t("server")}</span>
               <span className="mono">
-                {cfg?.serverIp}:{cfg?.serverPort}
+                {cfg?.serverIpProblem ? "⚠️ " : ""}
+                {cfg?.serverIp ?? tc("none")}:{cfg?.serverPort}
               </span>
             </div>
             <div className="kv">

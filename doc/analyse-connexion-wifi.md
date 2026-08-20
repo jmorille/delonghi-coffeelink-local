@@ -55,6 +55,25 @@ L'app contient le code de provisioning **BluFi** (`scanBlufi`, `stopBlufiScan`,
 appairée en mode point d'accès (`registration_type: AP-Mode`). Le code BluFi concerne d'autres
 modèles de la gamme.
 
+### 1.2 Le module refuse un en-tête `Host` qui n'est pas son adresse IP
+
+**Mesuré le 2026-08-20.** Le serveur HTTP du module ne répond que si l'en-tête `Host` porte sa
+propre adresse IP. Un nom d'hôte, même s'il désigne correctement la machine, obtient une page
+`404 - Page not found`. Même destination, seul l'en-tête change :
+
+```
+GET /regtoken.json  vers 192.168.x.x  avec « Host: cafe »          → 404 (page HTML)
+GET /regtoken.json  vers cafe         avec « Host: 192.168.x.x »   → 200 (le JSON)
+```
+
+Conséquence pratique : un client qui se contente de mettre le nom dans `host` (ce que fait
+`node:http` par défaut, l'en-tête `Host` étant déduit) échoue **sur toutes les requêtes**, avec un
+404 qui ressemble à « ce n'est pas la bonne adresse ». Il faut résoudre le nom soi-même et envoyer
+l'IP dans `Host`.
+
+C'est un piège de diagnostic redoutable : le 404 arrive vite, ressemble à une réponse valide d'un
+autre serveur, et pousse à accuser l'adresse plutôt que l'en-tête.
+
 ### 1.1 Fiche complète de l'appareil (cloud Ayla)
 
 `GET https://ads-eu.aylanetworks.com/apiv1/dsns/AC000W0XXXXXXXX.json` :
