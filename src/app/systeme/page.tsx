@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import Alerte, { TitreAlerte } from "../Alerte";
+import Icone from "../icons";
 
 interface Finding {
   level: "warn" | "info";
@@ -149,312 +150,351 @@ export default function Systeme() {
       <p className="sub">{t("intro", { date: d.deviceSheet.capturedAt })}</p>
 
       <div className="row barreActions">
-        <button className="primary" disabled={busy} onClick={load}>
-          {busy ? t("refreshing") : tc("refresh")}
+        {/* **Rafraichir est une LECTURE**, pas un retour en arriere : la page reinterroge la
+            machine et relit l'etat local. La fleche circulaire aurait ete le reflexe, mais c'est le
+            dessin de « revenir aux valeurs enregistrees » dans l'editeur — deux sens pour un
+            glyphe. Ici la valeur descend de l'appareil, comme partout ailleurs. */}
+        <button className="primary iconBtn" disabled={busy} onClick={load}>
+          <Icone nom="lire" />
+          <span className="lbl">{busy ? t("refreshing") : tc("refresh")}</span>
         </button>
       </div>
 
-      <h2>{t("firmware")}</h2>
-      <div className="card">
-        <div className="kv">
-          <span className="k">{t("fullVersion")}</span>
-          <span className="mono">{String(fw.sw_version)}</span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("aylaAgent")}</span>
-          <span className="mono">{String(fw.agent)}</span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("sdk")}</span>
-          <span className="mono">{String(fw.sdk)}</span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("builtAt")}</span>
-          <span className="mono">
-            {ageYears ? t("builtAgo", { date: builtAt.slice(0, 10), years: ageYears }) : builtAt.slice(0, 10)}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("commit")}</span>
-          <span className="mono">{String(fw.commit)}</span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("lastModuleUpdate")}</span>
-          <span className="mono">
-            {String(fw.module_updated_at).slice(0, 10)} {fw.neverUpdated ? t("neverUpdated") : ""}
-          </span>
-        </div>
-      </div>
+      {/* **Neuf sujets independants, et ils etaient neuf bandes de 1 140 px.** Mesure a
+          1 194 px — la tablette 11" en paysage, et une page que PRODUCT.md donne au bureau :
+          15 cartes empilees sur une seule colonne, 6 034 px de haut, ~87 lignes cle/valeur dont
+          la valeur commence a 208 px dans une bande de 1 140. La moitie droite de la page ne
+          portait rien. C'est exactement le defaut que `.panneaux` a corrige sur /pilotage, laisse
+          en place sur la page qui en compte le plus.
 
-      <h2>{t("ota")}</h2>
-      <div className="card">
-        <div className="kv">
-          <span className="k">{t("otaRequests")}</span>
-          <span className="num">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
-        </div>
-        <p className="note">
-          {d.ota.lanNote}
-        </p>
-        {d.ota.lanRequests.length > 0 && (
-          <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("otaWhen")}</th>
-                <th>{t("otaRequest")}</th>
-                <th>{t("otaFrom")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.ota.lanRequests.map((r, i) => (
-                <tr key={i}>
-                  <td className="num">{new Date(r.at).toLocaleString("fr-FR")}</td>
-                  <td className="mono">
-                    {r.method} {r.url}
-                  </td>
-                  <td className="mono">{r.from}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          Le titre et la carte qu'il titre etaient FRERES : rien ne les tenait ensemble, donc rien
+          ne pouvait garantir qu'ils restent dans la meme colonne. Chaque sujet devient une
+          `<section>` — ce qu'il etait deja par le sens. */}
+      <div className="panneaux">
+        <section>
+          <h2>{t("firmware")}</h2>
+          <div className="card">
+            <div className="kv">
+              <span className="k">{t("fullVersion")}</span>
+              <span className="mono">{String(fw.sw_version)}</span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("aylaAgent")}</span>
+              <span className="mono">{String(fw.agent)}</span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("sdk")}</span>
+              <span className="mono">{String(fw.sdk)}</span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("builtAt")}</span>
+              <span className="mono">
+                {ageYears ? t("builtAgo", { date: builtAt.slice(0, 10), years: ageYears }) : builtAt.slice(0, 10)}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("commit")}</span>
+              <span className="mono">{String(fw.commit)}</span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("lastModuleUpdate")}</span>
+              <span className="mono">
+                {String(fw.module_updated_at).slice(0, 10)} {fw.neverUpdated ? t("neverUpdated") : ""}
+              </span>
+            </div>
           </div>
-        )}
-{/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
-            terminait par « vérification cloud désactivée » : le libellé et la note disaient la même
-            chose. Et la vérification n'est plus subordonnée à AYLA_TOKEN — elle se lance depuis la
-            page Machines, avec les identifiants du compte. */}
-        <div className="kv blocSuite">
-          <span className="k">{t("cloudCheck")}</span>
-          <span>
-            {!d.ota.cloud.last ? (
-              <span className="sub">{t("cloudNever")}</span>
-            ) : d.ota.cloud.last.updateAvailable ? (
-              <>
-                <span className="pill off">{t("cloudAvailable")}</span>{" "}
+        </section>
+        <section>
+          <h2>{t("ota")}</h2>
+          <div className="card">
+            <div className="kv">
+              <span className="k">{t("otaRequests")}</span>
+              <span className="num">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
+            </div>
+            <p className="note">
+              {d.ota.lanNote}
+            </p>
+            {d.ota.lanRequests.length > 0 && (
+              <div className="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("otaWhen")}</th>
+                    <th>{t("otaRequest")}</th>
+                    <th>{t("otaFrom")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.ota.lanRequests.map((r, i) => (
+                    <tr key={i}>
+                      <td className="num">{new Date(r.at).toLocaleString("fr-FR")}</td>
+                      <td className="mono">
+                        {r.method} {r.url}
+                      </td>
+                      <td className="mono">{r.from}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+            )}
+    {/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
+                terminait par « vérification cloud désactivée » : le libellé et la note disaient la même
+                chose. Et la vérification n'est plus subordonnée à AYLA_TOKEN — elle se lance depuis la
+                page Machines, avec les identifiants du compte. */}
+            <div className="kv blocSuite">
+              <span className="k">{t("cloudCheck")}</span>
+              <span>
+                {!d.ota.cloud.last ? (
+                  <span className="sub">{t("cloudNever")}</span>
+                ) : d.ota.cloud.last.updateAvailable ? (
+                  <>
+                    <span className="pill off">{t("cloudAvailable")}</span>{" "}
+                    <span className="sub">
+                      {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {t("cloudNone", { status: d.ota.cloud.last.status })}{" "}
+                    <span className="sub">{new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}</span>
+                  </>
+                )}
+              </span>
+            </div>
+          </div>
+        </section>
+        <section>
+          <h2>{t("wifiModule")}</h2>
+          <div className="card">
+            <p className="sub">
+              {t("liveNote", { others: "status.json, wifi_status.json, time.json, module_info.json, ota.json, wifi_scan.json" })}
+            </p>
+            <div className="kv">
+              <span className="k">{t("reachable")}</span>
+              <span className={d.local.reachable ? "pill on" : "pill off"}>
+                {d.local.reachable ? t("reachableYes", { status: d.local.status ?? 0 }) : t("reachableNo", { error: d.local.error ?? "" })}
+              </span>
+            </div>
+            {d.local.regtoken &&
+              Object.entries(d.local.regtoken).map(([k, v]) => (
+                <div className="kv" key={k}>
+                  <span className="k mono">{k}</span>
+                  <span className="mono">{String(v)}</span>
+                </div>
+              ))}
+            <div className="blocSuite">
+              <Rows obj={d.deviceSheet.hardware} />
+            </div>
+          </div>
+        </section>
+        <section>
+          <h2>{t("aylaPlatform")}</h2>
+          <div className="card">
+            <Rows obj={d.deviceSheet.platform} />
+            <div className="blocSuite">
+              <Rows obj={d.deviceSheet.lifecycle} />
+            </div>
+          </div>
+        </section>
+        <section>
+          <h2>{t("machineModel")}</h2>
+          <div className="card">
+            <Rows
+              obj={{
+                type: d.model.type,
+                appModelId: d.model.appModelId,
+                productCode: d.model.productCode,
+                protocolVersion: d.model.protocolVersion,
+                protocolMinorVersion: d.model.protocolMinorVersion,
+                connectionType: d.model.connectionType,
+                nProfiles: d.model.nProfiles,
+                nStandardRecipes: d.model.nStandardRecipes,
+                nCustomRecipes: d.model.nCustomRecipes,
+                creationRecipes: d.model.creationRecipes,
+                customizableProfiles: d.model.customizableProfiles,
+                globalTemperature: d.model.globalTemperature,
+              }}
+            />
+            <p className="note">
+              {t("modelSource")}
+            </p>
+            {/* Ce bloc décrit le catalogue EN SERVICE. Quand c'est un remplaçant, il décrit donc un
+                modèle qui n'est pas celui de la machine : le taire serait affirmer le contraire. */}
+            {d.model.fallback && (
+              <Alerte className="note">
+                {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
+              </Alerte>
+            )}
+          </div>
+        </section>
+        <section>
+          <h2>{t("identification")}</h2>
+          <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
+            {d.identification.matchesCatalog === false && (
+              <p className="chapeau">
+                <TitreAlerte>
+                  {t("idMismatch", {
+                    detected: d.identification.key ?? "?",
+                    catalog: String(d.identification.catalog.key ?? "?"),
+                    catalogType: String(d.identification.catalog.type ?? "?"),
+                  })}
+                </TitreAlerte>
+              </p>
+            )}
+            <Rows
+              obj={{
+                key: d.identification.key,
+                source: d.identification.source,
+                machineName: d.identification.machineName,
+                serialNumber: d.identification.serial,
+                detectedType: d.identification.detected?.type ?? null,
+                detectedAppModelId: d.identification.detected?.appModelId ?? null,
+                detectedRecipeCount: d.identification.detected?.recipeCount ?? null,
+                detectedNProfiles: d.identification.detected?.nProfiles ?? null,
+                matchesCatalog: d.identification.matchesCatalog,
+                // `Rows` ne formate pas les dates : un epoch brut ne dit rien a l'oeil.
+                readAt: d.identification.at ? new Date(d.identification.at).toLocaleString("fr-FR") : null,
+              }}
+            />
+            {d.identification.key && !d.identification.detected && (
+              <p className="note">
+                {t("idUnknownModel", { key: d.identification.key, version: d.identification.tableVersion })}
+              </p>
+            )}
+            {d.identification.lastError && (
+              <p className="note mono">
+                {t("idFailed", { reason: d.identification.lastError.reason })} — {d.identification.lastError.hex || "(trame vide)"}
+              </p>
+            )}
+            <div className="blocSuite">
+              <button className="iconBtn" onClick={readModel} disabled={busy}>
+                <Icone nom="lire" />
+                <span className="lbl">{d.identification.key ? t("idReread") : t("idRead")}</span>
+              </button>
+              {idMsg && (
                 <span className="sub">
-                  {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
+                  {idMsg}
                 </span>
-              </>
-            ) : (
+              )}
+            </div>
+            <p className="note">
+              {t("idNote", { prop: d.identification.serialProp, count: d.identification.knownModels, version: d.identification.tableVersion })}
+            </p>
+            <p className="legende">
+              {t("idScopeNote")}
+            </p>
+          </div>
+        </section>
+        <section>
+          <h2>{t("machineState")}</h2>
+          <div className="card">
+            <div className="kv">
+              <span className="k">{t("monitor")}</span>
+              <span className="mono">
+                {d.machineState.lastMonitor
+                  ? t("monitorDetail", {
+                      state: `0x${d.machineState.lastMonitor.stateByte.toString(16).padStart(2, "0")}`,
+                      sensors: `0x${d.machineState.lastMonitor.switchBits.toString(16)}`,
+                      alarms: d.machineState.lastMonitor.alarms?.length
+                        ? String(d.machineState.lastMonitor.alarms.length)
+                        : t("monitorNoAlarm"),
+                      time: new Date(d.machineState.lastMonitor.at).toLocaleTimeString("fr-FR"),
+                    })
+                  : t("monitorNone")}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("lastEcamResponse")}</span>
+              <span className="mono">
+                {d.machineState.lastDataResponse?.hex ?? tc("dash")}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("cachedProps")}</span>
+              <span className="num">{d.machineState.propsRead}</span>
+            </div>
+            {d.machineState.checksums && (
               <>
-                {t("cloudNone", { status: d.ota.cloud.last.status })}{" "}
-                <span className="sub">{new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}</span>
+                <div className="kv">
+                  <span className="k">{t("checksumsPerProfile")}</span>
+                  <span className="mono">
+                    {Object.entries(d.machineState.checksums.profiles)
+                      .map(([p, v]) => `${p}:0x${v.toString(16)}`)
+                      .join("  ")}
+                  </span>
+                </div>
+                <div className="kv">
+                  <span className="k">{t("checksumsNamesCustom")}</span>
+                  <span className="mono">
+                    0x{d.machineState.checksums.names.toString(16)} / 0x{d.machineState.checksums.customRecipes.toString(16)}
+                  </span>
+                </div>
               </>
             )}
-          </span>
-        </div>
-      </div>
-
-      <h2>{t("wifiModule")}</h2>
-      <div className="card">
-        <p className="sub">
-          {t("liveNote", { others: "status.json, wifi_status.json, time.json, module_info.json, ota.json, wifi_scan.json" })}
-        </p>
-        <div className="kv">
-          <span className="k">{t("reachable")}</span>
-          <span className={d.local.reachable ? "pill on" : "pill off"}>
-            {d.local.reachable ? t("reachableYes", { status: d.local.status ?? 0 }) : t("reachableNo", { error: d.local.error ?? "" })}
-          </span>
-        </div>
-        {d.local.regtoken &&
-          Object.entries(d.local.regtoken).map(([k, v]) => (
-            <div className="kv" key={k}>
-              <span className="k mono">{k}</span>
-              <span className="mono">{String(v)}</span>
-            </div>
-          ))}
-        <div className="blocSuite">
-          <Rows obj={d.deviceSheet.hardware} />
-        </div>
-      </div>
-
-      <h2>{t("aylaPlatform")}</h2>
-      <div className="card">
-        <Rows obj={d.deviceSheet.platform} />
-        <div className="blocSuite">
-          <Rows obj={d.deviceSheet.lifecycle} />
-        </div>
-      </div>
-
-      <h2>{t("machineModel")}</h2>
-      <div className="card">
-        <Rows
-          obj={{
-            type: d.model.type,
-            appModelId: d.model.appModelId,
-            productCode: d.model.productCode,
-            protocolVersion: d.model.protocolVersion,
-            protocolMinorVersion: d.model.protocolMinorVersion,
-            connectionType: d.model.connectionType,
-            nProfiles: d.model.nProfiles,
-            nStandardRecipes: d.model.nStandardRecipes,
-            nCustomRecipes: d.model.nCustomRecipes,
-            creationRecipes: d.model.creationRecipes,
-            customizableProfiles: d.model.customizableProfiles,
-            globalTemperature: d.model.globalTemperature,
-          }}
-        />
-        <p className="note">
-          {t("modelSource")}
-        </p>
-        {/* Ce bloc décrit le catalogue EN SERVICE. Quand c'est un remplaçant, il décrit donc un
-            modèle qui n'est pas celui de la machine : le taire serait affirmer le contraire. */}
-        {d.model.fallback && (
-          <Alerte className="note">
-            {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
-          </Alerte>
-        )}
-      </div>
-
-      <h2>{t("identification")}</h2>
-      <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
-        {d.identification.matchesCatalog === false && (
-          <p className="chapeau">
-            <TitreAlerte>
-              {t("idMismatch", {
-                detected: d.identification.key ?? "?",
-                catalog: String(d.identification.catalog.key ?? "?"),
-                catalogType: String(d.identification.catalog.type ?? "?"),
-              })}
-            </TitreAlerte>
-          </p>
-        )}
-        <Rows
-          obj={{
-            key: d.identification.key,
-            source: d.identification.source,
-            machineName: d.identification.machineName,
-            serialNumber: d.identification.serial,
-            detectedType: d.identification.detected?.type ?? null,
-            detectedAppModelId: d.identification.detected?.appModelId ?? null,
-            detectedRecipeCount: d.identification.detected?.recipeCount ?? null,
-            detectedNProfiles: d.identification.detected?.nProfiles ?? null,
-            matchesCatalog: d.identification.matchesCatalog,
-            // `Rows` ne formate pas les dates : un epoch brut ne dit rien a l'oeil.
-            readAt: d.identification.at ? new Date(d.identification.at).toLocaleString("fr-FR") : null,
-          }}
-        />
-        {d.identification.key && !d.identification.detected && (
-          <p className="note">
-            {t("idUnknownModel", { key: d.identification.key, version: d.identification.tableVersion })}
-          </p>
-        )}
-        {d.identification.lastError && (
-          <p className="note mono">
-            {t("idFailed", { reason: d.identification.lastError.reason })} — {d.identification.lastError.hex || "(trame vide)"}
-          </p>
-        )}
-        <div className="blocSuite">
-          <button onClick={readModel} disabled={busy}>
-            {d.identification.key ? t("idReread") : t("idRead")}
-          </button>
-          {idMsg && (
-            <span className="sub">
-              {idMsg}
-            </span>
-          )}
-        </div>
-        <p className="note">
-          {t("idNote", { prop: d.identification.serialProp, count: d.identification.knownModels, version: d.identification.tableVersion })}
-        </p>
-        <p className="legende">
-          {t("idScopeNote")}
-        </p>
-      </div>
-
-      <h2>{t("machineState")}</h2>
-      <div className="card">
-        <div className="kv">
-          <span className="k">{t("monitor")}</span>
-          <span className="mono">
-            {d.machineState.lastMonitor
-              ? t("monitorDetail", {
-                  state: `0x${d.machineState.lastMonitor.stateByte.toString(16).padStart(2, "0")}`,
-                  sensors: `0x${d.machineState.lastMonitor.switchBits.toString(16)}`,
-                  alarms: d.machineState.lastMonitor.alarms?.length
-                    ? String(d.machineState.lastMonitor.alarms.length)
-                    : t("monitorNoAlarm"),
-                  time: new Date(d.machineState.lastMonitor.at).toLocaleTimeString("fr-FR"),
-                })
-              : t("monitorNone")}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("lastEcamResponse")}</span>
-          <span className="mono">
-            {d.machineState.lastDataResponse?.hex ?? tc("dash")}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("cachedProps")}</span>
-          <span className="num">{d.machineState.propsRead}</span>
-        </div>
-        {d.machineState.checksums && (
-          <>
-            <div className="kv">
-              <span className="k">{t("checksumsPerProfile")}</span>
-              <span className="mono">
-                {Object.entries(d.machineState.checksums.profiles)
-                  .map(([p, v]) => `${p}:0x${v.toString(16)}`)
-                  .join("  ")}
-              </span>
-            </div>
-            <div className="kv">
-              <span className="k">{t("checksumsNamesCustom")}</span>
-              <span className="mono">
-                0x{d.machineState.checksums.names.toString(16)} / 0x{d.machineState.checksums.customRecipes.toString(16)}
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-
-      <h2>{t("storage")}</h2>
-      <div className="card">
-        <div className="kv">
-          <span className="k">{t("storageEngine")}</span>
-          <span className="mono">
-            {d.storage.engine} {d.storage.sqliteVersion} · {t("storageSchema", { v: d.storage.schemaVersion })}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("storageDurability")}</span>
-          <span className="mono">
-            {t("storageDurabilityValue", { journal: d.storage.journalMode.toUpperCase(), sync: d.storage.synchronous })}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("storageRows")}</span>
-          <span className="mono">{t("storageRowsValue", d.storage.counts)}</span>
-        </div>
-        <div className="kv">
-          <span className="k">{t("storageFile")}</span>
-          <span className="mono" style={{ wordBreak: "break-all" }}>
-            {d.storage.file} ({Math.round(d.storage.sizeBytes / 1024)} ko)
-          </span>
-        </div>
-        <p className="note">{t("storageNote")}</p>
-      </div>
-
-      <h2>{t("protocolNetwork")}</h2>
-      <div className="card">
-        <Rows obj={d.protocol} />
-        <div className="blocSuite">
-          <Rows obj={d.network} />
-        </div>
-      </div>
-
-      <h2>{t("findings")}</h2>
-      {d.deviceSheet.findings.map((f, i) => (
-        <div className={f.level === "warn" ? "card warn" : "card"} key={i}>
-          {/* Onze constats, dont quatre en avertissement : le pictogramme est ce qui les distingue
-              en balayant la liste, et il est maintenant dessiné comme les autres. */}
-          {f.level === "warn" ? <TitreAlerte>{f.title}</TitreAlerte> : <strong>{f.title}</strong>}
-          <div className="legende">
-            {f.detail}
           </div>
-        </div>
-      ))}
+        </section>
+        <section>
+          <h2>{t("storage")}</h2>
+          <div className="card">
+            <div className="kv">
+              <span className="k">{t("storageEngine")}</span>
+              <span className="mono">
+                {d.storage.engine} {d.storage.sqliteVersion} · {t("storageSchema", { v: d.storage.schemaVersion })}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("storageDurability")}</span>
+              <span className="mono">
+                {t("storageDurabilityValue", { journal: d.storage.journalMode.toUpperCase(), sync: d.storage.synchronous })}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("storageRows")}</span>
+              <span className="mono">{t("storageRowsValue", d.storage.counts)}</span>
+            </div>
+            <div className="kv">
+              <span className="k">{t("storageFile")}</span>
+              <span className="mono" style={{ wordBreak: "break-all" }}>
+                {d.storage.file} ({Math.round(d.storage.sizeBytes / 1024)} ko)
+              </span>
+            </div>
+            <p className="note">{t("storageNote")}</p>
+          </div>
+        </section>
+        <section>
+          <h2>{t("protocolNetwork")}</h2>
+          <div className="card">
+            <Rows obj={d.protocol} />
+            <div className="blocSuite">
+              <Rows obj={d.network} />
+            </div>
+          </div>
+        </section>
+        {/* Les constats se rangent en grille : onze cartes de 70 a 113 px de haut, homogenes,
+            faites pour etre balayees — une bande de 1 140 px par constat les rendait plus longs a
+            parcourir que la fiche entiere.
+            **Et ils coulent dans les colonnes au lieu de les enjamber.** Essaye en `column-span:
+            all`, ce qui paraissait naturel pour une liste : le bloc doit alors attendre la plus
+            haute des deux colonnes, ce qui rouvrait un vide de 558 x 511 px en bas a droite —
+            exactement le defaut que cette passe supprime. Mesure : 3 670 px avec l'enjambement,
+            3 381 px sans, et le desequilibre des colonnes tombe de 511 a 133 px. */}
+        <section>
+          <h2>{t("findings")}</h2>
+          <div className="cards dense">
+            {d.deviceSheet.findings.map((f, i) => (
+              <div className={f.level === "warn" ? "card warn" : "card"} key={i}>
+                {/* Onze constats, dont quatre en avertissement : le pictogramme est ce qui les distingue
+                    en balayant la liste, et il est maintenant dessiné comme les autres. */}
+                {f.level === "warn" ? <TitreAlerte>{f.title}</TitreAlerte> : <strong>{f.title}</strong>}
+                <div className="legende">
+                  {f.detail}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
 
       <p className="sub">{d.deviceSheet._privacy}</p>
       <p className="sub mono">

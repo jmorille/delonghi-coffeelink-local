@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { mfetch } from "../machine";
 import { useConfirm } from "../confirm";
+import Icone from "../icons";
 import Alerte from "../Alerte";
 
 /**
@@ -344,8 +345,9 @@ export default function Recipes() {
                             style={{ borderColor: bad ? "var(--danger-edge)" : undefined }}
                           />
                           {v !== undefined && v !== b.def && (
-                            <button onClick={() => setValue(b.id, b.def)} title={t("useDefaultTitle")}>
-                              {t("useDefault")}
+                            <button className="iconBtn" onClick={() => setValue(b.id, b.def)} title={t("useDefaultTitle")}>
+                              <Icone nom="defauts" taille={14} />
+                              <span className="lbl">{t("useDefault")}</span>
                             </button>
                           )}
                         </div>
@@ -363,20 +365,33 @@ export default function Recipes() {
         )}
 
         <div className="row note">
-          <button className="primary" onClick={save} disabled={!!outOfRange.length}>
-            {t("saveLocal")}
+          {/* **Trois destinations dans une seule rangee, donc trois dessins qui les nomment.** La
+              disquette garde ici, la fleche descendante reprend ce que le profil a enregistre, la
+              machine envoie sur l'appareil. C'est le seul endroit du produit ou les trois sens
+              coexistent : deux fleches opposees s'y confondraient — la raison pour laquelle
+              `ecrire` n'en est pas une. */}
+          <button className="primary iconBtn" onClick={save} disabled={!!outOfRange.length}>
+            <Icone nom="ecrire" />
+            <span className="lbl">{t("saveLocal")}</span>
           </button>
-          <button onClick={loadFromMachine} disabled={!bev?.values} title={
+          <button className="iconBtn" onClick={loadFromMachine} disabled={!bev?.values} title={
               !bev?.values
                 ? t("takeFromProfileUnavailable")
                 : t("takeFromProfileTitle")
             }>
-            {t("takeFromProfile")}
+            <Icone nom="lire" />
+            <span className="lbl">{t("takeFromProfile")}</span>
           </button>
-          <button className="good" onClick={writeToMachine} disabled={!!outOfRange.length || !draft.params.length}>
-            {t("writeToProfile", { profile: draft.profileId })}
+          <button className="good iconBtn" onClick={writeToMachine} disabled={!!outOfRange.length || !draft.params.length}>
+            <Icone nom="machine" />
+            <span className="lbl">{t("writeToProfile", { profile: draft.profileId })}</span>
           </button>
-          {draft.id && <button onClick={() => setDraft(empty())}>{tc("new")}</button>}
+          {draft.id && (
+            <button className="iconBtn" onClick={() => setDraft(empty())}>
+              <Icone nom="ajouter" />
+              <span className="lbl">{tc("new")}</span>
+            </button>
+          )}
         </div>
         {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
             n'est pas annoncé. Vide, `.status:empty` le masque. */}
@@ -411,9 +426,13 @@ export default function Recipes() {
                   <td>{r.profileId}</td>
                   <td>{describe(r, beverages, paramLabel, unitLabel)}</td>
                   <td className="row">
-                    <button onClick={() => setDraft(structuredClone(r))}>{tc("edit")}</button>
-                    <button className="danger discret" onClick={() => del(r.id, r.name)}>
-                      {tc("delete")}
+                    <button className="iconBtn" onClick={() => setDraft(structuredClone(r))}>
+                      <Icone nom="modifier" taille={15} />
+                      <span className="lbl">{tc("edit")}</span>
+                    </button>
+                    <button className="danger discret iconBtn" onClick={() => del(r.id, r.name)}>
+                      <Icone nom="corbeille" taille={15} />
+                      <span className="lbl">{tc("delete")}</span>
                     </button>
                   </td>
                 </tr>

@@ -333,8 +333,9 @@ export default function Beans() {
           barre d'actions, elle vit sous le titre de section sans conteneur à elle. */}
       <div className="cardHead barreActions">
         <span className="sub">{t("scanNote")}</span>
-        <button className="primary" disabled={busy || !!data?.scan} onClick={scan}>
-          {data?.scan ? t("scanning") : t("scan")}
+        <button className="primary iconBtn" disabled={busy || !!data?.scan} onClick={scan}>
+          <Icone nom="lire" />
+          <span className="lbl">{data?.scan ? t("scanning") : t("scan")}</span>
         </button>
       </div>
       {!data ? (
@@ -346,8 +347,9 @@ export default function Beans() {
           </p>
           <div className="row note">
             {[0, 1, 2, 3].map((i) => (
-              <button key={i} disabled={busy} onClick={() => read(i)}>
-                {t("readIndex", { index: i })}
+              <button key={i} className="iconBtn" disabled={busy} onClick={() => read(i)}>
+                <Icone nom="lire" />
+                <span className="lbl">{t("readIndex", { index: i })}</span>
               </button>
             ))}
           </div>
@@ -400,19 +402,27 @@ export default function Beans() {
                 </div>
               )}
               <div className="row">
-                <button disabled={busy} onClick={() => read(bs.index)}>
-                  {tc("read")}
+                <button className="iconBtn" disabled={busy} onClick={() => read(bs.index)}>
+                  <Icone nom="lire" />
+                  <span className="lbl">{tc("read")}</span>
                 </button>
                 {!bs.isToggle && (
                   <>
-                    <button disabled={busy || bs.active === true} onClick={() => activate(bs.index)} title={t("activateTitle")}>
-                      {bs.active ? t("alreadyActive") : t("activate")}
+                    {/* La coche, comme « Activer » sur /profils : le grain retenu par la machine.
+                        C'est le meme geste sur un autre objet, donc le meme dessin. */}
+                    <button className="iconBtn" disabled={busy || bs.active === true} onClick={() => activate(bs.index)} title={t("activateTitle")}>
+                      <Icone nom="choisir" />
+                      <span className="lbl">{bs.active ? t("alreadyActive") : t("activate")}</span>
                     </button>
-                    <button className="primary" disabled={busy} onClick={() => pick(bs)}>
-                      {selected === bs.index ? t("editing") : t("configure")}
+                    {/* Le crayon : « Configurer » ouvre l'editeur du bas sur ce grain, il ne
+                        configure rien tout seul. */}
+                    <button className="primary iconBtn" disabled={busy} onClick={() => pick(bs)}>
+                      <Icone nom="modifier" />
+                      <span className="lbl">{selected === bs.index ? t("editing") : t("configure")}</span>
                     </button>
-                    <button className="mini" disabled={busy} onClick={() => memorise(bs)} title={t("presetSaveTitle")}>
-                      {t("presetSave")}
+                    <button className="mini iconBtn" disabled={busy} onClick={() => memorise(bs)} title={t("presetSaveTitle")}>
+                      <Icone nom="ecrire" taille={14} />
+                      <span className="lbl">{t("presetSave")}</span>
                     </button>
                   </>
                 )}
@@ -457,7 +467,12 @@ export default function Beans() {
                   <span className="num">{p.aroma}</span>
                 </div>
               </div>
-              {/* Écrire dans un emplacement : l'index 0 est écarté, ce n'est pas un café. */}
+              {/* Écrire dans un emplacement : l'index 0 est écarté, ce n'est pas un café.
+                  **Ces puces restent sans icone, et c'est un choix.** Leur libelle est un numero
+                  d'emplacement — deux caracteres, donc pas un « bouton a texte long » que l'icone
+                  viendrait remplacer. Et elles vont par cinq : le meme glyphe repete cinq fois de
+                  suite n'ajoute aucune information, il elargit une rangee de 25 px par puce. Ce que
+                  l'icone dirait ici, la phrase qui les introduit le dit une fois pour toutes. */}
               <div className="row">
                 <span className="sub">{t("presetWriteTo")}</span>
                 {(data?.beans.filter((x) => !x.isToggle) ?? []).map((x) => (
@@ -467,11 +482,13 @@ export default function Beans() {
                 ))}
               </div>
               <div className="row note">
-                <button className="mini" disabled={busy} onClick={() => memorise({ name: p.name, grinder: p.grinder, temperature: p.temperature, aroma: p.aroma }, p.id)} title={t("presetUpdateTitle")}>
-                  {t("presetUpdate")}
+                <button className="mini iconBtn" disabled={busy} onClick={() => memorise({ name: p.name, grinder: p.grinder, temperature: p.temperature, aroma: p.aroma }, p.id)} title={t("presetUpdateTitle")}>
+                  <Icone nom="ecrire" taille={14} />
+                  <span className="lbl">{t("presetUpdate")}</span>
                 </button>
-                <button className="mini danger" disabled={busy} onClick={() => oublie(p)}>
-                  {t("presetForget")}
+                <button className="mini danger iconBtn" disabled={busy} onClick={() => oublie(p)}>
+                  <Icone nom="corbeille" taille={14} />
+                  <span className="lbl">{t("presetForget")}</span>
                 </button>
               </div>
             </div>
@@ -508,8 +525,9 @@ export default function Beans() {
                   <option value={3}>{t("taste3")}</option>
                 </select>
               </div>
-              <button className="primary" disabled={busy} onClick={simulate}>
-                {t("simulate")}
+              <button className="primary iconBtn" disabled={busy} onClick={simulate}>
+                <Icone nom="reglages" />
+                <span className="lbl">{t("simulate")}</span>
               </button>
             </div>
 
@@ -563,8 +581,11 @@ export default function Beans() {
                   </p>
                 ))}
                 <div className="row note">
-                  <button className="good" disabled={!sim.changed} onClick={applySim}>
-                    {sim.changed ? t("applyToDraft") : t("nothingToChange")}
+                  {/* La coche, encore : retenir ce que la regle propose. Rien ne part vers la
+                      machine ici — les valeurs descendent dans l'editeur juste en dessous. */}
+                  <button className="good iconBtn" disabled={!sim.changed} onClick={applySim}>
+                    <Icone nom="choisir" />
+                    <span className="lbl">{sim.changed ? t("applyToDraft") : t("nothingToChange")}</span>
                   </button>
                 </div>
               </div>
@@ -628,21 +649,29 @@ export default function Beans() {
             ))}
 
             <div className="row note">
+              {/* **La disquette passe a l'autre bouton, et c'est une correction.** Elle etait ici,
+                  sur l'ecriture qui part vers l'appareil, alors que /recipes venait d'etablir la
+                  regle inverse : la disquette garde en local, la machine nomme la destination. Les
+                  deux boutons sont voisins dans cette rangee — « ecrire sur la machine » et
+                  « memoriser sans ecrire » — donc c'est exactement l'endroit ou la confusion
+                  coute quelque chose : l'un est definitif sur l'appareil, l'autre non. */}
               <button className="primary iconBtn" disabled={busy} onClick={() => save(true)}>
-                <Icone nom="ecrire" />
+                <Icone nom="machine" />
                 <span className="lbl">{t("writeToMachine")}</span>
               </button>
               {/* Mémoriser le brouillon sans rien écrire sur la machine : c'est ce qui permet
                   d'essayer un réglage, de le garder, et de revenir à l'ancien. */}
-              <button disabled={busy} onClick={() => memorise(draft)} title={t("presetSaveTitle")}>
-                {t("presetSaveDraft")}
+              <button className="iconBtn" disabled={busy} onClick={() => memorise(draft)} title={t("presetSaveTitle")}>
+                <Icone nom="ecrire" />
+                <span className="lbl">{t("presetSaveDraft")}</span>
               </button>
               <button className="iconBtn" disabled={busy} onClick={() => pick(bean)}>
                 <Icone nom="reinitialiser" />
                 <span className="lbl">{tc("reset")}</span>
               </button>
-              <button className="danger discret" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
-                {t("delete")}
+              <button className="danger discret iconBtn" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
+                <Icone nom="corbeille" />
+                <span className="lbl">{t("delete")}</span>
               </button>
             </div>
           </div>

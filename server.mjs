@@ -163,6 +163,10 @@ function makeMachine(row) {
     // Étranglement de la résolution du DSN, et dédoublonnage de son verdict dans le journal.
     dsnLastTry: 0,
     dsnLastMsg: null,
+    // Dernier verdict de sonde. Il existe pour que le refus adressé à l'utilisateur puisse nommer
+    // la cause réelle au lieu de recopier une consigne générique : la même information partait
+    // déjà au journal, elle n'atteignait simplement pas l'écran.
+    dsnLastProbe: null,
 
     lanKey: Buffer.from((env ? ENV_MACHINE.lanKey : null) ?? "", "utf8"),
     lanKeyId: env ? ENV_MACHINE.lanKeyId : 0,
@@ -293,8 +297,21 @@ const machineById = (id) => MACHINES.get(String(id)) ?? null;
  * la machine (« ECAM 610.75.MB », le plus parlant des replis), le nom dérivé du numéro de série,
  * le DSN, l'identifiant. Toujours une chaîne non vide.
  */
+/**
+ * Le nom affiche d'une machine.
+ *
+ * **Le numero de serie n'est PAS un nom.** Il fermait cette chaine, et comme le modele n'est lu
+ * qu'apres la cle LAN, c'est lui qui titrait la carte pendant toute la mise en service — soit
+ * exactement le moment ou l'on regarde cette page. Releve : le DSN imprime quatre fois dans une
+ * seule carte, dont en titre `h2`, alors qu'il a deja sa propre ligne juste en dessous. Un serie
+ * de quinze caracteres ne se prononce pas, ne se retient pas, et ne distingue donc pas deux
+ * appareils pour un humain : il identifie, il ne nomme pas.
+ *
+ * L'identifiant qui ferme la chaine (`m1`) est court, stable, et c'est celui que le journal
+ * emploie — la carte le montre d'ailleurs a cote du titre.
+ */
 function machineLabel(m) {
-  return m.label || (m.modelKey ? findModel(m.modelKey)?.type : null) || m.identity?.machineName || m.dsn || m.id;
+  return m.label || (m.modelKey ? findModel(m.modelKey)?.type : null) || m.identity?.machineName || m.id;
 }
 
 /**
@@ -756,9 +773,13 @@ async function postLocalReg(m) {
   return new Promise((resolve) => {
     const r = httpRequest(
       { host: t.ip, port: 80, path: "/local_reg.json", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": b.length, Host: t.ip, Connection: "close" } },
-      (res) => { res.on("data", () => {}); res.on("end", () => { m.lastRegisterAt = Date.now(); resolve({ ok: res.statusCode < 300, status: res.statusCode }); }); },
+      (res) => { res.on("data", () => {}); res.on("end", () => { m.lastRegisterAt = Date.now(); resolve(res.statusCode < 300 ? { ok: true, status: res.statusCode } : { ok: false, error: "refused", status: res.statusCode }); }); },
     );
-    r.on("error", (e) => { L("out", `local_reg erreur: ${e.message}`, m); resolve({ ok: false }); });
+    // **Le code de cause voyage, le message technique reste au journal.** L'échec était rendu par un
+    // `{ ok: false }` nu, que personne ne lisait : les pages annonçaient « commande envoyée » alors
+    // que la machine n'avait jamais entendu l'annonce, donc n'irait jamais chercher la commande.
+    // C'est le cas d'une cafetière hors tension au secteur ou sortie du réseau, et il doit se dire.
+    r.on("error", (e) => { L("out", `local_reg erreur: ${e.message}`, m); resolve({ ok: false, error: "unreachable" }); });
     r.setTimeout(8000, () => r.destroy());
     r.write(b); r.end();
   });
@@ -1534,10 +1555,16 @@ async function checkCloudOta(m, token) {
 }
 
 async function discoverLanKey(m, { email, password, jwt: givenJwt, remember = false }) {
-  const dsn = await resolveDsn(m);
+  // **Un clic mérite une vraie tentative, et une seule.** `resolveDsn` s'étrangle à une sonde par
+  // 30 s pour ne pas marteler la machine depuis les rafraîchissements de page — appliqué à une
+  // action explicite, cet étranglement renvoyait un refus SANS avoir rien tenté, jusqu'à 30 s
+  // après le clic précédent. `force` lève l'étranglement ; un DSN déjà en cache ne coûte toujours
+  // aucune sonde.
+  const dsn = await resolveDsn(m, { force: true });
   // Le DSN est la seule dépendance de la découverte envers la machine — et une fois mémorisé,
-  // elle n'a plus besoin d'elle du tout. Le message doit donc désigner l'action qui débloque.
-  if (!dsn) throw new Error("DSN inconnu : la clé est rangée sous le numéro de série de la machine, que le serveur obtient en l'interrogeant. Renseigner l'adresse de la machine (page « Machines »), ou forcer MACHINE_DSN dans .env.local.");
+  // elle n'a plus besoin d'elle du tout. Le refus doit donc nommer la cause, pas réciter la liste
+  // des causes possibles.
+  if (!dsn) throw new Error(`DSN inconnu, et la clé est rangée chez Ayla sous ce numéro : ${raisonDsnManquant(m)}`);
 
   const accessToken = await aylaAccessToken(m, { email, password, jwt: givenJwt, remember });
 
@@ -1593,17 +1620,44 @@ function applyLanKey(m, { key, keyId }, source) {
  * MACHINE, pas par le module : sinon la sonde de l'une servirait de cache à l'autre, et le
  * verdict de l'une ferait taire celui de sa voisine.
  */
-async function resolveDsn(m, { compare = false } = {}) {
+/**
+ * **Pourquoi le DSN manque — trois causes, trois réparations.**
+ *
+ * Le refus disait « Renseigner l'adresse de la machine (page Machines), ou forcer MACHINE_DSN »
+ * dans tous les cas, y compris quand l'adresse ÉTAIT enregistrée et que c'est la cafetière qui
+ * n'avait pas répondu. Il envoyait alors refaire ce qui venait d'être fait, et la vraie cause —
+ * appareil hors tension ou hors réseau — restait dans le journal. Relevé sur l'installation
+ * réelle : adresse (IP_MACHINE) enregistrée, sonde en timeout, et l'utilisateur renvoyé vers son
+ * .env.local.
+ *
+ * La sonde a déjà tranché ; on ne fait que lire son verdict.
+ */
+function raisonDsnManquant(m) {
+  if (!m.ip) {
+    return "aucune adresse de machine n'est enregistrée, donc le serveur ne sait pas qui interroger. Renseignez-la sur la page « Machines », ou forcez MACHINE_DSN dans .env.local.";
+  }
+  const r = m.dsnLastProbe;
+  if (r?.reachable) {
+    return `quelque chose répond à ${m.ip} (HTTP ${r.status ?? "?"} sur /regtoken.json) mais n'annonce aucun numéro de série : ce n'est probablement pas la cafetière. Vérifiez l'adresse sur la page « Machines ».`;
+  }
+  return `la machine n'a pas répondu à ${m.ip}${r?.error ? ` (${r.error})` : ""}. Son numéro de série ne se lit que sur elle : vérifiez qu'elle est alimentée au secteur et joignable depuis ce serveur, ou forcez MACHINE_DSN dans .env.local pour vous en passer.`;
+}
+
+async function resolveDsn(m, { compare = false, force = false } = {}) {
   if (m.dsn && !compare) return m.dsn;
   // Sans cela, la resolution paresseuse en tete de handleApi lance une sonde de 4 s a CHAQUE
   // appel d API tant que le DSN est inconnu — or les pages interrogent /api/status toutes les
   // 3 s. Resultat : le reseau martele et le journal noye sous des lignes identiques. Une
   // tentative toutes les 30 s suffit ; `compare` (action explicite) n est jamais bride.
+  // `force` lève l'étranglement — et rien d'autre : contrairement à `compare`, il ne fait pas
+  // resonder une machine dont le DSN est déjà connu (le garde ci-dessus a déjà rendu la main).
+  // C'est ce qu'il faut pour une action explicite : au plus une sonde, jamais zéro.
   if (!compare) {
-    if (Date.now() - m.dsnLastTry < 30000) return m.dsn;
+    if (!force && Date.now() - m.dsnLastTry < 30000) return m.dsn;
     m.dsnLastTry = Date.now();
   }
   const r = await probeRegtoken(m);
+  m.dsnLastProbe = r;
   // L'adresse a pu changer pendant la requête (saisie d'une nouvelle machine, oubli). Attribuer
   // le DSN d'un ancien appareil à la nouvelle adresse serait faux — et c'est arrivé : une sonde
   // lancée au démarrage a repeuplé, 186 ms plus tard, un DSN qu'un changement d'adresse venait
@@ -1634,7 +1688,7 @@ async function resolveDsn(m, { compare = false } = {}) {
   } else if (!m.dsn) {
     m.dsnLastMsg = null;
   m.dsn = found;
-    m.dsnSource = "machine (regtoken.json)";
+    m.dsnSource = "lu sur la machine";
     L("sys", `DSN découvert sur la machine : ${found}`, m);
   }
   // Mémorisé pour pouvoir redémarrer sans la machine.
@@ -2934,8 +2988,9 @@ async function handleApi(req, res) {
     const email = typeof b.email === "string" ? b.email.trim() : "";
     const password = typeof b.password === "string" ? b.password : "";
     const jwt = typeof b.jwt === "string" && b.jwt.trim() ? b.jwt.trim() : null;
-    if (!m.dsn) {
-      return raw(res, JSON.stringify({ error: "DSN inconnu : la fiche OTA est rangée chez Ayla sous le numéro de série de la machine. Renseigner son adresse pour que le serveur le lise.", needsDsn: true }), 409);
+    // Même règle que la clé LAN : on tente une fois avant de refuser, et le refus nomme la cause.
+    if (!(await resolveDsn(m, { force: true }))) {
+      return raw(res, JSON.stringify({ error: `DSN inconnu, et la fiche OTA est rangée chez Ayla sous ce numéro : ${raisonDsnManquant(m)}`, needsDsn: true }), 409);
     }
     try {
       // La cascade choisit la voie la moins coûteuse : jeton en mémoire, session mémorisée,

@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
+import Icone from "../icons";
 
 interface OrderEntry {
   id: number;
@@ -149,12 +150,20 @@ export default function Profils() {
               ))}
             </select>
           </div>
-          <button className="primary" disabled={busy || data?.import?.active} onClick={startImport}>
-            {data?.import?.active ? t("importing") : t("import")}
+          {/* Importer, c'est LIRE sur la machine : le glyphe est celui que /machines et l'accueil
+              emploient deja pour ca — une valeur qui descend de l'appareil vers nous. */}
+          <button className="primary iconBtn" disabled={busy || data?.import?.active} onClick={startImport}>
+            <Icone nom="lire" />
+            <span className="lbl">{data?.import?.active ? t("importing") : t("import")}</span>
           </button>
-          <button onClick={() => setShowProps(!showProps)}>
-            {showProps ? tc("hide") : t("propsButton")} (
-            {absentCount ? t("propsCountAbsent", { read: readCount, absent: absentCount }) : t("propsCount", { read: readCount })})
+          {/* Le chevron ne change pas de dessin, il pivote : `.iconBtn.ouvert` s'en charge. Un
+              second glyphe pour l'etat ouvert aurait ete deux formes pour une seule bascule. */}
+          <button className={"iconBtn" + (showProps ? " ouvert" : "")} onClick={() => setShowProps(!showProps)}>
+            <Icone nom="chevron" />
+            <span className="lbl">
+              {showProps ? tc("hide") : t("propsButton")} (
+              {absentCount ? t("propsCountAbsent", { read: readCount, absent: absentCount }) : t("propsCount", { read: readCount })})
+            </span>
           </button>
         </div>
         {data?.import && (
@@ -211,6 +220,14 @@ export default function Profils() {
       ) : (
         <>
           <h2>{t("listHeading", { count: data.model.nProfiles })}</h2>
+          {/* **Cinq profils se comparent, donc ils se voient cote a cote.** Mesure a 1 194 px : cinq
+              cartes de 1 140 x 80 px pour 49 caracteres chacune — une bande pleine largeur par nom
+              de profil, et le seul geste de la carte (« Activer ») rejete a 1 000 px du nom qu'il
+              active. Choisir un profil, c'est justement les mettre en regard.
+              La grille ordinaire (19 rem) et non `dense` : le resume des favoris est une phrase —
+              « cafe · cappuccino · … » — et des colonnes plus etroites la feraient courir sur
+              quatre lignes, ce qui rendrait les cartes plus hautes qu'elles ne sont larges. */}
+          <div className="cards">
           {data.profiles.map((p) => (
             <div className="card" key={p.id}>
               <div className="cardHead">
@@ -249,12 +266,14 @@ export default function Profils() {
                     </div>
                   )}
                 </div>
-                <button disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
-                  {t("activate")}
+                <button className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
+                  <Icone nom="choisir" />
+                  <span className="lbl">{t("activate")}</span>
                 </button>
               </div>
             </div>
           ))}
+          </div>
 
           <h2>{t("customsHeading", { count: data.model.nCustomRecipes })}</h2>
           <div className="card">
