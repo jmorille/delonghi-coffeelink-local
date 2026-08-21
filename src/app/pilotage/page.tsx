@@ -4,6 +4,8 @@ import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
+import ConfirmSettings from "../ConfirmSettings";
+import { cleAnnonce, echecAnnonce } from "../register";
 import { splitSensors, stateLabel, stateTone } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
@@ -34,6 +36,7 @@ export default function Dashboard() {
   const ta = useTranslations("alarm");
   // La question de préparation est celle de l'accueil : même geste, même phrase, un seul endroit.
   const tb = useTranslations("beverages");
+  const tconf = useTranslations("confirmations");
   const [status, setStatus] = useState<any>(null);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [busy, setBusy] = useState(false);
@@ -102,10 +105,16 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyObj),
       }).then((x) => x.json());
+      // Même règle que l'accueil, et pour la même raison : voir `register.ts`. Annoncer un envoi
+      // que l'annonce a démenti est ce qui a fait passer une machine injoignable pour un bouton
+      // cassé.
+      const annonce = echecAnnonce(r);
       setReport(
         r.error
           ? { scope, text: tc("error", { message: r.error }), kind: "err" }
-          : { scope, text: ok ? ok(r) : tp("powerSent", { label: r.program ?? "" }), kind: "ok" },
+          : annonce
+            ? { scope, text: tc(cleAnnonce(annonce)), kind: "err" }
+            : { scope, text: ok ? ok(r) : tp("powerSent", { label: r.program ?? "" }), kind: "ok" },
       );
       await refresh();
     } catch (e) {
@@ -126,6 +135,7 @@ export default function Dashboard() {
     demander({
       question: tp("confirmPower", { verb }),
       warn: next ? tp("rinseWarning") : undefined,
+      geste: "power",
       onConfirm: () => send("power", { action: next ? "on" : "off" }),
     });
   };
@@ -135,6 +145,7 @@ export default function Dashboard() {
     demander({
       question: tb("confirmPrepare", { beverage: r.name, profile: tc("profileFallback", { id: r.profileId }) }),
       warn: tb("confirmPrepareWarning"),
+      geste: "dispense",
       onConfirm: async () => {
         setLance(r);
         await send("boissons", { action: "dispense", recipeId: r.id });
@@ -269,8 +280,14 @@ export default function Dashboard() {
             </div>
         </div>
         <div className="row note">
-          <button onClick={register} disabled={busy} title={t("announceTitle")}>
-            {t("announce")}
+          {/* **Le libellé reste visible sur cette page, donc pas d'`aria-label`.** /machines en pose
+              un partout parce que ses libellés PEUVENT disparaitre : le repli a l'icone est une
+              container query sur `.actions`, qui n'existe pas ici. Doubler un texte visible par un
+              `aria-label` identique n'ajoute rien et cree un endroit ou les deux peuvent diverger —
+              ce qui casse la regle « le nom accessible contient le texte vu ». */}
+          <button className="iconBtn" onClick={register} disabled={busy} title={t("announceTitle")}>
+            <Icone nom="annonce" />
+            <span className="lbl">{t("announce")}</span>
           </button>
         </div>
         <Statut scope="liaison" />
@@ -281,11 +298,13 @@ export default function Dashboard() {
       <h2>{t("machineCommands")}</h2>
       <div className="card">
         <div className="row">
-          <button className="good" disabled={busy} onClick={() => power(true)}>
-            {tp("turnOn")}
+          <button className="good iconBtn" disabled={busy} onClick={() => power(true)}>
+            <Icone nom="marche" />
+            <span className="lbl">{tp("turnOn")}</span>
           </button>
-          <button className="danger discret" disabled={busy} onClick={() => power(false)}>
-            {tp("turnOff")}
+          <button className="danger discret iconBtn" disabled={busy} onClick={() => power(false)}>
+            <Icone nom="marche" />
+            <span className="lbl">{tp("turnOff")}</span>
           </button>
         </div>
         <Statut scope="power" />
@@ -365,14 +384,19 @@ export default function Dashboard() {
           {recipes.map((r) => (
             <button
               key={r.id}
-              className="primary"
+              /* `multi` : le libellé est un NOM tapé sur la machine, pas un verbe du catalogue.
+                 `.iconBtn` interdit le retour a la ligne — juste, pour une commande — mais ici
+                 la grille fait des cellules de 150 px et « Recette perso 1 » plus la tasse
+                 demandent 168 px : sans cette exception le bouton deborderait sa cellule. */
+              className="primary iconBtn multi"
               disabled={busy}
               onClick={() => dispense(r)}
               // L'identifiant de boisson et le profil étaient écrits ici en français, en dur, hors
               // du catalogue — et affichés à tout le monde alors que c'est du détail protocolaire.
               title={t("dispenseTitle")}
             >
-              {r.name}
+              <Icone nom="preparer" />
+              <span className="lbl">{r.name}</span>
             </button>
           ))}
         </div>
@@ -384,16 +408,24 @@ export default function Dashboard() {
             avec un espresso deviné. */}
         <div className="row note">
           <button
-            className="danger discret"
+            className="danger discret iconBtn"
             disabled={busy || !lance}
             onClick={stop}
             title={!lance ? tp("stopUnavailable") : tp("stopTitle")}
           >
-            {t("stopPreparation")}
+            <Icone nom="arreter" />
+            <span className="lbl">{t("stopPreparation")}</span>
           </button>
         </div>
         <Statut scope="boissons" />
       </div>
+      </section>
+
+      {/* Placé après les deux blocs qu'il gouverne — les commandes machine et les boissons — et non
+          en tête de page : c'est un réglage de comportement, pas un état à surveiller. */}
+      <section>
+      <h2>{tconf("heading")}</h2>
+      <ConfirmSettings />
       </section>
 
       <section>

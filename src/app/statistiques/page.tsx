@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import Icone from "../icons";
 import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
 
@@ -184,17 +185,27 @@ export default function Statistiques() {
       </div>
 
       <div className="row barreActions">
-        <button disabled={busy || scanning} onClick={() => read(RANGES_KNOWN, t("scopeKnown"))}>
-          {t("readKnown")}
+        {/* **Le meme glyphe sur les deux, et c'est exact.** Les deux boutons font la meme chose —
+            demander des compteurs a la machine — et ne different que par l'etendue : trois requetes
+            pour les dix compteurs identifies, huit pour l'espace complet. Inventer un second dessin
+            aurait affirme une difference de nature qui n'existe pas ; la difference d'echelle est
+            deja portee par `.mini`, qui rend le second en 13 px estompes a cote d'un 16 px plein. */}
+        <button className="iconBtn" disabled={busy || scanning} onClick={() => read(RANGES_KNOWN, t("scopeKnown"))}>
+          <Icone nom="lire" />
+          <span className="lbl">{t("readKnown")}</span>
         </button>
-        <button className="mini" disabled={busy || scanning} onClick={() => read(RANGES_ALL, t("scopeAll"))} title={t("readAllTitle")}>
-          {t("readAll")}
+        <button className="mini iconBtn" disabled={busy || scanning} onClick={() => read(RANGES_ALL, t("scopeAll"))} title={t("readAllTitle")}>
+          <Icone nom="lire" taille={14} />
+          <span className="lbl">{t("readAll")}</span>
         </button>
         {d?.scan && (
           <span className="pill on">{t("scanning", { remaining: d.scan.remaining })}</span>
         )}
-        {msg && <span className="sub">{msg}</span>}
       </div>
+      {/* Le compte rendu sort de la barre : `.barreActions` est une rangee de commandes centrees,
+          et une phrase y devenait le quatrieme element d'une liste de boutons — centree sur leur
+          hauteur, donc alignee sur rien. Elle appartient a la ligne d'en dessous. */}
+      {msg && <p className="legende">{msg}</p>}
 
       {!d || d.count === 0 ? (
         <div className="card">

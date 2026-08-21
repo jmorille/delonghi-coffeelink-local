@@ -47,6 +47,28 @@ interface Rapport {
   kind: "ok" | "err";
 }
 
+/**
+ * La provenance d'une valeur — et seulement quand il y a une valeur.
+ *
+ * **Deux defauts, une seule ligne de rendu.** Les quatre lignes d'etat de la carte rendaient
+ * « {valeur} ({source}) » sans condition :
+ *
+ * - quand la valeur manque, la source vaut « inconnu » elle aussi, et la ligne affichait
+ *   « inconnu (inconnu) », « absente (inconnue) », « non configuree (inconnue) » — le meme mot
+ *   deux fois, dont une entre parentheses, pour ne rien ajouter ;
+ * - cinq sources portent DEJA des parentheses (« MACHINE_DSN (.env.local) », « cache local
+ *   (decouverte du … ) », et les trois autres variables d'environnement), ce qui donnait
+ *   « (MACHINE_DSN (.env.local)) ». Corriger chaque chaine une par une aurait laisse le piege
+ *   ouvert pour la suivante : ce sont les parentheses EXTERIEURES qui sont fautives.
+ *
+ * Le point median est deja le separateur de cette page — la ligne du modele et le journal
+ * l'emploient — et il n'imbrique rien.
+ */
+function provenance(connu: boolean, source: string) {
+  if (!connu) return null;
+  return <span className="sub"> · {source}</span>;
+}
+
 interface Payload {
   defaultId: string;
   machines: MachineSummary[];
@@ -488,9 +510,10 @@ export default function Machines() {
                     portent des `h3` (`.titreBloc`). Le niveau vient de la structure, l'apparence de
                     `.cardTitle` : le titre ne grossit pas. */}
                 <h2 className="cardTitle">{m.label}</h2>
-                <span className="mono sub">
-                  {m.id}
-                </span>
+                {/* L'identifiant technique — celui du journal et du parametre `?machine=`. Il
+                    disparait quand le titre le repete deja : en fin de chaine de repli, le nom
+                    derive EST l'identifiant, et la carte affichait « m1 m1 ». */}
+                {m.id !== m.label && <span className="mono sub">{m.id}</span>}
                 {m.id === courante && <span className="pill on">{t("current")}</span>}
                 {m.id === d.defaultId && <span className="pill">{t("isDefault")}</span>}
                 <span className={`pill ${m.ready ? "on" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
@@ -500,26 +523,48 @@ export default function Machines() {
                 )}
                 {m.running && <span className="pill on">{m.running}</span>}
               </div>
+              {/* **Boutons à icônes, comme le reste du site.** PRODUCT.md pose l'icône comme canal
+                  principal de l'affordance ; cette page était la seule surface de configuration à
+                  n'en avoir aucune. Le libellé reste — `.iconBtn` le replie par *container query*
+                  quand la carte se resserre, et chaque bouton garde son nom accessible même replié.
+                  Le verrou est `!!busy` PARTOUT et non `occupe` : `run()` n'a qu'un seul créneau
+                  (`setBusy(id)` puis `setBusy(null)`), donc lancer une action sur une machine
+                  pendant qu'une autre travaille libérerait le verrou de la première en avance. */}
               <div className="row">
                 {m.id !== courante && (
-                  <button onClick={() => select(m.id)} disabled={!!busy}>
-                    {t("select")}
+                  <button className="iconBtn" onClick={() => select(m.id)} disabled={!!busy} aria-label={t("select")}>
+                    <Icone nom="machine" />
+                    <span className="lbl">{t("select")}</span>
                   </button>
                 )}
-                <button className={ouvert ? "" : "primary"} onClick={() => setOpen({ ...open, [m.id]: !ouvert })}>
-                  {ouvert ? t("configureHide") : t("configure")}
+                <button
+                  className={"iconBtn" + (ouvert ? "" : " primary")}
+                  onClick={() => setOpen({ ...open, [m.id]: !ouvert })}
+                  aria-expanded={ouvert}
+                  aria-label={ouvert ? t("configureHide") : t("configure")}
+                >
+                  <Icone nom="chevron" />
+                  <span className="lbl">{ouvert ? t("configureHide") : t("configure")}</span>
                 </button>
                 {m.id !== d.defaultId && (
                   <button
-                    className="mini"
+                    className="mini iconBtn"
                     onClick={() => patch(m, { makeDefault: true }, (r) => t("defaultSet", { name: r.machine.label }))}
                     disabled={!!busy}
+                    aria-label={t("makeDefault")}
                   >
-                    {t("makeDefault")}
+                    <Icone nom="etoile" taille={14} />
+                    <span className="lbl">{t("makeDefault")}</span>
                   </button>
                 )}
-                <button className="danger discret" onClick={() => remove(m)} disabled={!!busy}>
-                  {d.machines.length <= 1 ? t("reset") : t("delete")}
+                <button
+                  className="danger discret iconBtn"
+                  onClick={() => remove(m)}
+                  disabled={!!busy}
+                  aria-label={d.machines.length <= 1 ? t("reset") : t("delete")}
+                >
+                  <Icone nom="corbeille" />
+                  <span className="lbl">{d.machines.length <= 1 ? t("reset") : t("delete")}</span>
                 </button>
               </div>
             </div>
@@ -544,44 +589,54 @@ export default function Machines() {
 
             <div className="kv">
               <span className="k">{t("name")}</span>
-              <span>{m.custom ?? <span className="sub">{t("nameDerived", { label: m.label })}</span>}</span>
+              <span>{m.custom ?? <span className="sub">{t("nameDerived")}</span>}</span>
             </div>
             <div className="kv">
               <span className="k">{tm("address")}</span>
               <span>
-                {m.ip ? <span className="mono">{m.ip}</span> : t("noAddress")} <span className="sub">({m.ipSource})</span>
+                {m.ip ? <span className="mono">{m.ip}</span> : t("noAddress")}
+                {provenance(!!m.ip, m.ipSource)}
                 {m.envForced.ip && <span className="pill"> {t("envForced")}</span>}
               </span>
             </div>
             <div className="kv">
               <span className="k">{tk("heading")}</span>
               <span>
-                {m.lanKeySet ? t("lanKeyPresent", { keyId: String(m.lanKeyId ?? "?") }) : t("lanKeyAbsent")}{" "}
-                <span className="sub">({m.lanKeySource})</span>
+                {m.lanKeySet ? t("lanKeyPresent", { keyId: String(m.lanKeyId ?? "?") }) : t("lanKeyAbsent")}
+                {provenance(m.lanKeySet, m.lanKeySource)}
               </span>
             </div>
             <div className="kv">
               <span className="k">DSN</span>
               <span>
-                {m.dsn ? <span className="mono">{m.dsn}</span> : t("unknown")} <span className="sub">({m.dsnSource})</span>
+                {m.dsn ? <span className="mono">{m.dsn}</span> : t("unknown")}
+                {provenance(!!m.dsn, m.dsnSource)}
               </span>
             </div>
             <div className="kv">
               <span className="k">{t("model")}</span>
               <span className="row">
                 <span>
-                  {m.model.key ? `${m.model.key}${m.model.machineName ? ` · ${m.model.machineName}` : ""}` : t("unknown")}{" "}
-                  <span className="sub">
-                    ({m.model.source}) · {t("catalogOf", { type: m.model.catalogType, count: m.model.catalogBeverages })}
-                  </span>
+                  {m.model.key ? `${m.model.key}${m.model.machineName ? ` · ${m.model.machineName}` : ""}` : t("unknown")}
+                  {provenance(!!m.model.key, m.model.source)}
+                  {/* Le catalogue en service est un fait independant du modele detecte : il reste
+                      annonce meme quand le modele est inconnu, puisque c'est lui qui decide des
+                      boissons affichees sur l'accueil. */}
+                  <span className="sub"> · {t("catalogOf", { type: m.model.catalogType, count: m.model.catalogBeverages })}</span>
                 </span>
                 {/* Le modèle est demandé automatiquement dès que les deux prérequis sont réunis
                     (voir maybeReadModel côté serveur). Ce bouton couvre le reste : machine déjà
                     configurée avant que ça n'existe, lecture qui a expiré, ou simple vérification.
                     C'est une LECTURE — rien n'est préparé ni écrit. */}
                 {m.ready && (
-                  <button className="mini" onClick={() => readModel(m)} disabled={occupe}>
-                    {m.model.key ? t("modelReread") : t("modelRead")}
+                  <button
+                    className="mini iconBtn"
+                    onClick={() => readModel(m)}
+                    disabled={!!busy}
+                    aria-label={m.model.key ? t("modelReread") : t("modelRead")}
+                  >
+                    <Icone nom="lire" taille={14} />
+                    <span className="lbl">{m.model.key ? t("modelReread") : t("modelRead")}</span>
                   </button>
                 )}
               </span>
@@ -604,33 +659,66 @@ export default function Machines() {
               <div className="blocSuite">
                 {/* 0. le nom — purement décoratif, donc en premier : c'est le réglage sans
                        conséquence, et celui qu'on vient changer le plus souvent. */}
-                <h3 className="titreBloc">{t("nameHeading")}</h3>
+                {/* **Le titre du bloc EST le nom du champ.** Un seul champ sous ce titre, donc
+                    `aria-labelledby` plutôt qu'une étiquette visible qui répéterait mot pour mot le
+                    `h3` situé six pixels au-dessus. Avant : aucun `id`, aucun `for`, aucun
+                    `aria-label` — le nom accessible retombait sur le `placeholder`, qui vaut ici le
+                    numéro de série de la machine. Le lecteur d'écran annonçait donc le champ de
+                    renommage « AC000W0XXXXXXXX, édition ». */}
+                <h3 className="titreBloc" id={`nom-t-${m.id}`}>{t("nameHeading")}</h3>
                 <div className="row">
                   <input
+                    id={`nom-${m.id}`}
+                    aria-labelledby={`nom-t-${m.id}`}
+                    aria-describedby={`nom-n-${m.id}`}
                     value={nom}
                     placeholder={m.label}
                     onChange={(e) => setRenaming({ ...renaming, [m.id]: e.target.value })}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !occupe && nom !== (m.custom ?? "")) rename(m);
+                      if (e.key === "Enter" && !busy && nom !== (m.custom ?? "")) rename(m);
                     }}
                     className="champ"
                   />
-                  <button className="primary" onClick={() => rename(m)} disabled={occupe || nom === (m.custom ?? "")}>
-                    {t("rename")}
+                  <button
+                    className="primary iconBtn"
+                    onClick={() => rename(m)}
+                    disabled={!!busy || nom === (m.custom ?? "")}
+                    aria-label={t("rename")}
+                  >
+                    <Icone nom="ecrire" />
+                    <span className="lbl">{t("rename")}</span>
                   </button>
                   {m.custom && (
-                    <button className="mini" onClick={() => setRenaming({ ...renaming, [m.id]: "" })} disabled={occupe}>
-                      {t("nameClear")}
+                    <button
+                      className="mini iconBtn"
+                      onClick={() => setRenaming({ ...renaming, [m.id]: "" })}
+                      disabled={!!busy}
+                      aria-label={t("nameClear")}
+                    >
+                      <Icone nom="corbeille" taille={14} />
+                      <span className="lbl">{t("nameClear")}</span>
                     </button>
                   )}
-                  <span className="sub">{t("nameNote")}</span>
                 </div>
+                {/* **La note sort de la rangee.** `.row` veut dire « ces commandes tiennent sur une
+                    ligne, avec une gouttiere et un alignement centre ». On y avait pose trois
+                    natures de chose comme trois freres : un champ, ses commandes, et une phrase.
+                    Mesure a 390 px sur les six rangees de configuration, hauteur de la rangee
+                    contre celle de son plus grand enfant : 134/44, 211/44, 317/69, 206/69, 147/87,
+                    99/44 — soit de 2 a 4,6 fois. Et `align-items: center` centrait la phrase sur la
+                    hauteur des boutons, donc sa premiere ligne n'etait alignee sur rien.
+                    Une note qui decrit la rangee entiere se met SOUS elle : c'est ce que
+                    `.legende` dit deja — « collee a la ligne juste au-dessus, c'est SA legende ». */}
+                <p className="legende" id={`nom-n-${m.id}`}>{t("nameNote")}</p>
 
                 {/* 1. l'adresse — elle conditionne la clé, d'où cet ordre. */}
-                <h3 className="titreBloc">{tm("heading")}</h3>
+                <h3 className="titreBloc" id={`adr-t-${m.id}`}>{tm("heading")}</h3>
                 {m.envForced.ip && <p className="sub">{tm("envForced")}</p>}
                 <div className="row">
                   <input
+                    id={`adr-${m.id}`}
+                    aria-labelledby={`adr-t-${m.id}`}
+                    aria-describedby={`adr-n-${m.id}`}
                     type="text"
                     inputMode="url"
                     autoComplete="off"
@@ -641,89 +729,177 @@ export default function Machines() {
                     value={ip[m.id] ?? ""}
                     onChange={(e) => setIp({ ...ip, [m.id]: e.target.value })}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && (ip[m.id] ?? "").trim() && !occupe) saveIp(m);
+                      if (e.key === "Enter" && (ip[m.id] ?? "").trim() && !busy) saveIp(m);
                     }}
                     className="champ"
                   />
-                  <button className="primary" onClick={() => saveIp(m)} disabled={occupe || !(ip[m.id] ?? "").trim()}>
-                    {occupe ? tm("testing") : tm("save")}
+                  <button
+                    className="primary iconBtn"
+                    onClick={() => saveIp(m)}
+                    disabled={!!busy || !(ip[m.id] ?? "").trim()}
+                    aria-busy={occupe || undefined}
+                    aria-label={occupe ? tm("testing") : tm("save")}
+                  >
+                    <Icone nom="ecrire" />
+                    <span className="lbl">{occupe ? tm("testing") : tm("save")}</span>
                   </button>
                   {m.ipCachedAt && (
-                    <button className="mini" onClick={() => forgetIp(m)} disabled={occupe}>
-                      {tm("forget")}
+                    <button
+                      className="mini iconBtn"
+                      onClick={() => forgetIp(m)}
+                      disabled={!!busy}
+                      aria-label={tm("forget")}
+                    >
+                      <Icone nom="corbeille" taille={14} />
+                      <span className="lbl">{tm("forget")}</span>
                     </button>
                   )}
-                  <span className="sub">{tm("setNote")}</span>
                 </div>
+                <p className="legende" id={`adr-n-${m.id}`}>{tm("setNote")}</p>
 
                 {/* 2. la clé — rangée chez Ayla sous le DSN, donc dépendante de ce qui précède. */}
                 <h3 className="titreBloc">{tk("heading")}</h3>
-                {!m.dsn && <Alerte className="chapeau">{tk("needsDsn")}</Alerte>}
+                {/* **Deux causes, deux consignes.** Ce bandeau disait « renseignez d'abord
+                    l'adresse » dans les deux cas — y compris quand l'adresse ÉTAIT enregistrée et
+                    que c'est la machine qui n'avait pas répondu. Il envoyait alors refaire ce qui
+                    venait d'être fait, et la vraie cause — appareil hors tension ou hors réseau —
+                    n'était nulle part. Relevé sur l'installation réelle. */}
+                {!m.dsn && (
+                  <Alerte className="chapeau">
+                    {m.ip ? tk("needsDsnMute", { ip: m.ip }) : tk("needsDsn")}
+                  </Alerte>
+                )}
                 {d.discovery.missingConfig.length ? (
                   <p className="sub">{tk("missingConfig", { vars: d.discovery.missingConfig.join(", ") })}</p>
                 ) : (
                   <>
+                    {/* **Deux champs sous un seul titre**, donc deux étiquettes propres : le `h3`
+                        « Clé LAN » ne peut pas nommer à la fois l'adresse e-mail et le mot de passe.
+                        Elles sont visibles, au-dessus du champ, comme le formulaire d'ajout en bas
+                        de page le faisait déjà — et cette fois reliées, ce qui rend aussi le clic
+                        sur l'étiquette utile. */}
                     <div className="row">
-                      <input
-                        type="email"
-                        autoComplete="off"
-                        placeholder={tk("email")}
-                        value={c.email}
-                        onChange={(e) => setCreds({ ...creds, [m.id]: { ...c, email: e.target.value } })}
-                        className="champ"
-                      />
-                      {/* En clair, le champ redevient un champ texte ordinaire : sans autoCapitalize /
-                          autoCorrect / spellCheck, le clavier mobile met une majuscule au premier
-                          caractère et le correcteur s'en mêle. */}
-                      <span className="row serre">
+                      <span className="champBloc">
+                        <label htmlFor={"mail-" + m.id}>{tk("emailLabel")}</label>
                         <input
-                          type={showPassword[m.id] ? "text" : "password"}
+                          id={"mail-" + m.id}
+                          type="email"
+                          inputMode="email"
                           autoComplete="off"
                           autoCapitalize="off"
                           autoCorrect="off"
                           spellCheck={false}
-                          placeholder={tk("password")}
-                          value={c.password}
-                          onChange={(e) => setCreds({ ...creds, [m.id]: { ...c, password: e.target.value } })}
+                          /* Pas de `placeholder` : l'étiquette juste au-dessus dit déjà « E-mail du
+                             compte De'Longhi », et le répéter en gris dans la boîte n'ajoutait rien
+                             — sinon la disparition de l'indication dès la première frappe. */
+                          value={c.email}
+                          onChange={(e) => setCreds({ ...creds, [m.id]: { ...c, email: e.target.value } })}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter" && c.email && c.password && !occupe) discover(m);
+                            if (e.key === "Enter" && c.email && c.password && !busy && m.dsn) discover(m);
                           }}
                           className="champ"
                         />
-                        <button
-                          type="button"
-                          className="mini"
-                          aria-pressed={!!showPassword[m.id]}
-                          aria-label={showPassword[m.id] ? tk("hidePassword") : tk("showPassword")}
-                          title={showPassword[m.id] ? tk("hidePassword") : tk("showPassword")}
-                          onClick={() => setShowPassword({ ...showPassword, [m.id]: !showPassword[m.id] })}
-                        >
-                          {showPassword[m.id] ? tk("hide") : tk("show")}
-                        </button>
                       </span>
-                      <button className="primary" onClick={() => discover(m)} disabled={occupe || !c.email || !c.password || !m.dsn}>
-                        {occupe ? tk("working") : tk("fetch")}
+                      <span className="champBloc">
+                        <label htmlFor={"mdp-" + m.id}>{tk("passwordLabel")}</label>
+                        {/* En clair, le champ redevient un champ texte ordinaire : sans
+                            autoCapitalize / autoCorrect / spellCheck, le clavier mobile met une
+                            majuscule au premier caractère et le correcteur s'en mêle. */}
+                        <span className="champMdp">
+                          <input
+                            id={"mdp-" + m.id}
+                            type={showPassword[m.id] ? "text" : "password"}
+                            autoComplete="off"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            value={c.password}
+                            onChange={(e) => setCreds({ ...creds, [m.id]: { ...c, password: e.target.value } })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && c.email && c.password && !busy && m.dsn) discover(m);
+                            }}
+                            className="champ"
+                          />
+                          {/* **Dans le champ, plus à côté.** Voir `.champMdp` : posée en absolu, elle
+                              ne peut plus se replier sous lui — mesuré à 48 px en dessous, à 1 024
+                              comme à 1 921 px.
+
+                              `title` ne répète plus `aria-label` : nom et description identiques
+                              faisaient annoncer deux fois la même phrase. Il porte maintenant la
+                              conséquence — sur une tablette fixée au mur, un mot de passe de compte
+                              affiché en clair se lit de loin, et c'est ce qu'il faut savoir avant
+                              d'appuyer. */}
+                          <button
+                            type="button"
+                            className="oeil"
+                            aria-pressed={!!showPassword[m.id]}
+                            aria-controls={"mdp-" + m.id}
+                            aria-label={showPassword[m.id] ? tk("hidePassword") : tk("showPassword")}
+                            title={showPassword[m.id] ? tk("hideHint") : tk("showHint")}
+                            onClick={() => setShowPassword({ ...showPassword, [m.id]: !showPassword[m.id] })}
+                          >
+                            <Icone nom={showPassword[m.id] ? "oeilBarre" : "oeil"} taille={18} />
+                          </button>
+                        </span>
+                      </span>
+                      <button
+                        className="primary iconBtn"
+                        onClick={() => discover(m)}
+                        disabled={!!busy || !c.email || !c.password || !m.dsn}
+                        aria-busy={occupe || undefined}
+                        aria-label={occupe ? tk("working") : tk("fetch")}
+                      >
+                        <Icone nom="cle" />
+                        <span className="lbl">{occupe ? tk("working") : tk("fetch")}</span>
                       </button>
                       {m.lanKeyCachedAt && (
-                        <button className="mini" onClick={() => forgetKey(m)} disabled={occupe}>
-                          {tk("forget")}
+                        <button
+                          className="mini iconBtn"
+                          onClick={() => forgetKey(m)}
+                          disabled={!!busy}
+                          aria-label={tk("forget")}
+                        >
+                          <Icone nom="corbeille" taille={14} />
+                          <span className="lbl">{tk("forget")}</span>
                         </button>
                       )}
-                      <span className="sub">{tk("privacy")}</span>
                     </div>
-                    <label className="row note">
-                      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                      <span>{t("remember")}</span>
-                      <span className="sub">{t("rememberNote")}</span>
-                    </label>
+                    <p className="legende">{tk("privacy")}</p>
+                    {/* **Le nom accessible faisait 130 caractères** : le `<label>` enveloppait le
+                        libellé ET sa note, et sa zone cliquable mesurait 317 × 99 px sur téléphone
+                        — pour une case qui écrit un jeton de compte sur le disque. Le libellé seul
+                        nomme, la note décrit, et seul le libellé bascule au clic. */}
+                    <div className="row note">
+                      <label className="caseLibelle" htmlFor={"mem-" + m.id}>
+                        <input
+                          id={"mem-" + m.id}
+                          type="checkbox"
+                          checked={remember}
+                          aria-describedby={"mem-n-" + m.id}
+                          onChange={(e) => setRemember(e.target.checked)}
+                        />
+                        <span>{t("remember")}</span>
+                      </label>
+                    </div>
+                    <p className="legende" id={"mem-n-" + m.id}>{t("rememberNote")}</p>
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
                         récupération de clé obtient ouvre aussi la fiche OTA. */}
                     <div className="row note">
-                      <button onClick={() => checkOta(m)} disabled={occupe || !m.dsn}>
-                        {t("otaCheck")}
+                      <button
+                        className="iconBtn"
+                        onClick={() => checkOta(m)}
+                        disabled={!!busy || !m.dsn}
+                        aria-busy={occupe || undefined}
+                        aria-label={t("otaCheck")}
+                      >
+                        {/* Le nuage ne sert qu'ici, dans tout le produit : c'est la seule action qui
+                            quitte le réseau local. Le glyphe est autant un avertissement qu'une
+                            étiquette. */}
+                        <Icone nom="nuage" />
+                        <span className="lbl">{t("otaCheck")}</span>
                       </button>
-                      <span className="sub">{t("otaNote")}</span>
                     </div>
+                    <p className="legende">{t("otaNote")}</p>
                   </>
                 )}
               </div>
@@ -741,17 +917,46 @@ export default function Machines() {
 
       <div className="card">
         <h2>{t("addTitle")}</h2>
+        {/* **Les deux étiquettes existaient déjà — sans `for`, et sans envelopper leur champ.**
+            Elles s'affichaient donc, ne nommaient rien, et cliquer dessus ne donnait pas le focus.
+            Le nom accessible retombait sur le `placeholder` : le lecteur d'écran annonçait « Cuisine »
+            et « 192.168.1.42 », deux exemples, comme s'il s'agissait de valeurs déjà saisies. */}
         <div className="row">
-          <span>
-            <label>{t("nameOptional")}</label>
-            <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder={t("namePlaceholder")} />
+          <span className="champBloc">
+            <label htmlFor="ajout-nom">{t("nameOptional")}</label>
+            <input
+              id="ajout-nom"
+              className="champ"
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !busy) add();
+              }}
+              placeholder={t("namePlaceholder")}
+            />
           </span>
-          <span>
-            <label>{t("addressOptional")}</label>
-            <input value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })} placeholder="192.168.1.42" />
+          <span className="champBloc">
+            <label htmlFor="ajout-adresse">{t("addressOptional")}</label>
+            <input
+              id="ajout-adresse"
+              className="champ"
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              value={form.ip}
+              onChange={(e) => setForm({ ...form, ip: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !busy) add();
+              }}
+              placeholder={t("addressPlaceholder")}
+            />
           </span>
-          <button className="primary" onClick={add} disabled={!!busy}>
-            {t("add")}
+          <button className="primary iconBtn" onClick={add} disabled={!!busy} aria-label={t("add")}>
+            <Icone nom="ajouter" />
+            <span className="lbl">{t("add")}</span>
           </button>
         </div>
       </div>
@@ -772,8 +977,14 @@ export default function Machines() {
             {cloud?.set ? (
               <>
                 <span>{t("cloudSessionSince", { date: new Date(cloud.at ?? 0).toLocaleString("fr-FR") })}</span>
-                <button className="mini" onClick={forgetCloud} disabled={!!busy}>
-                  {t("cloudSessionForget")}
+                <button
+                  className="mini iconBtn"
+                  onClick={forgetCloud}
+                  disabled={!!busy}
+                  aria-label={t("cloudSessionForget")}
+                >
+                  <Icone nom="corbeille" taille={14} />
+                  <span className="lbl">{t("cloudSessionForget")}</span>
                 </button>
               </>
             ) : (
@@ -783,13 +994,14 @@ export default function Machines() {
         </div>
         <div className="kv">
           <span className="k">{t("limitsTitle")}</span>
-          <span className="sub">
-            {t("limitsCatalog")}
-            <br />
-            {t("limitsEnv")}
-            <br />
-            {t("limitsRouting")}
-          </span>
+          {/* Trois énoncés indépendants, donc une liste. En `<br>` ils n'étaient ni comptés ni
+              navigables : l'arbre d'accessibilité rendait « LineBreak » entre eux, et un lecteur
+              d'écran ne pouvait pas savoir qu'il y en avait trois. */}
+          <ul className="sub listeLimites">
+            <li>{t("limitsCatalog")}</li>
+            <li>{t("limitsEnv")}</li>
+            <li>{t("limitsRouting")}</li>
+          </ul>
         </div>
       </div>
       {dialogue}

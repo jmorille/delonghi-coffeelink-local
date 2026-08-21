@@ -7,6 +7,7 @@ import { useMachinePush } from "./events";
 import Icone from "./icons";
 import Alerte from "./Alerte";
 import { useConfirm } from "./confirm";
+import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
 import { splitSensors, stateLabel, type Translator } from "./machineState";
 
@@ -336,13 +337,22 @@ export default function Boissons() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(corps),
       }).then((x) => x.json());
+      /**
+       * **Une commande acceptée n'est pas une commande reçue.** La file est locale ; c'est
+       * `local_reg` qui prévient la machine, et lui seul. Quand l'annonce échoue, la réponse le
+       * dit (`register.ok === false`) et il faut le dire aussi — sinon la page annonce « Allumer
+       * envoyé » à une cafetière qui n'a rien entendu, relevé sur la machine réelle.
+       */
+      const annonce = echecAnnonce(r);
       setReport(
         r.error
           ? { scope: cible, text: tc("error", { message: r.error }), kind: "err" }
-          : { scope: cible, text: ok(r), kind: "ok" },
+          : annonce
+            ? { scope: cible, text: tc(cleAnnonce(annonce)), kind: "err" }
+            : { scope: cible, text: ok(r), kind: "ok" },
       );
       await apres?.();
-      return !r.error;
+      return !r.error && !annonce;
     } catch (e) {
       // `String(e)` donnait « TypeError: Failed to fetch » — le nom d'une classe JavaScript là où
       // l'utilisateur attend de savoir si son café part. Une panne de liaison a sa phrase.
@@ -370,6 +380,9 @@ export default function Boissons() {
       // Le rinçage est le seul avertissement de cette page qui décrit de l'eau bouillante qui
       // coule : il a sa propre place dans le dialogue, pas une concaténation en fin de phrase.
       warn: next ? tPower("rinseWarning") : undefined,
+      // Allumer et éteindre sont le même geste — l'interrupteur — donc le même réglage. Le
+      // dialogue reste tant que l'utilisateur ne l'a pas explicitement écarté.
+      geste: "power",
       onConfirm: () =>
         commande("power", "/api/command", { action: next ? "on" : "off" }, (r) => tPower("powerSent", { label: r.program }), refreshStatus),
     });
@@ -469,6 +482,7 @@ export default function Boissons() {
       detail: resumeReglages(bev, params, paramLabel, unitLabel, (c) => t("confirmPrepareMore", { count: c })) || undefined,
       source,
       warn: t("confirmPrepareWarning"),
+      geste: "dispense",
       onConfirm: async () => {
         const ok = await commande(
           bevScope(bev.id),
@@ -522,19 +536,12 @@ export default function Boissons() {
       const seen = new Set(ordered.map((b) => b.id));
       const rest = data.beverages.filter((b) => !seen.has(b.id));
       return [
-        {
-          key: "machine",
-          title: t("machineOrder"),
-          note: t("machineOrderNote"),
-          list: ordered,
-        },
-        ...(rest.length
-          ? [{ key: "rest", title: t("notListed"), note: null as string | null, list: rest }]
-          : []),
+        { key: "machine", title: t("machineOrder"), list: ordered },
+        ...(rest.length ? [{ key: "rest", title: t("notListed"), list: rest }] : []),
       ];
     }
     return Object.entries(data.categories)
-      .map(([key, title]) => ({ key, title: tCat(key, title), note: null as string | null, list: data.beverages.filter((b) => b.category === key) }))
+      .map(([key, title]) => ({ key, title: tCat(key, title), list: data.beverages.filter((b) => b.category === key) }))
       .filter((sec) => sec.list.length);
     // `t` et `tCat` sont lus ici : omis des dépendances, les titres de section resteraient ceux
     // de la langue précédente le jour où il y en a une seconde.
@@ -584,18 +591,14 @@ export default function Boissons() {
       {serveurMuet && (
         <Alerte>
           {tc("serverDown")}{" "}
-          <button className="mini" onClick={reessayer}>
-            {tc("retry")}
+          <button className="mini iconBtn" onClick={reessayer}>
+            <Icone nom="reinitialiser" taille={14} />
+            <span className="lbl">{tc("retry")}</span>
           </button>
         </Alerte>
       )}
       {!live && !serveurMuet && <p className="sub">{tc("pushOff")}</p>}
-      {data && (
-        <p className="sub">
-          {t("intro", { count: data.beverages.length, model: data.model.type })}{" "}
-          {imported > 0 ? t("enriched", { count: imported }) : t("noneRead")}
-        </p>
-      )}
+      {data && imported === 0 && <p className="sub">{t("noneRead")}</p>}
       {/* Le catalogue est affiché mais sa dernière relecture a échoué : ce qui est à l'écran est
           daté, et le dire vaut mieux que de laisser croire à un rafraîchissement silencieux. */}
       {data && erreurCatalogue && (
@@ -631,8 +634,9 @@ export default function Boissons() {
           serveurMuet ? null : (
             <Alerte>
               {t("catalogFailed", { reason: erreurCatalogue })}{" "}
-              <button className="mini" onClick={reessayer}>
-                {tc("retry")}
+              <button className="mini iconBtn" onClick={reessayer}>
+                <Icone nom="reinitialiser" taille={14} />
+                <span className="lbl">{tc("retry")}</span>
               </button>
             </Alerte>
           )
@@ -649,11 +653,6 @@ export default function Boissons() {
               ({sec.list.length})
             </span>
           </h2>
-          {sec.note && (
-            <p className="chapeau">
-              {sec.note}
-            </p>
-          )}
           {/* Liste explicite : sans elle, le lecteur d'écran énonce 28 cartes à la file sans dire
               combien il y en a ni où l'on se trouve.
               `.cards` : grille en `auto-fill`. En une colonne, choisir un café demandait 3 300 px
@@ -857,6 +856,13 @@ function PowerCard({
 
       <div className="blocSuite">
         <label>{confirmed ? t("profileLabel") : t("profileUnknown")}</label>
+        {/* **Cette rangee reste sans icone, et c'est un choix.** Les cinq boutons font le meme
+            geste qu'« Activer » sur /profils, mais ce sont cinq positions d'un selecteur, pas cinq
+            commandes : une coche sur les cinq dirait que les cinq sont retenus. Et la mettre sur le
+            seul actif ferait grandir ce bouton de 25 px au moment ou on le choisit — la rangee
+            entiere se decalerait a chaque selection, sur la page la plus parcourue du produit.
+            L'etat est deja porte par `aria-pressed` et par le remplissage ambre, donc il n'est ni
+            invisible ni porte par la couleur seule. */}
         <div className="row" role="group" aria-label={t("profileGroupLabel")}>
           {shownProfiles.map((p) => {
             const active = p.id === profile && confirmed;
@@ -1215,6 +1221,11 @@ function RecipeEditor({
           onChange={(e) => set(b, Number(e.target.value))}
         />
         {defOf(b) !== null ? (
+          /* **Cette puce reste sans icone.** C'est le seul emploi de `.mini` conforme a sa
+             definition — une puce qui AFFICHE une valeur, « defaut 40 », dans une ligne de reglage
+             — et le bouton global juste au-dessus porte deja le rembobinage pour la meme action.
+             Le glyphe serait repete jusqu'a sept fois par carte, sur vingt-huit cartes, en
+             elargissant chaque fois une ligne qui contient deja un curseur et un champ. */
           <button
             className="mini"
             disabled={(vals[b.id] ?? seedFor(b)) === defOf(b)}
@@ -1278,8 +1289,11 @@ function RecipeEditor({
 
       {advanced.length > 0 && (
         <div className="blocSuite">
-          <button onClick={() => setShowAdvanced(!showAdvanced)}>
-            {showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})
+          {/* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
+              de changer de dessin. */}
+          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)}>
+            <Icone nom="chevron" />
+            <span className="lbl">{showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})</span>
           </button>
           {showAdvanced && (
             <div>
@@ -1290,18 +1304,24 @@ function RecipeEditor({
         </div>
       )}
 
+      {/* Les deux sorties de l'editeur, et les memes glyphes que sur /recipes pour les memes
+          gestes : la tasse coule la boisson avec ces valeurs, la machine nomme la destination de
+          l'ecriture. Cette derniere est persistante sur l'appareil — c'est la seule chose de cette
+          carte qui survive a la fermeture de l'onglet. */}
       <div className="row note">
-        <button className="good" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
-          {t("prepareWith")}
+        <button className="good iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
+          <Icone nom="preparer" />
+          <span className="lbl">{t("prepareWith")}</span>
         </button>
         <button
-          className="primary"
+          className="primary iconBtn"
           disabled={busy}
           aria-busy={working || undefined}
           onClick={() => onWrite(params)}
           title={t("writeTitle")}
         >
-          {t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}
+          <Icone nom="machine" />
+          <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
         </button>
       </div>
     </div>

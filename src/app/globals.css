@@ -399,6 +399,62 @@ h2 {
    d'imposer 240 px que la colonne n'a pas toujours. Le plafond évite le champ de 700 px de large
    pour saisir un nom d'hôte. */
 .champ { flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+
+/* ── Champ de mot de passe : la bascule est DANS le champ ─────────────────────────────────────
+   **Elle était à côté, et elle se détachait.** `.champ` porte `flex-grow: 1` ; à l'intérieur du
+   groupe « serré » qui l'accompagnait, il prenait toute la largeur disponible et renvoyait le
+   bouton à la ligne suivante. Mesuré : 48 px SOUS le champ, à 1 024 px comme à 1 921 px — donc
+   pas un défaut de petite largeur, un défaut de structure. La commande qui sert à relire ce qu'on
+   vient de taper flottait sous son champ, rattachée visuellement à rien.
+
+   Posée en absolu dans le champ, elle ne peut plus s'en séparer : il n'y a plus de ligne où se
+   replier. Elle ne coûte plus rien à une rangée qui se repliait déjà sur quatre lignes, et c'est
+   la position que tout le monde connaît.
+
+   Le rembourrage du champ lui réserve sa place — en propriété logique, pour qu'un jour en écriture
+   droite-à-gauche la réservation change de côté avec elle. */
+.champMdp { position: relative; display: flex; flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+.champMdp > .champ { flex: 1 1 auto; max-width: none; padding-inline-end: 46px; }
+.champMdp > .oeil {
+  position: absolute; inset-block: 0; inset-inline-end: 0;
+  /* 44 px de cible, sans dessin : ni fond, ni bordure, ni hauteur minimale héritée du bouton
+     générique — dans un champ, un second cadre ferait deux boîtes imbriquées. */
+  width: 44px; min-height: 0; padding: 0; border: none; background: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  /* 10 px : le rayon des champs et des boutons, ligne 478. Arrondi du seul côté qu'il longe. */
+  color: var(--muted); border-radius: 0 10px 10px 0;
+}
+.champMdp > .oeil:hover { color: var(--text); }
+/* Décalage NÉGATIF : l'anneau de focus standard se dessine 2 px à l'extérieur, donc par-dessus la
+   bordure du champ et à cheval sur son coin. Rentré de 2 px, il reste lisible et dans la boîte. */
+.champMdp > .oeil:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: -2px; border-radius: 6px; }
+
+/* ── Champ étiqueté ──────────────────────────────────────────────────────────────────────────
+   Une étiquette au-dessus de son champ, en un seul objet qui se replie d'un bloc. Sans elle, la
+   page posait des `<label>` frères d'un `<input>`, sans `for` : ils s'affichaient, ne nommaient
+   rien, et cliquer dessus ne donnait pas le focus au champ. */
+.champBloc { display: flex; flex-direction: column; gap: var(--s-hair); flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+.champBloc > label { font-size: var(--t-petit); color: var(--muted); line-height: var(--lead-dense); }
+.champBloc > .champ, .champBloc > .champMdp { flex: 0 0 auto; max-width: none; width: 100%; }
+
+/* ── Case a cocher et son libelle ────────────────────────────────────────────────────────────
+   **Le libelle bascule, la note explique.** Elles etaient dans le meme `<label>` : le nom
+   accessible de la case faisait 130 caracteres, et sa zone cliquable 317 x 99 px sur telephone
+   — pour le seul reglage de la page qui ecrive un secret de compte sur le disque. Le pouce qui
+   fait defiler la page la cochait. */
+.caseLibelle {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  cursor: pointer; min-height: var(--h-ctl);
+  /* La cible reste confortable sans etre une bande : le libelle est court, la note reste dehors. */
+  padding-inline-end: var(--s-2);
+}
+.caseLibelle > input { flex: none; width: 18px; height: 18px; margin: 0; }
+.caseLibelle:has(input:focus-visible) { outline: 2px solid var(--accent-edge); outline-offset: 2px; border-radius: 6px; }
+
+/* Liste de contraintes : des puces, pas des `<br>`. Le retrait suit l'echelle d'espacement plutot
+   que le defaut du navigateur, qui est en `px` et ne suit aucun de nos rythmes. */
+.listeLimites { margin: 0; padding-inline-start: 1.1em; }
+.listeLimites > li { margin-block: 2px; }
 /* Sous-bloc d'une carte séparé par un filet : le bloc des profils, un rappel de bornes. Six sites
    le composaient à la main, avec 10, 12 ou 14 px de part et d'autre selon la page. */
 .blocSuite { margin-top: var(--s-4); padding-top: var(--s-4); border-top: 1px solid var(--rule); }
@@ -595,6 +651,20 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
 .switch input:disabled + .track { opacity: .45; }
 .switch input:focus-visible + .track { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
 
+/* Ligne de réglage : un interrupteur et ce qu'il fait. Volontairement PAS un `.kv` — sa première
+   colonne fait 13 rem, ce qui aurait laissé 150 px de vide entre un interrupteur de 52 px et son
+   libellé. Ici la commande est un objet de largeur fixe et le texte prend le reste.
+   `align-items: flex-start` et non `center` : la conséquence passe sur deux lignes en dessous de
+   360 px, et l'interrupteur doit alors rester en face de la première, pas au milieu du bloc. */
+.ligneReglage {
+  display: flex; align-items: flex-start; gap: var(--s-4);
+  padding: var(--s-3) 0; border-bottom: 1px dashed var(--rule);
+  cursor: pointer;
+}
+.ligneReglage:last-of-type { border-bottom: none; }
+.ligneReglage > .switch { margin-top: 2px; }
+.texteReglage { display: grid; gap: var(--s-hair); min-width: 0; }
+
 /* Compte rendu d'une action, rendu DANS la carte qui l'a déclenchée.
    Avant, un seul message vivait tout en haut de la page : un « Préparer » sur la 22e boisson
    confirmait à 3 000 px du doigt. Porte `role="status"`, sinon le changement n'est annoncé
@@ -653,6 +723,20 @@ dialog.confirm .detail {
   font-size: var(--t-petit); overflow-wrap: anywhere;
 }
 dialog.confirm .warn { margin: 12px 0 0; font-size: var(--t-petit); }
+/* Renoncer à la question, depuis la question elle-même. Séparée par un filet et non par une simple
+   marge : elle ne décrit pas l'action en cours — c'est un réglage durable posé dans un dialogue qui,
+   lui, ne concerne qu'un geste. Sans la coupure, elle se lisait comme une quatrième ligne de détail.
+   La cible tient 44 px de haut au doigt : la case seule en fait 16, et c'est le libellé entier qui
+   est cliquable puisque le `<label>` enveloppe les deux. */
+dialog.confirm .renoncer {
+  display: flex; align-items: flex-start; gap: var(--s-3);
+  margin: var(--s-4) 0 0; padding: var(--s-3) 0 0; border-top: 1px solid var(--rule);
+  font-size: var(--t-petit); line-height: var(--lead-corps); cursor: pointer;
+  min-height: 44px;
+}
+dialog.confirm .renoncer input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-text); }
+dialog.confirm .renoncer > span { display: grid; gap: var(--s-hair); min-width: 0; }
+dialog.confirm .renoncer .sub { font-size: var(--t-petit); }
 dialog.confirm .actions {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 14px 20px; border-top: 1px solid var(--rule); background: var(--panel-2);
@@ -865,6 +949,16 @@ dialog.drawer .pied select { width: 100%; }
    commande est une constante du système (voir `--h-ctl`) ; c'est au conteneur de céder, pas à elle. */
 .iconBtn { display: inline-flex; align-items: center; gap: var(--s-2); white-space: nowrap; }
 .iconBtn > svg { flex: none; }
+/* **L'exception : un bouton dont le libelle est un NOM.** Les boissons de /pilotage sont rendues
+   une par bouton, dans une grille de cellules de 150 px, et leur libelle est le nom tape sur la
+   machine — rien ne le borne. Le `nowrap` ci-dessus est juste pour un verbe du catalogue, dont la
+   longueur est connue ; sur un nom il transforme un repli en debordement. Mesure dans une cellule de
+   155 px, bord droit du libelle par rapport au bord de contenu du bouton : « Recette perso 1 »
+   deborde de 11 px, un nom de 36 caracteres de 171 px — le texte sort du bouton, par-dessus son
+   propre remplissage, la boite du bouton restant a 155 px (donc invisible a un controle qui
+   n'observerait que la grille). Avec le repli : dedans dans les deux cas, sur deux et trois lignes.
+   Le nom se replie, la tasse reste a sa place. */
+.iconBtn.multi { white-space: normal; }
 /* Le chevron des panneaux dépliants tourne au lieu de changer de dessin. */
 .iconBtn.ouvert > svg:first-child { transform: rotate(180deg); }
 /* **Le seuil était au-dessus de la largeur réelle des libellés : ils tenaient et disparaissaient
@@ -1135,11 +1229,37 @@ button.danger.discret { color: var(--danger-text); border-color: var(--danger-ed
    le journal — le seul bloc réellement dense, donc le seul qui gagne à être large — prend la
    rangée entière. L'ordre du DOM est l'ordre visuel : la lecture au clavier et au lecteur d'écran
    suit la même route, colonne de gauche puis de droite, rangée par rangée. */
-.panneaux { display: grid; row-gap: var(--s-6); column-gap: var(--s-5); align-items: start; }
+/* **Colonnes coulees, et non une grille de deux colonnes.** La grille apparie les panneaux DEUX A
+   DEUX, rangee par rangee : deux blocs de hauteurs differentes laissent donc un trou de la
+   difference, et un nombre impair laisse une cellule entiere vide. Mesure sur /pilotage a 1 194 px,
+   la ou la page est censee gagner sa deuxieme colonne :
+
+     Liaison 309   |  Commandes machine 127   -> 182 px de vide
+     Alarmes 105   |  Capteurs 105            -> juste
+     Boissons 161  |  Confirmations 527       -> 366 px de vide
+     File 105      |  (rien)                  -> 558 x 105 px de vide
+     Journal 1 140 (rangee entiere)
+
+   Soit ~1 200 px de contenu etale sur 1 698 px de page, et trois blocs qui flottent au-dessus du
+   vide laisse par leur voisin. La cause n'est pas le reglage de la grille : c'est que ces panneaux
+   n'ont AUCUNE raison d'etre apparies. Ce sont des blocs independants de hauteurs libres — le cas
+   pour lequel le multi-colonnes existe. Il equilibre les deux colonnes sur la hauteur totale, ce
+   qui supprime les trous par construction, et il coule dans l'ordre du DOM : colonne de gauche de
+   haut en bas, puis colonne de droite. L'ordre de lecture, du clavier et du lecteur d'ecran reste
+   celui du document — c'est meme plus vrai qu'en grille, ou la lecture visuelle zigzaguait.
+
+   `break-inside: avoid` garde un panneau entier ; `column-span: all` rend au journal sa largeur
+   pleine — c'est le seul bloc reellement dense, donc le seul qui gagne a etre large.
+
+   En dessous du seuil, une seule colonne : plus de grille, donc le rythme vertical passe par la
+   marge des sections. */
 .panneaux > section > h2 { margin: 0 0 var(--s-3); }
+.panneaux > section { margin-bottom: var(--s-6); }
+.panneaux > section:last-child { margin-bottom: 0; }
 @media (min-width: 1120px) {
-  .panneaux { grid-template-columns: 1fr 1fr; }
-  .panneaux > section.pleine { grid-column: 1 / -1; }
+  .panneaux { columns: 2; column-gap: var(--s-5); }
+  .panneaux > section { break-inside: avoid; }
+  .panneaux > section.pleine { column-span: all; }
 }
 
 /* Sélecteur de thème : **constat gardé, correctif retiré.** C'est bien le seul objet plein de la

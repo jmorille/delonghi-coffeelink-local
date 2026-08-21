@@ -1,7 +1,8 @@
 "use client";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import Alerte from "./Alerte";
+import { type Geste, confirmRequis, setConfirmRequis } from "./confirmPrefs";
 
 /**
  * Demande de confirmation, pour toute action physique ou persistante.
@@ -37,6 +38,17 @@ export interface Ask {
   source?: string;
   /** La conséquence physique ou irréversible. Elle a sa propre place, jamais la fin d'une phrase. */
   warn?: string;
+  /**
+   * Le geste répétitif dont la confirmation est renonçable — allumer, préparer. Sa **présence**
+   * fait deux choses : elle autorise le raccourci si l'utilisateur l'a demandé, et elle affiche la
+   * case « ne plus demander » dans le dialogue.
+   *
+   * Son **absence** est ce qui protège tout le reste. Écrire une recette dans un profil, écraser un
+   * réglage de grain, supprimer, réinitialiser : rien de tout ça ne déclare de geste, donc rien de
+   * tout ça ne peut perdre son dialogue ni proposer de s'en passer. L'oubli va du côté sûr, ce qui
+   * est la seule direction acceptable pour une garde.
+   */
+  geste?: Geste;
   onConfirm: () => void;
 }
 
@@ -50,7 +62,25 @@ export interface Ask {
  */
 export function useConfirm(): { demander: (a: Ask) => void; dialogue: ReactNode } {
   const [ask, setAsk] = useState<Ask | null>(null);
-  return { demander: setAsk, dialogue: <ConfirmDialog ask={ask} onClose={() => setAsk(null)} /> };
+
+  /**
+   * **Le raccourci est décidé ici, et nulle part ailleurs.** Chaque page aurait pu tester la
+   * préférence avant d'appeler — et c'est exactement ainsi que dix appels à `window.confirm()`
+   * avaient fini par diverger. Une page qui déclare son geste hérite du réglage sans y penser ;
+   * une page qui n'en déclare pas garde son dialogue.
+   *
+   * La lecture se fait au moment du geste, pas à l'abonnement : le réglage change rarement, et le
+   * relire ici évite qu'une préférence modifiée dans un autre onglet mette une image à agir.
+   */
+  const demander = useCallback((a: Ask) => {
+    if (a.geste && !confirmRequis(a.geste)) {
+      a.onConfirm();
+      return;
+    }
+    setAsk(a);
+  }, []);
+
+  return { demander, dialogue: <ConfirmDialog ask={ask} onClose={() => setAsk(null)} /> };
 }
 
 /**
@@ -61,12 +91,20 @@ export function useConfirm(): { demander: (a: Ask) => void; dialogue: ReactNode 
 export function ConfirmDialog({ ask, onClose }: { ask: Ask | null; onClose: () => void }) {
   const tc = useTranslations("common");
   const ref = useRef<HTMLDialogElement>(null);
+  /**
+   * La case est décochée à chaque ouverture. Elle porte une intention sur CE geste-ci — « fais-le,
+   * et ne me demande plus » — pas un état à retrouver coché la fois suivante, où elle n'aurait plus
+   * rien à décrire puisque le dialogue ne s'ouvrirait plus.
+   */
+  const [neRedemandePas, setNeRedemandePas] = useState(false);
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (ask && !d.open) d.showModal();
-    else if (!ask && d.open) d.close();
+    if (ask && !d.open) {
+      setNeRedemandePas(false);
+      d.showModal();
+    } else if (!ask && d.open) d.close();
   }, [ask]);
 
   return (
@@ -90,6 +128,23 @@ export function ConfirmDialog({ ask, onClose }: { ask: Ask | null; onClose: () =
                 en garde la plus forte du produit — de l'eau chaude qui coule — et elle doit se
                 reconnaître au même dessin qu'ailleurs. */}
             {ask.warn && <Alerte>{ask.warn}</Alerte>}
+            {/* Offerte uniquement aux gestes qui la déclarent — donc jamais devant une suppression
+                ni devant une écriture dans la machine. C'est ici qu'on rencontre la friction, donc
+                c'est ici qu'on doit pouvoir y renoncer ; le chemin du retour est sur `/pilotage`,
+                et la phrase le nomme plutôt que de laisser un réglage sans porte de sortie. */}
+            {ask.geste && (
+              <label className="renoncer">
+                <input
+                  type="checkbox"
+                  checked={neRedemandePas}
+                  onChange={(e) => setNeRedemandePas(e.target.checked)}
+                />
+                <span>
+                  {tc("dontAskAgain")}
+                  <span className="sub">{tc("dontAskAgainWhere")}</span>
+                </span>
+              </label>
+            )}
           </div>
           <div className="actions">
             <button autoFocus onClick={onClose}>
@@ -98,6 +153,12 @@ export function ConfirmDialog({ ask, onClose }: { ask: Ask | null; onClose: () =
             <button
               className="primary"
               onClick={() => {
+                /**
+                 * **La préférence ne s'applique qu'en confirmant.** Cochée puis annulée, elle ne
+                 * change rien : « Annuler » veut dire que rien n'a eu lieu, et une interaction
+                 * abandonnée ne doit pas laisser une garde en moins derrière elle.
+                 */
+                if (ask.geste && neRedemandePas) setConfirmRequis(ask.geste, false);
                 const go = ask.onConfirm;
                 onClose();
                 go();
