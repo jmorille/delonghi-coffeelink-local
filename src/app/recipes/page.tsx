@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { mfetch } from "../machine";
+import { useConfirm } from "../confirm";
+import Alerte from "../Alerte";
 
 /**
  * Édition des recettes locales, **sous les contraintes du modèle**.
@@ -63,7 +65,18 @@ export default function Recipes() {
   const [list, setList] = useState<Recipe[]>([]);
   const [beverages, setBeverages] = useState<Beverage[]>([]);
   const [draft, setDraft] = useState<Recipe>(empty());
-  const [msg, setMsg] = useState("");
+  /**
+   * Compte rendu et refus de validation.
+   *
+   * C'était un `<span className="sub">` posé au bout de la rangée de boutons : « Corrigez les
+   * valeurs hors bornes » — un refus qui empêche l'écriture — s'affichait en petit texte gris, du
+   * même poids qu'une légende, et n'était annoncé à personne. Un refus de validation et une
+   * confirmation d'écriture partageaient ce même traitement.
+   */
+  const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  const dire = (text: string) => setMsg({ text, kind: "ok" });
+  const refuser = (text: string) => setMsg({ text, kind: "err" });
+  const { demander, dialogue } = useConfirm();
 
   const load = useCallback(
     () => mfetch("/api/recipes").then((r) => r.json()).then((d) => setList(d.recipes)),
@@ -149,11 +162,11 @@ export default function Recipes() {
 
   const save = async () => {
     if (!draft.id || !draft.name) {
-      setMsg(t("idAndNameRequired"));
+      refuser(t("idAndNameRequired"));
       return;
     }
     if (outOfRange.length) {
-      setMsg(t("outOfRange", { list: outOfRange.map((b) => paramLabel(b)).join(", ") }));
+      refuser(t("outOfRange", { list: outOfRange.map((b) => paramLabel(b)).join(", ") }));
       return;
     }
     await mfetch("/api/recipes", {
@@ -161,7 +174,7 @@ export default function Recipes() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(draft),
     });
-    setMsg(t("saved"));
+    dire(t("saved"));
     setDraft(empty());
     load();
   };
@@ -179,11 +192,11 @@ export default function Recipes() {
       })
       .filter((p): p is Param => !!p);
     if (!params.length) {
-      setMsg(t("nothingUsable"));
+      refuser(t("nothingUsable"));
       return;
     }
     setDraft({ ...draft, params });
-    setMsg(t("takenFromProfile", { count: params.length, profile: draft.profileId }));
+    dire(t("takenFromProfile", { count: params.length, profile: draft.profileId }));
   };
 
   /**
@@ -194,38 +207,45 @@ export default function Recipes() {
   const writeToMachine = async () => {
     if (!bev || !draft.params.length) return;
     if (outOfRange.length) {
-      setMsg(t("fixOutOfRange"));
+      refuser(t("fixOutOfRange"));
       return;
     }
     const detail = draft.params
       .map((p) => `${paramLabel(editable.find((b) => b.id === p.id) ?? { id: p.id })} = ${p.value}`)
       .join(`
 `);
-    if (
-      !confirm(
-        `${t("writeToProfileConfirm", { beverage: bevLabel(bev), profile: draft.profileId })}
+    // La question, les valeurs et la mise en garde étaient une seule chaîne, assemblée avec des
+    // retours à la ligne parce que `window.confirm()` n'a qu'un champ. Le dialogue en a trois, et
+    // c'est exactement ce que cette confirmation demandait : ce qu'on fait, sur quoi, et le prix.
+    demander({
+      question: t("writeToProfileConfirm", { beverage: bevLabel(bev), profile: draft.profileId }),
+      detail,
+      warn: t("writeToProfileWarning"),
+      onConfirm: () => void ecrireDansProfil(),
+    });
+  };
 
-${detail}
-
-` +
-          t("writeToProfileWarning"),
-      )
-    )
-      return;
-    setMsg("");
+  const ecrireDansProfil = async () => {
+    if (!bev) return;
+    setMsg(null);
     const r = await mfetch("/api/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: draft.profileId, params: payload() }),
     }).then((x) => x.json());
-    setMsg(
-      r.error
-        ? tc("error", { message: r.error })
-        : t("writeSent", { checksum: r.checksumBefore != null ? "0x" + r.checksumBefore.toString(16) : tc("unknown") }),
-    );
+    if (r.error) refuser(tc("error", { message: r.error }));
+    else dire(t("writeSent", { checksum: r.checksumBefore != null ? "0x" + r.checksumBefore.toString(16) : tc("unknown") }));
   };
 
-  const del = async (id: string) => {
+  /**
+   * Supprimer une recette enregistrée. Elle est locale — la machine n'est pas touchée — mais elle
+   * partait **sans aucune confirmation**, alors que `/beans` en demande une pour oublier une
+   * configuration mémorisée, qui est exactement le même genre d'objet.
+   */
+  const del = (id: string, nom: string) =>
+    demander({ question: t("deleteConfirm", { name: nom }), onConfirm: () => void supprimer(id) });
+
+  const supprimer = async (id: string) => {
     await mfetch("/api/recipes?id=" + encodeURIComponent(id), { method: "DELETE" });
     load();
   };
@@ -268,15 +288,14 @@ ${detail}
         {!bev ? (
           <p className="sub">{tc("loading")}</p>
         ) : !bev.bounds ? (
-          <p className="warn">
-            {t("boundsMissing", { beverage: bevLabel(bev), prop: bev.boundsProp ? ` (${bev.boundsProp})` : "" })}
-          </p>
+          <Alerte>{t("boundsMissing", { beverage: bevLabel(bev) })}</Alerte>
         ) : !editable.length ? (
           <p className="sub">
             {t("noParams")}
           </p>
         ) : (
           <>
+            <div className="tableWrap">
             <table>
               <thead>
                 <tr>
@@ -297,16 +316,16 @@ ${detail}
                       <td>
                         {paramLabel(b)}
                         {b.unit ? ` (${unitLabel(b.unit)})` : ""}{" "}
-                        <span className="sub mono" style={{ fontSize: ".78rem" }}>
+                        <span className="sub mono">
                           {b.id}
                         </span>
                       </td>
-                      <td className="mono">{b.min}</td>
-                      <td className="mono">{b.max}</td>
-                      <td className="mono">{b.def}</td>
-                      <td className="mono">{machineValue(b.id) ?? <span className="sub">non lu</span>}</td>
+                      <td className="num">{b.min}</td>
+                      <td className="num">{b.max}</td>
+                      <td className="num">{b.def}</td>
+                      <td className="num">{machineValue(b.id) ?? <span className="sub">non lu</span>}</td>
                       <td>
-                        <div className="row" style={{ gap: 8 }}>
+                        <div className="ctl">
                           <input
                             type="range"
                             min={b.min}
@@ -314,15 +333,15 @@ ${detail}
                             value={v ?? b.def}
                             aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
                             onChange={(e) => setValue(b.id, Number(e.target.value))}
-                            style={{ width: 140 }}
                           />
                           <input
+                            className="numField"
                             type="number"
                             min={b.min}
                             max={b.max}
                             value={v ?? b.def}
                             onChange={(e) => setValue(b.id, Number(e.target.value))}
-                            style={{ width: 84, borderColor: bad ? "var(--danger)" : undefined }}
+                            style={{ borderColor: bad ? "var(--danger-edge)" : undefined }}
                           />
                           {v !== undefined && v !== b.def && (
                             <button onClick={() => setValue(b.id, b.def)} title={t("useDefaultTitle")}>
@@ -336,36 +355,44 @@ ${detail}
                 })}
               </tbody>
             </table>
+            </div>
             {!bev.bounds.exact && (
-              <p className="warn" style={{ marginTop: 10 }}>
-                {t("misalignedWarning")}
-              </p>
+              <Alerte className="note">{t("misalignedWarning")}</Alerte>
             )}
           </>
         )}
 
-        <div className="row" style={{ marginTop: 12 }}>
+        <div className="row note">
           <button className="primary" onClick={save} disabled={!!outOfRange.length}>
             {t("saveLocal")}
           </button>
-          <button onClick={loadFromMachine} disabled={!bev?.values} title={bev?.valuesProp ? t("takeFromProfileTitle", { prop: bev.valuesProp }) : t("takeFromProfileUnavailable")}>
+          <button onClick={loadFromMachine} disabled={!bev?.values} title={
+              !bev?.values
+                ? t("takeFromProfileUnavailable")
+                : t("takeFromProfileTitle")
+            }>
             {t("takeFromProfile")}
           </button>
           <button className="good" onClick={writeToMachine} disabled={!!outOfRange.length || !draft.params.length}>
             {t("writeToProfile", { profile: draft.profileId })}
           </button>
           {draft.id && <button onClick={() => setDraft(empty())}>{tc("new")}</button>}
-          <span className="sub">{msg}</span>
         </div>
+        {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
+            n'est pas annoncé. Vide, `.status:empty` le masque. */}
+        <p className={"status " + (msg?.kind === "err" ? "err" : "ok")} role="status">
+          {msg?.text ?? ""}
+        </p>
       </div>
 
       <h2>{t("savedListHeading")}</h2>
       <div className="card">
         {!list.length ? (
-          <p className="sub" style={{ margin: 0 }}>
+          <p className="sub">
             {t("emptyList")}
           </p>
         ) : (
+          <div className="tableWrap">
           <table>
             <thead>
               <tr>
@@ -382,10 +409,10 @@ ${detail}
                   <td>{r.name}</td>
                   <td>{(() => { const b = beverages.find((x) => x.id === r.beverageId); return b ? bevLabel(b) : r.beverageId; })()}</td>
                   <td>{r.profileId}</td>
-                  <td className="mono">{describe(r, beverages, paramLabel, unitLabel)}</td>
+                  <td>{describe(r, beverages, paramLabel, unitLabel)}</td>
                   <td className="row">
                     <button onClick={() => setDraft(structuredClone(r))}>{tc("edit")}</button>
-                    <button className="danger" onClick={() => del(r.id)}>
+                    <button className="danger discret" onClick={() => del(r.id, r.name)}>
                       {tc("delete")}
                     </button>
                   </td>
@@ -393,8 +420,10 @@ ${detail}
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
+      {dialogue}
     </>
   );
 }

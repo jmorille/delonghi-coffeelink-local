@@ -1,7 +1,9 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./machine";
+import Icone from "./icons";
 
 /**
  * Barre de navigation. Le pilotage a deux prérequis — l'adresse de la machine et la clé LAN — et il
@@ -23,6 +25,16 @@ import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./mach
  *
  * Les pages masquées restent **servies** : une URL saisie à la main continue d'afficher le cache
  * de la dernière lecture, avec la bannière d'avertissement. On retire l'invitation, pas l'accès.
+ *
+ * **Deux présentations, une seule liste.** Au-dessus de 1 080 px les entrées sont une rangée dans
+ * la barre ; en dessous, elles vivent dans un panneau qui s'ouvre par la gauche. Le seuil est
+ * mesuré, pas choisi : c'est la largeur à laquelle marque + huit entrées + sélecteur de
+ * thème tiennent sur une ligne — à 900 px, où je l'avais d'abord posé, la barre passe à deux rangs
+ * de 107 px. Le CSS n'en affiche qu'une des deux (`display: none`, qui la retire
+ * aussi de l'arbre d'accessibilité — donc pas de liens annoncés en double), et c'est bien la même
+ * `ENTRIES` qui alimente les deux : une divergence entre le menu du téléphone et celui du desktop
+ * serait exactement le défaut que ce produit ne peut pas se permettre, puisque les pages qu'on
+ * cherche en dernier recours sont celles qui réparent une machine muette.
  */
 const ENTRIES = [
   { href: "/", key: "beverages", needsMachine: true },
@@ -43,6 +55,8 @@ interface Entree {
 
 export default function Nav() {
   const t = useTranslations("nav");
+  const tApp = useTranslations("app");
+  const chemin = usePathname();
   /**
    * `null` = état encore inconnu, et on affiche alors TOUT. Masquer par défaut ferait clignoter le
    * menu à chaque chargement dans le cas normal — tout configuré — qui est le cas courant.
@@ -50,6 +64,8 @@ export default function Nav() {
   const [ready, setReady] = useState<boolean | null>(null);
   const [machines, setMachines] = useState<Entree[]>([]);
   const [courante, setCourante] = useState<string | null>(null);
+  const [ouvert, setOuvert] = useState(false);
+  const panneau = useRef<HTMLDialogElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -92,24 +108,83 @@ export default function Nav() {
     window.location.reload();
   };
 
-  return (
-    <nav>
-      {/* Le sélecteur n'apparaît qu'à partir de deux machines : avec une seule, il n'offre aucun
-          choix et ne ferait que du bruit. */}
-      {machines.length > 1 && (
-        <select value={courante ?? ""} onChange={(e) => change(e.target.value)} aria-label={t("machines")}>
-          {machines.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      )}
-      {entries.map((e) => (
-        <a href={e.href} key={e.href}>
-          {t(e.key)}
-        </a>
+  /**
+   * `showModal()` et non l'attribut `open` : c'est lui qui apporte le piège de focus, la touche
+   * Échap et l'inertie du fond. Avec `open` seul, la tabulation continue derrière le panneau et
+   * on peut déclencher une commande de la machine qu'on ne voit pas.
+   */
+  const ouvrir = () => {
+    panneau.current?.showModal();
+    setOuvert(true);
+  };
+  const fermer = () => {
+    panneau.current?.close();
+  };
+
+  const selecteurMachine = (
+    <select value={courante ?? ""} onChange={(e) => change(e.target.value)} aria-label={t("machines")}>
+      {machines.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.label}
+        </option>
       ))}
-    </nav>
+    </select>
+  );
+
+  const liens = entries.map((e) => {
+    const courant = chemin === e.href;
+    return (
+      <a href={e.href} key={e.href} aria-current={courant ? "page" : undefined} className={courant ? "actif" : undefined}>
+        {t(e.key)}
+      </a>
+    );
+  });
+
+  return (
+    <>
+      {/* Présentation « barre » : à partir de 1 080 px. */}
+      <nav className="barNav">
+        {/* Le sélecteur n'apparaît qu'à partir de deux machines : avec une seule, il n'offre aucun
+            choix et ne ferait que du bruit. */}
+        {machines.length > 1 && selecteurMachine}
+        {/* `aria-current` marque la page courante. Le type `Entree` le déclarait depuis toujours sans
+            que rien ne l'utilise : les huit liens étaient rigoureusement identiques, et sur une barre
+            de huit entrées on ne savait pas où l'on se trouvait. La navigation se fait par liens
+            classiques, donc `usePathname` suffit — pas d'état à synchroniser. */}
+        {liens}
+      </nav>
+
+      {/* Présentation « panneau » : en dessous de 1 080 px. Le bouton reste dans la barre — il porte
+          l'état d'ouverture, donc il doit rester visible et au même endroit une fois ouvert. */}
+      <button type="button" className="menuBtn" aria-label={t("openMenu")} aria-expanded={ouvert} onClick={ouvrir}>
+        <Icone nom="menu" taille={20} />
+      </button>
+
+      <dialog
+        className="drawer"
+        ref={panneau}
+        aria-label={t("menuLabel")}
+        onClose={() => setOuvert(false)}
+        /* Clic sur le fond : la cible est le `<dialog>` lui-même, jamais un de ses enfants — c'est
+           ce qui distingue « à côté du panneau » de « dans le panneau ». */
+        onClick={(e) => {
+          if (e.target === panneau.current) fermer();
+        }}
+      >
+        <div className="tete">
+          <Icone nom="machine" taille={20} />
+          <strong>{tApp("brand")}</strong>
+          <button type="button" className="menuBtn" aria-label={t("closeMenu")} onClick={fermer}>
+            <Icone nom="fermer" taille={20} />
+          </button>
+        </div>
+        <nav aria-label={t("menuLabel")}>{liens}</nav>
+        {/* Le sélecteur de machine est un réglage, pas une destination : il reste séparé des
+            liens, en bas, là où le pouce arrive sur un téléphone. Le pied ne se rend que s'il a
+            quelque chose à porter : avec une seule machine et le mode banc retiré, il n'aurait
+            plus été qu'un filet et douze pixels de rembourrage sous le dernier lien. */}
+        {machines.length > 1 && <div className="pied">{selecteurMachine}</div>}
+      </dialog>
+    </>
   );
 }

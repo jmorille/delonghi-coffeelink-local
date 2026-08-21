@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { mfetch } from "./machine";
+import { useMachinePush } from "./events";
+import Icone from "./icons";
+import Alerte from "./Alerte";
+import { useConfirm } from "./confirm";
+// Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
+import { splitSensors, stateLabel, type Translator } from "./machineState";
 
 interface Param {
   id: number;
@@ -48,6 +54,12 @@ interface Beverage {
 interface Status {
   /** Configuration du serveur. `lanKeySet` faux = aucun pilotage possible, il faut le dire. */
   config: { lanKeySet: boolean; serverIpProblem: string | null };
+  /**
+   * La machine que cette page pilote réellement. Elle DOIT être affichée : le sélecteur de la
+   * barre de navigation est masqué en mono-machine, donc sans ça la page ne nomme jamais
+   * l'appareil auquel elle envoie des commandes physiques.
+   */
+  machine: { id: string; label: string } | null;
   session: { active: boolean };
   /** Dernier profil que le serveur a demandé à la machine. */
   activeProfile: number;
@@ -73,6 +85,21 @@ interface ProfileInfo {
   /** false pour un nom d'usine (« Profil 4 ») ou un nom pas encore lu. */
   renamed: boolean;
 }
+/**
+ * Où ranger le compte rendu d'une action : la carte machine, ou la carte d'une boisson.
+ *
+ * Un message unique en haut de page ne pouvait pas marcher : « Préparer » sur la 22e boisson
+ * répondait à 3 000 px du doigt, hors écran. L'utilisateur remontait la page pour savoir si son
+ * geste avait compté — sur un produit dont le principe est qu'un « envoyé » qui n'est pas parti
+ * est le pire défaut possible.
+ */
+type Scope = "power" | `bev:${number}`;
+const bevScope = (id: number): Scope => `bev:${id}`;
+interface Report {
+  scope: Scope;
+  text: string;
+  kind: "ok" | "err";
+}
 interface Payload {
   model: { type: string; appModelId: string; productCode: string; nProfiles: number; protocolVersion: string };
   categories: Record<string, string>;
@@ -93,28 +120,82 @@ export default function Boissons() {
   const tCat = useCategoryLabel();
   const bevLabel = useBeverageLabel();
   const paramLabel = useParamLabel();
+  const unitLabel = useUnitLabel();
   const [data, setData] = useState<Payload | null>(null);
   const [profile, setProfile] = useState(1);
-  const [busy, setBusy] = useState(false);
+  /**
+   * Verrou d'envoi. Il reste **unique** — la machine n'a qu'une file de commandes, et deux
+   * commandes concurrentes désynchronisent la session — mais il porte désormais sa cible, pour que
+   * le bouton pressé soit le seul à s'annoncer occupé. Auparavant un booléen global grisait les
+   * 88 boutons de la page sans dire pourquoi ni où regarder.
+   */
+  const [pending, setPending] = useState<Scope | null>(null);
+  const busy = pending !== null;
   const [open, setOpen] = useState<number | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [report, setReport] = useState<Report | null>(null);
+  // Le dialogue est partagé (`confirm.tsx`) : cinq autres pages en avaient besoin.
+  const { demander: setAsk, dialogue } = useConfirm();
   const [status, setStatus] = useState<Status | null>(null);
   const [lastDispensed, setLastDispensed] = useState<Beverage | null>(null);
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const profileInitialised = useRef(false);
+  /**
+   * **Un chargement qui échoue est un état, pas un silence.**
+   *
+   * Mesuré, serveur injoignable : la page affichait « Chargement du catalogue… » indéfiniment,
+   * pendant que douze rejets de promesse non traités partaient en console toutes les trois
+   * secondes — et la carte machine, elle, offrait cinq boutons de profil actifs comme si la
+   * commande pouvait aboutir. Un produit dont le principe est qu'un « envoyé » qui n'est pas
+   * parti est le pire défaut possible ne peut pas rester muet quand c'est son propre serveur qui
+   * ne répond plus.
+   *
+   * Deux états distincts, parce que les deux situations n'appellent pas la même phrase : le
+   * serveur ne répond pas du tout (rien ne partira, il n'y a rien à corriger côté machine), ou
+   * le catalogue seul n'a pas pu être relu (le reste de la page vaut encore).
+   */
+  const [serveurMuet, setServeurMuet] = useState(false);
+  const [erreurCatalogue, setErreurCatalogue] = useState<string | null>(null);
+  /** Les noms de profils n'ont pas pu être demandés — distinct de « pas encore lus sur la machine ». */
+  const [echecProfils, setEchecProfils] = useState(false);
 
+  /**
+   * `mfetch`, pas `fetch` : un `fetch` nu vise la machine **par défaut du serveur**, pas celle qui
+   * est sélectionnée. Avec deux machines de modèles différents, l'écran affichait le catalogue,
+   * l'ordre des favoris, les bornes et les valeurs enregistrées de l'une pendant que « Préparer »
+   * et « Écrire dans le profil » partaient sur l'autre — silencieusement, sans erreur.
+   */
   const refresh = useCallback(async () => {
-    const d = await fetch(`/api/beverages?profile=${profile}`).then((r) => r.json());
-    setData(d);
-  }, [profile]);
+    try {
+      const r = await mfetch(`/api/beverages?profile=${profile}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // `setData` seulement après un décodage réussi : une réponse HTML d'erreur fait échouer
+      // `json()`, et écrire un `data` à moitié lu vaudrait moins que garder le précédent.
+      const d = await r.json();
+      setData(d);
+      setErreurCatalogue(null);
+      setServeurMuet(false);
+    } catch (e) {
+      setErreurCatalogue(raisonEchec(e, tc));
+      if (injoignable(e)) setServeurMuet(true);
+    }
+  }, [profile, tc]);
 
   // Référence tenue à jour : la relance de présence doit consulter l'état COURANT, pas celui
   // capturé au montage de l'effet (qui est nul).
   const statusRef = useRef<Status | null>(null);
   const refreshStatus = useCallback(async () => {
-    const s = await mfetch("/api/status").then((r) => r.json());
-    statusRef.current = s;
-    setStatus(s);
+    try {
+      const r = await mfetch("/api/status");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const s = await r.json();
+      statusRef.current = s;
+      setStatus(s);
+      setServeurMuet(false);
+    } catch (e) {
+      // On GARDE le dernier état connu : il est daté, la carte le dit déjà, et l'effacer
+      // remplacerait une information vieille de trente secondes par aucune information.
+      if (injoignable(e)) setServeurMuet(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -154,12 +235,31 @@ export default function Boissons() {
 
   // Noms des profils : simple lecture de ce que le serveur a déjà en cache. L'import des
   // profils, lui, se fait sur la page Profils — pas ici.
-  useEffect(() => {
-    mfetch("/api/profiles")
-      .then((r) => r.json())
-      .then((d) => setProfiles(d.profiles ?? []))
-      .catch(() => {});
+  const refreshProfiles = useCallback(async () => {
+    try {
+      const r = await mfetch("/api/profiles");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setProfiles(d.profiles ?? []);
+      setEchecProfils(false);
+    } catch {
+      // Le `.catch(() => {})` d'avant était silencieux, et le repli annonçait alors « Noms non
+      // lus — lancer un import sur la page Profils », c'est-à-dire une cause fausse et un geste
+      // inutile : la machine n'était pas en cause, le serveur n'avait pas répondu.
+      setEchecProfils(true);
+    }
   }, []);
+  useEffect(() => {
+    refreshProfiles();
+  }, [refreshProfiles]);
+
+  /** Reprendre les trois chargements après un échec. Le bouton qui manquait. */
+  const reessayer = useCallback(() => {
+    setErreurCatalogue(null);
+    refresh();
+    refreshStatus();
+    refreshProfiles();
+  }, [refresh, refreshStatus, refreshProfiles]);
 
   // Au premier chargement, on part du profil que le serveur a réellement demandé à la machine,
   // pas d'un 1 arbitraire : sinon un rechargement de page mentirait sur le profil actif.
@@ -170,77 +270,138 @@ export default function Boissons() {
     if (status.activeProfile) setProfile(status.activeProfile);
   }, [status]);
 
-  // L'état machine ne bouge que quand la machine nous pousse un monitor : on suit de près
-  // pendant un programme, plus mollement au repos.
   useEffect(() => {
+    // Un premier état, tout de suite : la relance de présence en fait un aussi, mais elle peut
+    // échouer sans rien dire (`.catch`) et la page resterait alors sans aucun état.
     refreshStatus();
-    const t = setInterval(refreshStatus, status?.program?.active ? 2000 : 5000);
-    return () => clearInterval(t);
-  }, [refreshStatus, status?.program?.active]);
+  }, [refreshStatus]);
 
-  // Pendant un import, la machine répond au fil de l'eau : on rafraîchit.
+  /**
+   * **L'état arrive poussé.** Cette page tenait deux minuteurs, et c'était la surface la plus
+   * chère du produit : mesuré à 1194×834 avec un processeur ralenti 6× — la tablette, pas ce
+   * bureau — 60 requêtes et 490 ko par minute au repos, et surtout **3 094 ms de trames longues
+   * en 15 s, dont 2 544 bloquantes**. Un cinquième du temps passé à redessiner 28 cartes et à
+   * analyser 11,4 ko de catalogue pour retrouver exactement ce qui était déjà à l'écran.
+   *
+   * Les deux rappels ne posent pas la même question, et c'est pourquoi il en faut deux sur un
+   * seul flux :
+   *
+   * - `refreshStatus` sur **toute** poussée : l'état machine, le monitor, la session et le profil
+   *   actif ne sont pas des données écrites, rien ne les horodate ;
+   * - `refresh` (le catalogue, 11,4 ko) uniquement quand `importedAt` bouge ou qu'une lecture
+   *   s'achève — la règle partagée. C'est ce qui remplace l'interrogation à 2 s pendant un import.
+   */
+  const { live } = useMachinePush(refresh, refreshStatus);
+
+  /**
+   * Repli, et seulement en repli : si le flux ne s'établit pas, on revient aux deux minuteurs
+   * d'avant. La cadence rapide est bien conditionnée à une fenêtre **vivante** — le drapeau
+   * `active` seul ne retombait jamais sur une machine qui ne répond pas, ce qui figeait la page
+   * à 2 s indéfiniment (corrigé côté serveur, `fenetreOuverte`).
+   */
+  const enCours = status?.program?.active === true || data?.import?.active === true;
   useEffect(() => {
-    if (!data?.import?.active) return;
+    if (live) return;
+    const t = setInterval(refreshStatus, enCours ? 2000 : 5000);
+    return () => clearInterval(t);
+  }, [live, enCours, refreshStatus]);
+  useEffect(() => {
+    if (live || !data?.import?.active) return;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [data?.import?.active, refresh]);
+  }, [live, data?.import?.active, refresh]);
 
-  const startImport = async (scope: "all" | "bounds" | "values", beverageIds?: number[]) => {
-    setBusy(true);
-    setMsg(null);
+  /**
+   * Chemin unique pour tout appel qui agit sur la machine.
+   *
+   * Trois choses qu'aucun des cinq gestionnaires ne faisait, et qui décident si l'utilisateur sait
+   * ce qui s'est passé : le compte rendu est rangé sous une **cible**, donc il s'affiche dans la
+   * carte qui a déclenché l'action ; le verrou porte la même cible, donc le bouton pressé
+   * s'annonce occupé plutôt que de laisser la page griser en silence ; et un échec réseau est
+   * rapporté — une exception laissait auparavant la page muette, ce qui est exactement le cas
+   * « la commande n'est jamais partie et personne ne le sait ».
+   */
+  const commande = async (
+    cible: Scope,
+    chemin: string,
+    corps: Record<string, unknown>,
+    ok: (r: any) => string,
+    apres?: () => Promise<void> | void,
+  ): Promise<boolean> => {
+    setPending(cible);
+    setReport(null);
     try {
-      const r = await mfetch("/api/beverages/import", {
+      const r = await mfetch(chemin, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId: profile, what: scope, beverageIds }),
+        body: JSON.stringify(corps),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("importQueued", { count: r.queued }));
-      await refresh();
+      setReport(
+        r.error
+          ? { scope: cible, text: tc("error", { message: r.error }), kind: "err" }
+          : { scope: cible, text: ok(r), kind: "ok" },
+      );
+      await apres?.();
+      return !r.error;
+    } catch (e) {
+      // `String(e)` donnait « TypeError: Failed to fetch » — le nom d'une classe JavaScript là où
+      // l'utilisateur attend de savoir si son café part. Une panne de liaison a sa phrase.
+      setReport({ scope: cible, text: raisonEchec(e, tc), kind: "err" });
+      if (injoignable(e)) setServeurMuet(true);
+      return false;
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
-  const togglePower = async (next: boolean) => {
+  const startImport = (what: "all" | "bounds" | "values", beverageIds?: number[]) =>
+    commande(
+      beverageIds?.length === 1 ? bevScope(beverageIds[0]) : "power",
+      "/api/beverages/import",
+      { profileId: profile, what, beverageIds },
+      (r) => t("importQueued", { count: r.queued }),
+      refresh,
+    );
+
+  const togglePower = (next: boolean) => {
     const verb = next ? tPower("turnOn") : tPower("turnOff");
-    const warn = next ? ` ${tPower("rinseWarning")}` : "";
-    if (!confirm(`${tPower("confirmPower", { verb })}${warn}`)) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await mfetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: next ? "on" : "off" }),
-      }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : tPower("powerSent", { label: r.program }));
-      await refreshStatus();
-    } finally {
-      setBusy(false);
-    }
+    setAsk({
+      question: tPower("confirmPower", { verb }),
+      // Le rinçage est le seul avertissement de cette page qui décrit de l'eau bouillante qui
+      // coule : il a sa propre place dans le dialogue, pas une concaténation en fin de phrase.
+      warn: next ? tPower("rinseWarning") : undefined,
+      onConfirm: () =>
+        commande("power", "/api/command", { action: next ? "on" : "off" }, (r) => tPower("powerSent", { label: r.program }), refreshStatus),
+    });
   };
 
   /**
    * Arrêt d'une préparation en cours : même commande 0x83 que le lancement, mais mode STOPV2.
-   * La trame porte un beverageId ; on reprend celui de la dernière boisson lancée, sinon
-   * l'espresso, faute de savoir ce que la machine est en train de couler.
+   *
+   * La trame porte un beverageId. Quand cet onglet a lancé la boisson, on le connaît. Sinon on ne
+   * le connaît pas — et le bouton est alors **désactivé** (`stopAvailable`) au lieu de deviner
+   * l'espresso : arrêter une boisson devinée alors que rien ne coule n'est pas un arrêt, c'est une
+   * commande au hasard. Le repli sur `1` ne sert plus que dans le seul cas où la machine signale
+   * bien un programme dont nous ignorons la boisson, et la confirmation ne nomme alors rien.
    */
-  const stopDispense = async () => {
+  const stopDispense = () => {
     const target = lastDispensed;
-    if (!confirm(tPower("confirmStop", { beverage: target ? ` (${bevLabel(target)})` : "" }))) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await mfetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "stop", beverageId: target?.id ?? 1, profileId: profile }),
-      }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : tPower("stopSent"));
-      await refreshStatus();
-    } finally {
-      setBusy(false);
-    }
+    setAsk({
+      question: tPower("confirmStop", { beverage: target ? ` (${bevLabel(target)})` : "" }),
+      // Le repli sur `1` (espresso) reste nécessaire — la trame d'arrêt porte un identifiant de
+      // boisson — mais il n'a plus à être tacite : quand la machine signale un programme dont
+      // nous ignorons la boisson, la confirmation le dit au lieu de laisser croire qu'on arrête
+      // ce qui coule.
+      detail: target ? undefined : tPower("stopUnknownBeverage"),
+      onConfirm: () =>
+        commande(
+          "power",
+          "/api/command",
+          { action: "stop", beverageId: target?.id ?? 1, profileId: profile },
+          () => tPower("stopSent"),
+          refreshStatus,
+        ),
+    });
   };
 
   /**
@@ -250,50 +411,74 @@ export default function Boissons() {
    * profil nommé est un geste sans ambiguïté. C'est aussi pourquoi une liste déroulante ne
    * convenait pas : la parcourir aurait envoyé une commande à chaque valeur survolée.
    */
-  const selectProfileAndActivate = async (id: number) => {
+  const selectProfileAndActivate = (id: number) => {
     setProfile(id);
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await mfetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "selectProfile", profileId: id }),
-      }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : tPower("profileActivated", { name: profileLabel(profiles, id) }));
-      await refreshStatus();
-    } finally {
-      setBusy(false);
-    }
+    return commande(
+      "power",
+      "/api/command",
+      { action: "selectProfile", profileId: id },
+      () => tPower("profileActivated", { name: profileLabel(profiles, id) }),
+      refreshStatus,
+    );
   };
 
   const dispense = async (bev: Beverage, override?: RecipeParam[]) => {
-    // Sans paramètres explicites, on n'envoie que les défauts réellement configurés : la machine
-    // renvoie 0 ou 255 (0xFF) pour un emplacement vide (recettes perso jamais enregistrées, mug
-    // de voyage), et envoyer « Café = 0 ml » serait invalide. Sans paramètre, la machine applique
-    // les siens.
-    const params =
-      override ??
-      beverageParams(bev)
-        .filter(isSet)
-        .map((p) => ({ id: p.id, value: p.def as number }));
-    const detail = params.length
-      ? params.map((p) => `${paramLabel(paramOf(bev, p.id) ?? { id: p.id })} = ${p.value}`).join(", ")
-      : t("confirmPrepareDefaults");
-    if (!confirm(`${t("confirmPrepare", { beverage: bevLabel(bev), profile: profileLabel(profiles, profile) })}\n\n${detail}\n\nLa machine va réellement couler la boisson.`)) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await mfetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "dispense", beverageId: bev.id, profileId: profile, params }),
-      }).then((x) => x.json());
-      if (!r.error) setLastDispensed(bev);
-      setMsg(r.error ? tc("error", { message: r.error }) : t("sent", { label: r.program }));
-    } finally {
-      setBusy(false);
+    /**
+     * **La confirmation doit décrire la boisson qui part, pas une autre.**
+     *
+     * Le bouton de la carte construisait ses paramètres depuis `p.def` — le défaut du MODÈLE —
+     * et n'ouvrait jamais `bev.values`, qui est ce que la machine a enregistré pour ce profil.
+     * L'éditeur, dans la même carte, faisait l'inverse. Les deux boutons « Préparer » d'une même
+     * carte pouvaient donc couler deux cafés différents, sous un dialogue qui nommait le profil
+     * dans les deux cas. Relevé sur la machine : « Préparer « Espresso macchiato » (1 — Jérôme) ?
+     * Café = 30 … » alors que 30 est la valeur d'usine.
+     *
+     * `valeurSure` tranche dans le bon ordre — valeur du profil, sinon défaut du modèle, sinon
+     * rien — et rend la provenance avec la valeur. Ce qui n'a ni l'une ni l'autre est **omis** :
+     * la machine renvoie 0 ou 255 pour un réglage jamais configuré (mug de voyage, recettes perso
+     * vierges), et sans paramètre elle applique le sien, ce qui vaut mieux qu'un « Café = 0 ml ».
+     */
+    const params: RecipeParam[] = [];
+    let duProfil = 0;
+    if (override) params.push(...override);
+    else {
+      for (const p of beverageParams(bev)) {
+        const sure = valeurSure(bev, p);
+        if (!sure) continue;
+        params.push({ id: p.id, value: sure.value });
+        if (sure.from === "profil") duProfil++;
+      }
     }
+    const nomProfil = profileLabel(profiles, profile);
+    // Dans une phrase, « pour 1 - Jerome » se lit mal : la question porte le couple numero-nom
+    // entre parentheses, la phrase de provenance n'a besoin que du nom.
+    const nomSeul = profiles.find((p) => p.id === profile)?.name ?? tc("profileNumbered", { id: profile });
+    const source = override
+      ? t("prepareFromEditor")
+      : !params.length
+        ? t("confirmPrepareDefaults")
+        : duProfil === params.length
+          ? t("prepareFromProfile", { profile: nomSeul })
+          : duProfil
+            ? t("prepareFromMixed", { count: duProfil, profile: nomSeul })
+            : t("prepareFromModel");
+    setAsk({
+      question: t("confirmPrepare", { beverage: bevLabel(bev), profile: nomProfil }),
+      // Les réglages lisibles avec leur unité, pas un vidage de huit couples `nom = nombre` dont
+      // quatre ne sont pas des réglages d'utilisateur. La trame, elle, les porte tous.
+      detail: resumeReglages(bev, params, paramLabel, unitLabel, (c) => t("confirmPrepareMore", { count: c })) || undefined,
+      source,
+      warn: t("confirmPrepareWarning"),
+      onConfirm: async () => {
+        const ok = await commande(
+          bevScope(bev.id),
+          "/api/command",
+          { action: "dispense", beverageId: bev.id, profileId: profile, params },
+          (r) => t("sent", { label: r.program }),
+        );
+        if (ok) setLastDispensed(bev);
+      },
+    });
   };
 
   // On ne montre que les profils que l'utilisateur a réellement nommés sur la machine. Deux
@@ -305,12 +490,17 @@ export default function Boissons() {
     const renamed = read.filter((p) => p.renamed);
     if (renamed.length) return { shownProfiles: renamed, fallbackReason: null };
     if (read.length)
-      return { shownProfiles: read, fallbackReason: "Aucun profil renommé sur la machine : tous sont affichés." };
+      return { shownProfiles: read, fallbackReason: tPower("noRenamed") };
     return {
       shownProfiles: Array.from({ length: nProfiles }, (_, i) => ({ id: i + 1, name: null, renamed: false })),
-      fallbackReason: "Noms non lus — lancer un import sur la page Profils pour les voir ici.",
+      // Deux causes, deux phrases : la machine n'a pas encore donné ses noms, ou notre propre
+      // serveur n'a pas répondu. La seconde déguisée en première envoyait l'utilisateur lancer un
+      // import sur une autre page pour réparer quelque chose qui n'était pas cassé là.
+      fallbackReason: echecProfils ? tPower("namesUnavailable") : tPower("namesNotRead"),
     };
-  }, [profiles, data?.model.nProfiles]);
+    // `tPower` est stable pour une locale donnée ; les deux clés existaient déjà et étaient
+    // doublées en dur juste ici, ce que la contrainte « tout passe par le catalogue » interdit.
+  }, [profiles, data?.model.nProfiles, echecProfils, tPower]);
 
   // Si le profil courant n'est pas dans la liste affichée, on bascule sur le premier affiché :
   // sinon la page montrerait les réglages d'un profil dont aucun bouton n'est actif. Simple
@@ -335,7 +525,7 @@ export default function Boissons() {
         {
           key: "machine",
           title: t("machineOrder"),
-          note: t("machineOrderNote", { prop: data.orderProp }),
+          note: t("machineOrderNote"),
           list: ordered,
         },
         ...(rest.length
@@ -346,35 +536,29 @@ export default function Boissons() {
     return Object.entries(data.categories)
       .map(([key, title]) => ({ key, title: tCat(key, title), note: null as string | null, list: data.beverages.filter((b) => b.category === key) }))
       .filter((sec) => sec.list.length);
-  }, [data]);
+    // `t` et `tCat` sont lus ici : omis des dépendances, les titres de section resteraient ceux
+    // de la langue précédente le jour où il y en a une seconde.
+  }, [data, t, tCat]);
 
   /**
    * Écrit la recette dans le profil sur la machine (0x83, mode DONTCARE, action SAVE_BEVERAGE).
    * Modification persistante de l'appareil : elle remplace la recette enregistrée de ce profil.
    */
-  const writeToProfile = async (bev: Beverage, params: RecipeParam[]) => {
-    const detail = params.map((p) => `${paramLabel(paramOf(bev, p.id) ?? { id: p.id })} = ${p.value}`).join(", ");
-    if (!confirm(`${tEditor("confirmWrite", { beverage: bevLabel(bev), profile })}
-
-${detail}
-
-Cela remplace durablement la recette enregistrée de ce profil.`)) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await mfetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: profile, params }),
-      }).then((x) => x.json());
-      setMsg(
-        r.error
-          ? tc("error", { message: r.error })
-          : tEditor("writeSent", { checksum: r.checksumBefore != null ? "0x" + r.checksumBefore.toString(16) : tc("unknown") }),
-      );
-    } finally {
-      setBusy(false);
-    }
+  const writeToProfile = (bev: Beverage, params: RecipeParam[]) => {
+    setAsk({
+      question: tEditor("confirmWrite", { beverage: bevLabel(bev), profile }),
+      detail: resumeReglages(bev, params, paramLabel, unitLabel, (c) => t("confirmPrepareMore", { count: c })) || undefined,
+      warn: tEditor("confirmWriteWarning"),
+      onConfirm: () =>
+        commande(
+          bevScope(bev.id),
+          "/api/command",
+          { action: "saveToProfile", beverageId: bev.id, profileId: profile, params },
+          // Au moment où l'utilisateur veut savoir si sa recette est passée, on le lui dit. La somme
+          // de contrôle d'avant écriture est une donnée de diagnostic, pas une réponse à sa question.
+          () => tEditor("writeSent"),
+        ),
+    });
   };
 
   const imported = data ? data.beverages.filter((b) => b.bounds || b.values).length : 0;
@@ -387,72 +571,129 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
       {/* Sans clé LAN, rien de ce que propose cette page ne peut atteindre la machine : le dire ici
           plutôt que de laisser cliquer 88 boutons voués à un échec silencieux. */}
       {status?.config?.serverIpProblem && (
-        <div className="warn">
-          ⚠️ {tc("badServerIp", { problem: status.config.serverIpProblem })}
-        </div>
+        <Alerte>{tc("badServerIp", { problem: status.config.serverIpProblem })}</Alerte>
       )}
 
       {status && !status.config?.lanKeySet && (
-        <div className="warn">
-          ⚠️ {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
-        </div>
+        <Alerte>
+          {tc("noLanKey")} <a href="/machines">{tc("noLanKeyLink")}</a>
+        </Alerte>
       )}
+      {/* Le serveur lui-même ne répond plus : c'est le premier fait à dire, avant la clé LAN et
+          avant l'adresse annoncée, parce qu'aucun des deux ne peut être vérifié sans lui. */}
+      {serveurMuet && (
+        <Alerte>
+          {tc("serverDown")}{" "}
+          <button className="mini" onClick={reessayer}>
+            {tc("retry")}
+          </button>
+        </Alerte>
+      )}
+      {!live && !serveurMuet && <p className="sub">{tc("pushOff")}</p>}
       {data && (
         <p className="sub">
-          {t("intro", { count: data.beverages.length, model: data.model.type, appModelId: data.model.appModelId, productCode: data.model.productCode })}{" "}
+          {t("intro", { count: data.beverages.length, model: data.model.type })}{" "}
           {imported > 0 ? t("enriched", { count: imported }) : t("noneRead")}
         </p>
+      )}
+      {/* Le catalogue est affiché mais sa dernière relecture a échoué : ce qui est à l'écran est
+          daté, et le dire vaut mieux que de laisser croire à un rafraîchissement silencieux. */}
+      {data && erreurCatalogue && (
+        <p className="legende">{t("catalogStale", { reason: erreurCatalogue })}</p>
       )}
 
       <PowerCard
         status={status}
         busy={busy}
+        working={pending === "power"}
         onToggle={togglePower}
         onStop={stopDispense}
+        /* On n'arrête que ce qu'on peut nommer, ou ce que la machine signale. Sans l'un des deux,
+           le bouton reste inerte plutôt que d'envoyer un arrêt sur une boisson devinée. */
+        stopAvailable={!!lastDispensed || status?.program?.active === true}
         shownProfiles={shownProfiles}
         fallbackReason={fallbackReason}
         confirmed={status?.activeProfileConfirmed ?? false}
         profile={profile}
         onSelectProfile={selectProfileAndActivate}
         importState={data?.import ?? null}
-        message={msg}
+        report={report?.scope === "power" ? report : null}
       />
 
       {!data ? (
-        <p className="sub">{t("loadingCatalog")}</p>
+        /* Trois issues, et non deux : en attente, en échec, ou chargé. Sans la deuxième, un
+           serveur injoignable laissait « Chargement du catalogue… » à l'écran indéfiniment. */
+        erreurCatalogue ? (
+          /* Le bandeau du haut couvre déjà le cas « serveur muet » : un second encart répéterait
+             la même cause et proposerait un second bouton pour la même reprise. Mais « Chargement
+             du catalogue… » ne doit pas non plus rester à l'écran — il annonce un travail en
+             cours là où il n'y en a plus, sous un bandeau qui dit exactement le contraire. */
+          serveurMuet ? null : (
+            <Alerte>
+              {t("catalogFailed", { reason: erreurCatalogue })}{" "}
+              <button className="mini" onClick={reessayer}>
+                {tc("retry")}
+              </button>
+            </Alerte>
+          )
+        ) : (
+          <p className="sub">{t("loadingCatalog")}</p>
+        )
       ) : (
       <>
       {sections.map((sec) => (
         <section key={sec.key}>
           <h2>
             {sec.title}{" "}
-            <span className="sub" style={{ fontWeight: 400 }}>
+            <span className="sub">
               ({sec.list.length})
             </span>
           </h2>
           {sec.note && (
-            <p className="sub" style={{ marginTop: -4 }}>
+            <p className="chapeau">
               {sec.note}
             </p>
           )}
-          {sec.list.map((b) => (
-            <BeverageCard
-              key={b.id}
-              bev={b}
-              profile={profile}
-              profileName={profiles.find((p) => p.id === profile)?.name ?? null}
-              open={open === b.id}
-              busy={busy}
-              onToggle={() => setOpen(open === b.id ? null : b.id)}
-              onDispense={(params) => dispense(b, params)}
-              onWrite={(params) => writeToProfile(b, params)}
-              onImport={() => startImport("all", [b.id])}
-            />
-          ))}
+          {/* Liste explicite : sans elle, le lecteur d'écran énonce 28 cartes à la file sans dire
+              combien il y en a ni où l'on se trouve.
+              `.cards` : grille en `auto-fill`. En une colonne, choisir un café demandait 3 300 px
+              de défilement — y compris sur la tablette 11" en paysage, où trois colonnes tiennent
+              et où 295 px de largeur restaient vides. */}
+          <div role="list" className="cards">
+            {sec.list.map((b) => (
+              <BeverageCard
+                key={b.id}
+                bev={b}
+                profile={profile}
+                profileName={profiles.find((p) => p.id === profile)?.name ?? null}
+                open={open === b.id}
+                busy={busy}
+                working={pending === bevScope(b.id)}
+                report={report?.scope === bevScope(b.id) ? report : null}
+                onToggle={() => setOpen(open === b.id ? null : b.id)}
+                onDispense={(params) => dispense(b, params)}
+                onWrite={(params) => writeToProfile(b, params)}
+                onImport={() => startImport("all", [b.id])}
+              />
+            ))}
+          </div>
         </section>
       ))}
+      {/* **Un catalogue vide est un cas documenté, pas une hypothèse.** Treize modèles de la table
+          du constructeur n'ont aucune recette : `catalogFor` retombe alors sur un catalogue de
+          remplacement, et si celui-là ne donne rien non plus, la page s'arrêtait net après la
+          carte machine — sans titre, sans phrase, sans rien à faire. L'état nomme la cause, dit
+          ce qui marche quand même, et mène à la page qui indique quel catalogue sert. */}
+      {!sections.length && (
+        <Alerte>
+          {t("emptyCatalog", { model: data.model.type })}{" "}
+          <a href="/systeme">{t("emptyCatalogLink")}</a>
+        </Alerte>
+      )}
       </>
       )}
+
+      {dialogue}
     </>
   );
 }
@@ -465,27 +706,33 @@ Cela remplace durablement la recette enregistrée de ce profil.`)) return;
 function PowerCard({
   status,
   busy,
+  working,
   onToggle,
   onStop,
+  stopAvailable,
   shownProfiles,
   fallbackReason,
   confirmed,
   profile,
   onSelectProfile,
   importState,
-  message,
+  report,
 }: {
   status: Status | null;
+  /** Une commande part vers la machine : toutes les autres attendent, elle n'a qu'une file. */
   busy: boolean;
+  /** …et c'est CETTE carte qui l'a lancée. C'est ce qui distingue « j'attends » de « je subis ». */
+  working: boolean;
   onToggle: (next: boolean) => void;
   onStop: () => void;
+  stopAvailable: boolean;
   shownProfiles: ProfileInfo[];
   fallbackReason: string | null;
   confirmed: boolean;
   profile: number;
   onSelectProfile: (id: number) => void;
   importState: Payload["import"];
-  message: string | null;
+  report: Report | null;
 }) {
   const t = useTranslations("power");
   const tc = useTranslations("common");
@@ -499,67 +746,118 @@ function PowerCard({
    * alors que la machine était bel et bien allumée.
    */
   const isOn = mon != null && mon.stateByte !== 0x04;
+  /**
+   * **Une horloge locale, et rien d'autre.** L'âge du monitor est la seule chose de cette page qui
+   * change sans que le serveur ait quoi que ce soit à pousser : personne n'écrit une ligne de
+   * journal parce qu'une minute est passée. L'ancienne scrutation le rafraîchissait par accident,
+   * en même temps qu'elle re-téléchargeait tout ; en passant à l'état poussé, « il y a 2 min » se
+   * serait figé et le passage à « état daté » n'aurait jamais eu lieu.
+   *
+   * Le battement vit **dans cette carte**, pas dans la page : il ne redessine que l'état machine,
+   * pas les 28 cartes de boissons. Aucune requête ne part. 15 s parce que c'est ce qui borne le
+   * retard du seul basculement visible (frais → daté, à 90 s) ; au-delà, l'affichage est en
+   * minutes et n'en demande pas plus.
+   */
+  const [, battement] = useState(0);
+  useEffect(() => {
+    if (!mon) return;
+    const id = setInterval(() => battement((n) => n + 1), 15000);
+    return () => clearInterval(id);
+  }, [mon]);
   const ageSec = mon ? Math.round((Date.now() - mon.at) / 1000) : null;
   const stale = ageSec != null && ageSec > 90;
+  const capteurs = splitSensors(mon?.switches ?? []);
 
   let label: string;
-  if (running) label = t("running", { label: status?.program?.label ?? "" });
+  // Le libellé interne du programme (« Paramètres 100+9 ») ne dit rien à qui attend un café :
+  // On dit qu'une commande est en cours : c'est l'information actionnable.
+  if (running) label = t("running");
   else if (!mon) label = t("unknownNoMonitor");
   else if (stale) label = t("stale", { state: stateLabel(mon.stateByte, t), age: fmtAge(ageSec!, t) });
   else label = stateLabel(mon.stateByte, t);
 
   return (
-    <div className="card">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="row" style={{ gap: 14 }}>
-          <label className="switch" title={isOn ? t("turnOff") : t("turnOn")}>
-            <input
-              type="checkbox"
-              checked={isOn}
-              disabled={busy || running}
-              aria-label={isOn ? t("turnOff") : t("turnOn")}
-              onChange={(e) => onToggle(e.target.checked)}
-            />
-            <span className="track">
-              <span className="knob" />
+    <div className="card machine">
+      {/* **L'interrupteur mène, l'arrêt suit.** La rangée était en `space-between` : le nom de la
+          machine d'un côté, ses pastilles d'état de l'autre, 413 px de vide entre les deux dans une
+          carte de 1 140 px — et un bouton rouge plein six fois plus grand que l'interrupteur dont
+          dépend tout le reste. Les pastilles décrivent l'état : elles vivent maintenant sous la
+          ligne d'état, pas à l'autre bout de la carte. */}
+      <div className="machineHead">
+        <label className="switch grand" title={isOn ? t("turnOff") : t("turnOn")}>
+          <input
+            type="checkbox"
+            checked={isOn}
+            disabled={busy || running}
+            aria-label={isOn ? t("turnOff") : t("turnOn")}
+            onChange={(e) => onToggle(e.target.checked)}
+          />
+          <span className="track">
+            <span className="knob" />
+          </span>
+        </label>
+        <div className="machineIdent">
+          {/* La machine est NOMMÉE. Le sélecteur de la barre de navigation est masqué en
+              mono-machine : sans ce libellé, la page n'indiquait nulle part à quel appareil elle
+              envoie des commandes physiques. */}
+          <strong>{status?.machine?.label ? t("machineNamed", { name: status.machine.label }) : t("machine")}</strong>
+          <div className="sub">{label}</div>
+          {/* Les pastilles qualifient l'état : leur place est contre lui. Serrées entre elles, elles
+              se lisent comme un seul objet au lieu de cinq. */}
+          <div className="row etats">
+            {running && <span className="pill on">{t("programBadge", { counter: status?.program?.counter ?? 0 })}</span>}
+            {stale && !running && (
+              <span className="pill off" title={t("staleBadgeHint")}>
+                {t("staleBadge")}
+              </span>
+            )}
+            {/* **Ce que la machine RÉCLAME n'est pas ce qu'elle rapporte.** Les treize capteurs
+                arrivaient dans une seule pastille verte : « niveau d'eau bas · bac chocolat » en
+                couleur de marche, à côté d'une alarme en rouge. Le produit annonçait en vert la
+                seule chose qui empêchait de faire un café. Voir `splitSensors`. */}
+            {capteurs.attention.length > 0 && (
+              <span className="pill off" title={t("sensorsAttention")}>
+                {capteurs.attention.map((sw) => sw.label).join(" · ")}
+              </span>
+            )}
+            {capteurs.presents.length > 0 && (
+              <span className="pill" title={t("switchesHint")}>
+                {capteurs.presents.map((sw) => sw.label).join(" · ")}
+              </span>
+            )}
+            {/* Un lien, pas une pastille inerte : la seule route vers « quelle alarme ? » était un
+                attribut `title`, donc rien sur la tablette et le téléphone. */}
+            {mon?.alarmBits ? (
+              <a className="pill off" href="/pilotage#alarmes" title={t("alarmsHint")}>
+                {t("alarms")}
+              </a>
+            ) : null}
+            <span className={status?.session?.active ? "pill on" : "pill off"}>
+              {status?.session?.active ? t("lanSession") : t("noSession")}
             </span>
-          </label>
-          <div>
-            <strong>{t("machine")}</strong>
-            <div className="sub" style={{ margin: 0 }}>
-              {label}
-            </div>
           </div>
         </div>
-        <div className="row">
-          <button className="danger" disabled={busy} onClick={onStop} title={t("stopTitle")}>
-            {t("stop")}
+        {/* `actions` : le libellé se replie à l'icône sur une carte étroite, comme les actions des
+            cartes de boisson. `discret` tant qu'aucune préparation ne tourne — un rouge plein pour
+            une action indisponible dominait la carte sans rien pouvoir faire. */}
+        <div className="row actions">
+          <button
+            className={"danger iconBtn" + (running ? "" : " discret")}
+            disabled={busy || !stopAvailable}
+            aria-busy={working || undefined}
+            aria-label={t("stop")}
+            onClick={onStop}
+            title={stopAvailable ? t("stopTitle") : t("stopUnavailable")}
+          >
+            <Icone nom="arreter" />
+            <span className="lbl">{t("stop")}</span>
           </button>
-          {running && <span className="pill on">{t("programBadge", { counter: status?.program?.counter ?? 0 })}</span>}
-          {stale && !running && (
-            <span className="pill off" title={t("staleBadgeHint")}>
-              {t("staleBadge")}
-            </span>
-          )}
-          {mon?.switches?.length ? (
-            <span className="pill on" title={t("switchesHint")}>
-              {mon.switches.map((sw) => sw.label).join(" · ")}
-            </span>
-          ) : null}
-          {mon?.alarmBits ? (
-            <span className="pill off" title={t("alarmsHint")}>
-              {t("alarms", { value: "0x" + mon.alarmBits.toString(16) })}
-            </span>
-          ) : null}
-          <span className={status?.session?.active ? "pill on" : "pill off"}>
-            {status?.session?.active ? t("lanSession") : t("noSession")}
-          </span>
         </div>
       </div>
 
-      <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-        <label style={{ marginBottom: 8 }}>{confirmed ? t("profileLabel") : t("profileUnknown")}</label>
-        <div className="row" role="group" aria-label="Profil actif">
+      <div className="blocSuite">
+        <label>{confirmed ? t("profileLabel") : t("profileUnknown")}</label>
+        <div className="row" role="group" aria-label={t("profileGroupLabel")}>
           {shownProfiles.map((p) => {
             const active = p.id === profile && confirmed;
             return (
@@ -576,24 +874,20 @@ function PowerCard({
             );
           })}
         </div>
-        {fallbackReason && (
-          <p className="sub" style={{ margin: "8px 0 0" }}>
-            {fallbackReason}
-          </p>
-        )}
+        {fallbackReason && <p className="legende">{fallbackReason}</p>}
       </div>
 
       {importState?.active && (
-        <div className="kv" style={{ marginTop: 12 }}>
+        <div className="kv blocSuite">
           <span className="k">{t("readingInProgress", { pending: importState.pending ? ` — ${importState.pending}` : "" })}</span>
-          <span className="mono">{t("readCounts", { ok: importState.ok, remaining: importState.remaining })}</span>
+          <span className="num">{t("readCounts", { ok: importState.ok, remaining: importState.remaining })}</span>
         </div>
       )}
-      {message && (
-        <p className="warn" style={{ marginTop: 12, marginBottom: 0 }}>
-          {message}
-        </p>
-      )}
+      {/* `role="status"` permanent, jamais monté à la demande : un conteneur inséré en même temps
+          que son texte n'est pas annoncé par les lecteurs d'écran. */}
+      <p className={"status " + (report?.kind === "err" ? "err" : "ok")} role="status">
+        {report?.text ?? (busy && !working ? tc("busyReason") : "")}
+      </p>
     </div>
   );
 }
@@ -613,6 +907,8 @@ function BeverageCard({
   profileName,
   open,
   busy,
+  working,
+  report,
   onToggle,
   onDispense,
   onWrite,
@@ -623,6 +919,9 @@ function BeverageCard({
   profileName: string | null;
   open: boolean;
   busy: boolean;
+  /** Cette carte tient le verrou d'envoi : ses boutons le disent, les autres se contentent d'attendre. */
+  working: boolean;
+  report: Report | null;
   onToggle: () => void;
   onDispense: (params?: RecipeParam[]) => void;
   onWrite: (params: RecipeParam[]) => void;
@@ -634,31 +933,42 @@ function BeverageCard({
   const paramLabel = useParamLabel();
   const unitLabel = useUnitLabel();
   const tstat = useTranslations("stat");
+  /**
+   * **Le seul traducteur de la page sans repli, et il ne se contentait pas d'afficher sa clé : il
+   * levait.** Une catégorie absente du catalogue fait remonter un `MISSING_MESSAGE` jusqu'à la
+   * carte, et en développement c'est la page entière qui tombe — 28 cartes perdues pour un libellé
+   * de compteur. Les catégories viennent de `STAT_MEANINGS`, côté serveur : il peut en gagner une
+   * avant que le catalogue ne la connaisse, et ce jour-là la bonne réponse est d'afficher la clé,
+   * pas de casser l'accueil. C'est exactement ce que font déjà `useCategoryLabel`, `useParamLabel`
+   * et `useUnitLabel` dans `src/i18n/labels.ts` ; ce compteur était le seul à ne pas le faire.
+   */
+  const catLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
   const users = beverageParams(bev).filter((p) => p.kind === "user");
   const read = bev.bounds ?? bev.values;
   const [tech, setTech] = useState(false);
+  const nom = bevLabel(bev);
   return (
-    <div className="card">
-      <div className="row" style={{ justifyContent: "space-between" }}>
+    /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
+       l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
+       fait de la grille la cause d'un formulaire illisible. */
+    <div className={"card" + (open ? " open" : "")} role="listitem">
+      <div className="cardHead">
         <div>
-          <strong>{bevLabel(bev)}</strong>{" "}
-          <span className="mono sub" style={{ fontSize: ".82rem" }}>
-            id {bev.id}
-          </span>
-          {bev.milk && (
-            <span className="pill on" style={{ marginLeft: 8 }}>
-              {t("milk")}
-            </span>
-          )}
-          {read && (
-            <span className="pill on" style={{ marginLeft: 8 }}>
-              {t("readFromMachine")}
-            </span>
-          )}
+          {/* Le nom et ses pastilles sont UN objet : une rangée avec une gouttière, au lieu de
+              quatre `marginLeft: 8` posés pastille par pastille. La gouttière gère aussi le repli —
+              une pastille qui passe à la ligne garde son écart, une marge gauche non. */}
+          <div className="titreLigne">
+          {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
+              au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
+          <h3 className="cardTitle">{nom}</h3>
+          {/* Catégorie de la boisson : pastille neutre. Le vert est réservé à ce que la
+              MACHINE rapporte — le laisser ici en mettait quatre par carte, vingt-huit fois, et
+              plus rien ne signalait qu'une session venait de tomber. */}
+          {bev.milk && <span className="pill">{t("milk")}</span>}
+          {read && <span className="pill info">{t("readFromMachine")}</span>}
           {bev.beanSystem?.name && (
             <span
-              className="pill on"
-              style={{ marginLeft: 8 }}
+              className="pill info"
               title={t("beanSystemHint", {
                 grinder: bev.beanSystem.grinder,
                 temperature: bev.beanSystem.temperature,
@@ -669,46 +979,88 @@ function BeverageCard({
             </span>
           )}
           {read && !read.exact && (
-            <span className="pill off" style={{ marginLeft: 8 }} title={t("misalignedHint")}>
+            <span className="pill off" title={t("misalignedHint")}>
               {t("misaligned")}
             </span>
           )}
-          <div className="sub" style={{ margin: "2px 0 0" }}>
-            {bev.factoryName} · {t("paramCount", { count: bev.ingredients.length })}
+          </div>
+          <div className="legende">
+            {/* Le nom d'usine n'est montré que s'il apprend quelque chose. « Espresso macchiato /
+                Espresso Macchiato » disait deux fois la même chose ; « Lacteso / Custom » dit que
+                c'est un emplacement personnalisé, ce qui est une information. */}
+            {bev.factoryName.toLowerCase() !== nom.toLowerCase() && <>{bev.factoryName} · </>}
+            {t("paramCount", { count: bev.ingredients.length })}
             {users.length > 0 && bev.bounds ? ` · ${summary(users, paramLabel, unitLabel)}` : ""}
             {bev.counter && (
               <>
                 {" · "}
-                <span title={t("counterHint", { category: tstat(bev.counter.category) })}>
+                <span title={t("counterHint", { category: catLabel(bev.counter.category) })}>
                   {t("counterValue", {
                     value: bev.counter.value.toLocaleString("fr-FR"),
-                    category: tstat(bev.counter.category),
+                    category: catLabel(bev.counter.category),
                   })}
                 </span>
               </>
             )}
           </div>
         </div>
-        <div className="row">
-          <button onClick={onToggle}>{open ? tc("hide") : tc("details")}</button>
-          <button disabled={busy} onClick={onImport} title={t("readTitle", { bounds: bev.boundsProp ?? "—", values: bev.valuesProp ?? "—" })}>
-            {tc("read")}
+        {/* Les trois boutons portaient le même nom sur les 28 cartes : « Détails », « Lire »,
+            « Préparer », 84 boutons homonymes pour un lecteur d'écran. Le nom accessible dit
+            maintenant DE QUOI il s'agit, sans allonger le libellé visible. */}
+        {/* Le libellé reste visible tant que la carte est large ; en colonne de grille il passe
+            hors écran et l'icône porte l'action, comme PRODUCT.md le demande. C'est la largeur de
+            la CARTE qui décide, pas celle de la fenêtre — une container query, donc.
+            Le nom accessible ne bouge dans aucun des deux cas : `aria-label` l'emporte sur le
+            contenu, et c'est lui qui nomme la boisson concernée (« Préparer un Espresso » plutôt
+            que « Préparer », vingt-huit fois). Le libellé visible ne fait que doubler l'icône. */}
+        <div className="row actions">
+          <button
+            className={"iconBtn" + (open ? " ouvert" : "")}
+            onClick={onToggle}
+            aria-label={open ? t("hideFor", { beverage: nom }) : t("detailsFor", { beverage: nom })}
+          >
+            <Icone nom="chevron" />
+            <span className="lbl">{open ? tc("hide") : tc("details")}</span>
           </button>
-          <button className="good" disabled={busy} onClick={() => onDispense()}>
-            {tc("prepare")}
+          <button
+            className="iconBtn"
+            disabled={busy}
+            aria-busy={working || undefined}
+            aria-label={t("readFor", { beverage: nom })}
+            onClick={onImport}
+            title={t("readTitle")}
+          >
+            <Icone nom="lire" />
+            <span className="lbl">{tc("read")}</span>
+          </button>
+          <button
+            className="good iconBtn"
+            disabled={busy}
+            aria-busy={working || undefined}
+            aria-label={t("prepareFor", { beverage: nom })}
+            onClick={() => onDispense()}
+          >
+            <Icone nom="preparer" />
+            <span className="lbl">{tc("prepare")}</span>
           </button>
         </div>
       </div>
 
+      {/* Le compte rendu vit dans la carte qui a déclenché l'action, jamais en haut de page. */}
+      <p className={"status " + (report?.kind === "err" ? "err" : "ok")} role="status">
+        {report?.text ?? ""}
+      </p>
+
       {open && (
-        <div style={{ marginTop: 14 }}>
+        <div className="blocSuite">
           {/* Monté seulement à l'ouverture : son état repart donc des valeurs de la machine
               à chaque fois, sans logique de réinitialisation à écrire. */}
-          <RecipeEditor bev={bev} profile={profile} profileName={profileName} busy={busy} onDispense={onDispense} onWrite={onWrite} />
+          <RecipeEditor bev={bev} profile={profile} profileName={profileName} busy={busy} working={working} onDispense={onDispense} onWrite={onWrite} />
 
-          <div className="row" style={{ marginTop: 14 }}>
-            <button onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
-              ⓘ {tech ? t("hideTechnicalInfo") : t("technicalInfo")}
+          <div className="row note">
+            <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
+              <Icone nom="info" />
+              {tech ? t("hideTechnicalInfo") : t("technicalInfo")}
             </button>
           </div>
 
@@ -718,7 +1070,7 @@ function BeverageCard({
               montre déjà chaque réglage avec ses bornes, son défaut et la valeur du profil. Le
               dupliquer ici en lecture seule n'ajoutait rien. Les informations techniques gardent ce
               qui ne se lit nulle part ailleurs : les propriétés Ayla et la trame brute. */}
-          <div className="kv" style={{ marginTop: 4 }}>
+          <div className="kv">
             <span className="k">{t("boundsProp")}</span>
             <span className="mono">{bev.boundsProp ?? "—"}</span>
           </div>
@@ -729,7 +1081,7 @@ function BeverageCard({
           {read && (
             <div className="kv">
               <span className="k">{t("readFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })}</span>
-              <span className="mono" style={{ fontSize: ".78rem", textAlign: "right" }}>
+              <span className="mono">
                 {read.hex}
               </span>
             </div>
@@ -763,6 +1115,7 @@ function RecipeEditor({
   profile,
   profileName,
   busy,
+  working,
   onDispense,
   onWrite,
 }: {
@@ -770,6 +1123,7 @@ function RecipeEditor({
   profile: number;
   profileName: string | null;
   busy: boolean;
+  working: boolean;
   onDispense: (params?: RecipeParam[]) => void;
   onWrite: (params: RecipeParam[]) => void;
 }) {
@@ -784,45 +1138,23 @@ function RecipeEditor({
   const advanced = adjustable.filter((b) => b.kind !== "user");
 
   /**
-   * Valeur de départ : ce que la machine a enregistré pour ce profil si c'est dans les bornes,
-   * sinon le défaut du modèle s'il l'est, sinon le minimum. La machine renvoie 0 ou 255 pour un
-   * paramètre jamais configuré (mug de voyage, recettes perso vierges) : retomber sur `min`
-   * permet de le régler, là où une version précédente masquait purement la ligne.
+   * Les deux règles de valeur vivent au niveau du module (`valeurDepart`, `defautModele`) : elles
+   * étaient écrites ici, et le bouton « Préparer » de la carte en avait sa propre version, plus
+   * simple et fausse. Deux implémentations de « quelle valeur pour ce paramètre ? » dans le même
+   * fichier, c'était deux cafés différents sous une seule et même confirmation.
    */
-  const seedFor = (b: Param) => {
-    const min = b.min as number;
-    const max = b.max as number;
-    const stored = bev.values?.params.find((p) => p.id === b.id)?.value;
-    if (stored !== undefined && stored >= min && stored <= max) return stored;
-    const def = b.def as number;
-    if (def >= min && def <= max) return def;
-    return min;
-  };
+  const seedFor = (b: Param) => valeurDepart(bev, b);
   const seed = () => Object.fromEntries(all.map((b) => [b.id, seedFor(b)]));
-
-  /**
-   * Défaut du modèle, ou `null` s'il ne tombe pas dans les bornes. La machine renvoie 0 ou 255 pour
-   * un paramètre jamais configuré : dans ce cas il n'y a **pas** de valeur d'usine à proposer, et on
-   * n'invente rien — on laisse le réglage tel quel plutôt que de le forcer au minimum.
-   */
-  const defOf = (b: Param) => {
-    const d = b.def as number | undefined;
-    if (d === undefined || d === null) return null;
-    return d >= (b.min as number) && d <= (b.max as number) ? d : null;
-  };
+  const defOf = (b: Param) => defautModele(b);
   const [vals, setVals] = useState<Record<number, number>>(seed);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   if (!bev.bounds) {
-    return (
-      <p className="warn" style={{ margin: 0 }}>
-        {t("boundsNotRead")}
-      </p>
-    );
+    return <Alerte>{t("boundsNotRead")}</Alerte>;
   }
   if (!all.length) {
     return (
-      <p className="sub" style={{ margin: 0 }}>
+      <p className="sub">
         {t("noParams")}
       </p>
     );
@@ -848,14 +1180,19 @@ function RecipeEditor({
   });
   const noDefault = adjustable.filter((b) => defOf(b) === null).length;
 
+  /**
+   * Une ligne de réglage. Elle était une suite de largeurs fixes — libellé 150, curseur 150, champ
+   * 80, puce 78 : 558 px incompressibles pour un paramètre, dans une carte qui peut en faire 300.
+   * `.paramRow` laisse le libellé prendre sa ligne quand il faut et le curseur absorber le reste.
+   */
   const slider = (b: Param) => (
-    <div className="row" key={b.id} style={{ justifyContent: "space-between", gap: 12, padding: "4px 0" }}>
-      <span style={{ minWidth: 150 }}>
+    <div className="paramRow" key={b.id}>
+      <span className="nom">
         {paramLabel(b)}
         {b.unit ? ` (${unitLabel(b.unit)})` : ""}
       </span>
-      <div className="row" style={{ gap: 8 }}>
-        <span className="sub mono" style={{ fontSize: ".78rem" }}>
+      <div className="ctl">
+        <span className="sub mono">
           {b.min}
         </span>
         <input
@@ -865,23 +1202,21 @@ function RecipeEditor({
           value={vals[b.id] ?? seedFor(b)}
           aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
           onChange={(e) => set(b, Number(e.target.value))}
-          style={{ width: 150 }}
         />
-        <span className="sub mono" style={{ fontSize: ".78rem" }}>
+        <span className="sub mono">
           {b.max}
         </span>
         <input
+          className="numField"
           type="number"
           min={b.min}
           max={b.max}
           value={vals[b.id] ?? seedFor(b)}
           onChange={(e) => set(b, Number(e.target.value))}
-          style={{ width: 80 }}
         />
         {defOf(b) !== null ? (
           <button
             className="mini"
-            style={{ minWidth: 78 }}
             disabled={(vals[b.id] ?? seedFor(b)) === defOf(b)}
             onClick={() => set(b, defOf(b) as number)}
             title={t("paramDefaultHint")}
@@ -889,7 +1224,7 @@ function RecipeEditor({
             {t("paramDefault", { value: defOf(b) as number })}
           </button>
         ) : (
-          <span className="sub" style={{ minWidth: 78, fontSize: ".78rem" }} title={t("noParamDefaultHint")}>
+          <span className="sub" title={t("noParamDefaultHint")}>
             {t("noParamDefault")}
           </span>
         )}
@@ -898,9 +1233,11 @@ function RecipeEditor({
   );
 
   return (
-    <div style={{ background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-        <strong style={{ fontSize: ".95rem" }}>{t("heading", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</strong>
+    <div className="blocEditeur">
+      <div className="cardHead chapeau">
+        {/* Un titre, pas un `strong` : les 28 cartes ont gagné leur `h3`, et le bloc qui s'ouvre
+            dedans restait le seul repère de la page inaccessible à une navigation par titres. */}
+        <h4 className="cardTitle">{t("heading", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</h4>
         <div className="row">
           {!bev.values && (
             <span className="pill off" title={t("valuesNotReadHint")}>
@@ -908,17 +1245,19 @@ function RecipeEditor({
             </span>
           )}
           {dirty && (
-            <button onClick={() => setVals(seed)} title={t("resetTitle")}>
-              {tc("reset")}
+            <button className="iconBtn" onClick={() => setVals(seed)} title={t("resetTitle")}>
+              <Icone nom="reinitialiser" />
+              <span className="lbl">{tc("reset")}</span>
             </button>
           )}
           <button
-            className="mini"
+            className="mini iconBtn"
             disabled={atDefaults}
             onClick={applyDefaults}
             title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}
           >
-            {t("defaults")}
+            <Icone nom="defauts" taille={15} />
+            <span className="lbl">{t("defaults")}</span>
           </button>
         </div>
       </div>
@@ -926,8 +1265,8 @@ function RecipeEditor({
       {basic.map(slider)}
 
       {fixed.map((b) => (
-        <div className="row" key={b.id} style={{ justifyContent: "space-between", gap: 12, padding: "4px 0" }}>
-          <span style={{ minWidth: 150 }}>
+        <div className="paramRow" key={b.id}>
+          <span className="nom">
             {paramLabel(b)}
             {b.unit ? ` (${unitLabel(b.unit)})` : ""}
           </span>
@@ -938,26 +1277,30 @@ function RecipeEditor({
       ))}
 
       {advanced.length > 0 && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
+        <div className="blocSuite">
           <button onClick={() => setShowAdvanced(!showAdvanced)}>
             {showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})
           </button>
           {showAdvanced && (
-            <div style={{ marginTop: 8 }}>
-              <p className="sub" style={{ marginTop: 0 }}>
-                {t("advancedNote")}
-              </p>
+            <div>
+              <p className="chapeau">{t("advancedNote")}</p>
               {advanced.map(slider)}
             </div>
           )}
         </div>
       )}
 
-      <div className="row" style={{ marginTop: 12 }}>
-        <button className="good" disabled={busy} onClick={() => onDispense(params)}>
+      <div className="row note">
+        <button className="good" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
           {t("prepareWith")}
         </button>
-        <button className="primary" disabled={busy} onClick={() => onWrite(params)} title={t("writeTitle")}>
+        <button
+          className="primary"
+          disabled={busy}
+          aria-busy={working || undefined}
+          onClick={() => onWrite(params)}
+          title={t("writeTitle")}
+        >
           {t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}
         </button>
       </div>
@@ -995,18 +1338,93 @@ function isSet(p: Param): boolean {
   return p.def !== undefined && p.min !== undefined && p.max !== undefined && p.def >= p.min && p.def <= p.max;
 }
 
-type Translator = (key: string, values?: Record<string, string | number>) => string;
+/**
+ * Le défaut du **modèle**, ou `null` s'il ne tombe pas dans ses propres bornes — auquel cas il n'y
+ * a pas de valeur d'usine à proposer, et on n'en invente pas.
+ */
+function defautModele(b: Param): number | null {
+  const d = b.def;
+  if (d === undefined || d === null) return null;
+  return d >= (b.min as number) && d <= (b.max as number) ? d : null;
+}
+
+/** Ce que le **profil** a enregistré sur la machine, si c'est utilisable. */
+function valeurProfil(bev: Beverage, b: Param): number | undefined {
+  const v = bev.values?.params.find((p) => p.id === b.id)?.value;
+  if (v === undefined) return undefined;
+  return v >= (b.min as number) && v <= (b.max as number) ? v : undefined;
+}
+
+/** Valeur de départ d'un réglage : celle du profil, sinon celle du modèle, sinon le minimum. */
+function valeurDepart(bev: Beverage, b: Param): number {
+  return valeurProfil(bev, b) ?? defautModele(b) ?? (b.min as number);
+}
+
+/**
+ * Ce qu'on peut **honnêtement** envoyer pour un paramètre, et d'où ça vient.
+ *
+ * `null` = ni valeur de profil ni défaut utilisable : on n'envoie rien pour ce paramètre, et la
+ * machine applique le sien. C'est ce qui évite d'envoyer « Café = 0 ml » sur un mug de voyage
+ * jamais configuré, tout en cessant d'ignorer la recette du profil quand elle existe.
+ */
+function valeurSure(bev: Beverage, b: Param): { value: number; from: "profil" | "modele" } | null {
+  const p = valeurProfil(bev, b);
+  if (p !== undefined) return { value: p, from: "profil" };
+  const d = defautModele(b);
+  if (d !== null) return { value: d, from: "modele" };
+  return null;
+}
+
+/**
+ * Les réglages d'une commande, en français, avec leurs unités.
+ *
+ * Remplace un `params.map(p => nom + " = " + valeur)` qui vidait huit couples dont quatre ne sont
+ * pas des réglages d'utilisateur (« Programmable = 1 », « Visible = 1 ») et dont aucun ne portait
+ * son unité — dans le dialogue même qui existait pour ne plus faire ce que faisait
+ * `window.confirm()`. Les paramètres techniques ne quittent pas la **trame**, ils sont comptés au
+ * lieu d'être énumérés : la règle « ne jamais filtrer les paramètres sur `kind` » porte sur ce
+ * qu'on envoie, pas sur ce qu'on donne à relire avant de confirmer.
+ */
+function resumeReglages(
+  bev: Beverage,
+  params: RecipeParam[],
+  paramLabel: (p: { name?: string; label?: string; id?: number }) => string,
+  unitLabel: (u: string) => string,
+  autres: (n: number) => string,
+): string {
+  const lisibles: string[] = [];
+  let techniques = 0;
+  for (const p of params) {
+    const meta = paramOf(bev, p.id);
+    if (meta && meta.kind === "user") {
+      lisibles.push(paramLabel(meta) + " " + p.value + (meta.unit ? " " + unitLabel(meta.unit) : ""));
+    } else techniques++;
+  }
+  if (!techniques) return lisibles.join(" · ");
+  const queue = autres(techniques);
+  return lisibles.length ? lisibles.join(" · ") + " · " + queue : queue;
+}
+
+/**
+ * Un `fetch` qui rejette n'a pas atteint le serveur ; un `fetch` qui répond 500 l'a atteint. La
+ * distinction décide de la phrase : dans le premier cas il n'y a rien à corriger côté machine, et
+ * rien d'autre à proposer que de réessayer.
+ */
+function injoignable(e: unknown): boolean {
+  return e instanceof TypeError;
+}
+
+/** La raison d'un échec, en langue d'intention plutôt qu'en nom de classe JavaScript. */
+function raisonEchec(e: unknown, tc: Translator): string {
+  if (injoignable(e)) return tc("serverUnreachable");
+  return tc("error", { message: e instanceof Error ? e.message : String(e) });
+}
+
 
 /**
  * Libellé d'un état machine. Seule la veille (`0x04`) est certaine ; `0x00` et `0x02` sont
  * déduits d'observations concordantes, et tout autre code est affiché brut plutôt que deviné.
  */
-function stateLabel(state: number, t: Translator): string {
-  if (state === 0x04) return t("standby");
-  if (state === 0x00) return t("heating");
-  if (state === 0x02) return t("ready");
-  return t("onUnknownState", { state: `0x${state.toString(16).padStart(2, "0")}` });
-}
 
 function fmtAge(sec: number, t: Translator): string {
   if (sec < 90) return t("ageSeconds", { n: sec });

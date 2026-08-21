@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import { attendreLibre, useMachinePush } from "../events";
+import { TitreAlerte } from "../Alerte";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -53,6 +54,13 @@ export default function Statistiques() {
   const t = useTranslations("stats");
   const tc = useTranslations("common");
   const tstat = useTranslations("stat");
+  /**
+   * Même défaut, même page que l'accueil : `tstat` **lève** sur une clé absente, et l'erreur
+   * remonte jusqu'à faire tomber la page entière. Les clés viennent de `STAT_MEANINGS` côté
+   * serveur : il peut en gagner une avant le catalogue, et ce jour-là afficher la clé vaut mieux
+   * que perdre les 62 compteurs. Repli identique à `useCategoryLabel` / `useParamLabel`.
+   */
+  const statLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
   const [d, setD] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -166,16 +174,16 @@ export default function Statistiques() {
       {/* Ce que le flux dit de l'activité de la machine. Sans ça, une lecture demandée n'a aucune
           trace à l'écran entre le clic et l'arrivée des valeurs. */}
       {pending && <p className="sub">{t("pushWaiting")}</p>}
-      {!live && <p className="sub">{t("pushOff")}</p>}
+      {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card warn" style={{ marginBottom: 16 }}>
-        <strong>⚠ {t("categoryWarningTitle")}</strong>
-        <div className="sub" style={{ margin: "4px 0 0" }}>
+      <div className="card warn">
+        <TitreAlerte>{t("categoryWarningTitle")}</TitreAlerte>
+        <div className="legende">
           {t("categoryWarning")}
         </div>
       </div>
 
-      <div className="row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+      <div className="row barreActions">
         <button disabled={busy || scanning} onClick={() => read(RANGES_KNOWN, t("scopeKnown"))}>
           {t("readKnown")}
         </button>
@@ -190,19 +198,19 @@ export default function Statistiques() {
 
       {!d || d.count === 0 ? (
         <div className="card">
-          <p className="sub" style={{ margin: 0 }}>{t("nothingYet")}</p>
+          <p className="sub">{t("nothingYet")}</p>
         </div>
       ) : (
         <>
           {derived && derived.total !== undefined && (
-            <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card">
               <div className="kv">
                 <span className="k">{t("totalBeverages")}</span>
-                <span className="mono" style={{ fontSize: "1.35rem", fontWeight: 600 }}>
+                <span className="chiffre">
                   {fmt(derived.total)}
                 </span>
               </div>
-              <p className="sub" style={{ margin: "6px 0 0" }}>
+              <p className="legende">
                 {derived.complete ? t("totalNote") : t("totalPartial")}
               </p>
             </div>
@@ -211,21 +219,21 @@ export default function Statistiques() {
           <h2>{t("knownHeading")}</h2>
           <div className="card">
             {d.known.length === 0 ? (
-              <p className="sub" style={{ margin: 0 }}>{t("noKnownYet")}</p>
+              <p className="sub">{t("noKnownYet")}</p>
             ) : (
               d.known.map((k) => (
                 <div className="kv" key={k.id}>
                   <span className="k">
-                    {tstat(k.key)}{" "}
-                    <span className="sub mono" style={{ fontSize: ".76rem" }}>
+                    {statLabel(k.key)}{" "}
+                    <span className="sub num">
                       {k.id}
                     </span>
                   </span>
-                  <span className="mono">
+                  <span className="num">
                     {fmt(k.value)}
                     {k.unit ? ` ${k.unit}` : ""}
                     {k.unit && (
-                      <span className="sub" style={{ fontSize: ".76rem" }} title={t("rawHint")}>
+                      <span className="sub" title={t("rawHint")}>
                         {" "}
                         ({t("raw", { value: fmt(k.raw) })})
                       </span>
@@ -235,7 +243,7 @@ export default function Statistiques() {
               ))
             )}
             {derived?.hot !== undefined && d.stats["3003"] !== undefined && (
-              <p className="sub" style={{ margin: "10px 0 0" }}>
+              <p className="note">
                 {t("hotMilkSum", { total: fmt(derived.hot) })}
               </p>
             )}
@@ -243,23 +251,17 @@ export default function Statistiques() {
 
           <h2>{t("unknownHeading")}</h2>
           <div className="card">
-            <p className="sub" style={{ marginTop: 0 }}>{t("unknownNote")}</p>
+            <p className="chapeau">{t("unknownNote")}</p>
             {unknownIds.length === 0 ? (
-              <p className="sub" style={{ margin: 0 }}>{t("unknownEmpty")}</p>
+              <p className="sub">{t("unknownEmpty")}</p>
             ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
-                  gap: 6,
-                }}
-              >
+              <div className="grilleBrute">
                 {unknownIds.map((id) => (
-                  <div className="kv" key={id} style={{ margin: 0 }}>
-                    <span className="k mono" style={{ fontSize: ".8rem" }}>
+                  <div className="kv" key={id}>
+                    <span className="k mono">
                       {id}
                     </span>
-                    <span className="mono" style={{ fontSize: ".8rem" }}>
+                    <span className="num">
                       {fmt(d.stats[String(id)])}
                     </span>
                   </div>

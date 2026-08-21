@@ -113,8 +113,17 @@ const MACHINES = new Map();
  * commande ne passe pas.
  */
 const LOG = [];
+/**
+ * Numero de ligne, monotone et jamais reutilise.
+ *
+ * Il n'est pas decoratif : le journal se remplit par la TETE (`unshift`), donc si l'interface
+ * identifie ses lignes par leur rang, une ligne de plus decale les cinquante autres et React
+ * reecrit tout le bloc au lieu d'inserer un noeud. `t` ne suffit pas comme identite — deux lignes
+ * tombent dans la meme milliseconde des qu'un import defile.
+ */
+let logSeq = 0;
 function L(dir, msg, m = null) {
-  LOG.unshift({ t: Date.now(), dir, msg, m: m?.id ?? null });
+  LOG.unshift({ n: ++logSeq, t: Date.now(), dir, msg, m: m?.id ?? null });
   if (LOG.length > 400) LOG.pop();
   // Tout changement d'état significatif passe par ici : c'est donc d'ici qu'on prévient les
   // navigateurs abonnés. Voir sseTouch().
@@ -755,11 +764,22 @@ async function postLocalReg(m) {
   });
 }
 
+/**
+ * Présence soutenue pendant qu'une commande est en attente : `local_reg` toutes les 2,5 s, parce
+ * que c'est la machine qui vient nous chercher et qu'elle doit connaître notre adresse.
+ *
+ * **L'arrêt se juge sur la fenêtre, pas sur le drapeau.** `m.program.active` ne retombe qu'à la
+ * ligne 607, quand la machine vient chercher la commande suivante — donc jamais si elle est
+ * éteinte, injoignable ou sans clé. Cette boucle tournait alors **indéfiniment** : un `local_reg`
+ * toutes les 2,5 s vers une adresse muette, une ligne d'erreur par tentative, et un journal de
+ * 400 lignes identiques où l'historique utile avait disparu. Les quinze secondes de grâce après la
+ * fin de fenêtre restent : la machine peut se présenter juste après l'échéance.
+ */
 function ensureKeepalive(m) {
   if (m.keepalive) return;
   L("sys", "keep-alive démarré (2,5 s)", m);
   m.keepalive = setInterval(async () => {
-    const active = m.program?.active === true || m.import?.active === true;
+    const active = fenetreOuverte(m.program) || fenetreOuverte(m.import);
     const past = Date.now() - (m.program?.startedAt ?? 0) - (m.program?.durationMs ?? 0);
     if (!active && past > 15000) { clearInterval(m.keepalive); m.keepalive = null; L("sys", "keep-alive arrêté", m); return; }
     await postLocalReg(m);
@@ -2372,7 +2392,17 @@ async function handleApi(req, res) {
       // modèle est sur /api/model.
       model: { key: m.modelKey, source: m.modelSource, catalogKey: m.catalog.key, catalogType: m.catalog.model.type, matchesCatalog: m.modelKey ? m.modelKey === m.catalog.key : null },
       session: { active: !!m.session }, lastRegisterAt: m.lastRegisterAt, activeProfile: m.activeProfile, activeProfileConfirmed: m.activeProfileConfirmed,
-      program: m.program ? { active: m.program.active, label: m.program.label, counter: m.program.counter } : null,
+      /**
+       * `active` juge sur la **fenetre**, pas sur le drapeau seul — meme regle que
+       * `machineSummary`, et pour la meme raison : `m.program.active` ne retombe que quand la
+       * machine vient chercher la commande suivante (voir `nextCommandData`). Machine eteinte,
+       * injoignable ou sans cle, elle ne vient jamais : le drapeau restait vrai jusqu'au
+       * redemarrage du serveur. L'accueil affichait alors « preparation en cours » pour toujours,
+       * proposait « Arreter », et tenait sa cadence rapide indefiniment — pendant que /machines,
+       * qui passe deja par `fenetreOuverte`, affirmait le contraire. Les compteurs restent : ils
+       * disent ce qu'un programme termine a fait.
+       */
+      program: m.program ? { active: fenetreOuverte(m.program), label: m.program.label, counter: m.program.counter } : null,
       lastMonitor: m.lastMonitor, lastDataResponse: m.lastDataResponse, log: LOG.slice(0, 50),
     }));
   }
@@ -2484,7 +2514,10 @@ async function handleApi(req, res) {
       model: { key: m.catalog.key, type: m.catalog.model.type, appModelId: m.catalog.model.appModelId, productCode: m.catalog.model.productCode, nProfiles: m.catalog.model.nProfiles, protocolVersion: m.catalog.model.protocolVersion, fallback: m.catalog.fallback },
       categories: CATEGORIES, profileId, beverages, order, orderProp: prioProp,
       importedAt: store.importedAt,
-      import: m.import ? { active: m.import.active, remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
+      // Meme regle que pour `program` ci-dessus : `m.import.active` ne retombe qu'a la visite
+      // suivante de la machine, donc un import expire dans le vide restait « en cours » et
+      // maintenait la page en relecture. Les comptes lues/non lues survivent a la fenetre.
+      import: m.import ? { active: fenetreOuverte(m.import), remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
     }));
   }
 
@@ -2555,7 +2588,10 @@ async function handleApi(req, res) {
         return { prop: x.prop, kind: x.kind, stride: x.stride ?? null, state: !d ? "unread" : d.absent ? "absent" : "read" };
       }),
       importedAt: store.importedAt,
-      import: m.import ? { active: m.import.active, remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
+      // Meme regle que pour `program` ci-dessus : `m.import.active` ne retombe qu'a la visite
+      // suivante de la machine, donc un import expire dans le vide restait « en cours » et
+      // maintenait la page en relecture. Les comptes lues/non lues survivent a la fenetre.
+      import: m.import ? { active: fenetreOuverte(m.import), remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
     }));
   }
 
@@ -2733,7 +2769,10 @@ async function handleApi(req, res) {
   if (url === "/api/presence" && req.method === "POST") {
     const now = Date.now();
     const fresh = m.lastMonitor && now - m.lastMonitor.at < 30000;
-    const busyAlready = m.program?.active === true || m.import?.active === true;
+    // Même règle : sur le drapeau brut, une machine qui a cessé de répondre restait « occupée »
+    // pour toujours et cette relance — la seule qui puisse rétablir l'état — était refusée à
+    // jamais avec « programme en cours ».
+    const busyAlready = fenetreOuverte(m.program) || fenetreOuverte(m.import);
     if (fresh || busyAlready) {
       return raw(res, JSON.stringify({ skipped: true, reason: fresh ? "monitor récent" : "programme en cours", lastMonitor: m.lastMonitor }));
     }

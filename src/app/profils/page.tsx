@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
+import { useConfirm } from "../confirm";
 
 interface OrderEntry {
   id: number;
@@ -52,7 +53,12 @@ export default function Profils() {
   const [data, setData] = useState<Payload | null>(null);
   const [scope, setScope] = useState<Scope>("all");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  /** Compte rendu de la dernière action : il vivait dans un bandeau `.warn`, y compris pour un
+   *  succès, et n'était annoncé à personne. */
+  const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  const rendre = (r: any, ok: string) =>
+    setMsg(r.error ? { text: tc("error", { message: r.error }), kind: "err" } : { text: ok, kind: "ok" });
+  const { demander, dialogue } = useConfirm();
   const [showProps, setShowProps] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -91,15 +97,17 @@ export default function Profils() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ what: scope }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("importQueued", { count: r.queued }));
+      rendre(r, t("importQueued", { count: r.queued }));
       await refresh();
     } finally {
       setBusy(false);
     }
   };
 
-  const selectProfile = async (id: number) => {
-    if (!confirm(t("confirmActivate", { id }))) return;
+  const selectProfile = (id: number) =>
+    demander({ question: t("confirmActivate", { id }), onConfirm: () => void activer(id) });
+
+  const activer = async (id: number) => {
     setBusy(true);
     setMsg(null);
     try {
@@ -108,7 +116,7 @@ export default function Profils() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectProfile", profileId: id }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent", { label: r.program }));
+      rendre(r, t("activateSent", { label: r.program }));
     } finally {
       setBusy(false);
     }
@@ -125,11 +133,11 @@ export default function Profils() {
       {/* Ce que le flux dit de l'activité de la machine. Sans ça, une lecture demandée n'a aucune
           trace à l'écran entre le clic et l'arrivée des valeurs. */}
       {pending && <p className="sub">{t("pushWaiting")}</p>}
-      {!live && <p className="sub">{t("pushOff")}</p>}
+      {!live && <p className="sub">{tc("pushOff")}</p>}
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>{t("importHeading")}</h2>
-        <p className="sub" style={{ marginBottom: 12 }}>{t("importNote")}</p>
+        <h2>{t("importHeading")}</h2>
+        <p className="chapeau">{t("importNote")}</p>
         <div className="row">
           <div>
             <label htmlFor="scope">{t("whatToRead")}</label>
@@ -150,21 +158,21 @@ export default function Profils() {
           </button>
         </div>
         {data?.import && (
-          <div className="kv" style={{ marginTop: 12 }}>
+          <div className="kv blocSuite">
             <span className="k">
               {t("importState", { state: data.import.active ? t("importActive") : t("importDone") })}
-              {data.import.pending ? t("importPending", { prop: data.import.pending }) : ""}
+              {data.import.pending ? t("importPending") : ""}
             </span>
-            <span className="mono">{t("importCounts", { ok: data.import.ok, remaining: data.import.remaining, fail: data.import.fail })}</span>
+            <span className="num">{t("importCounts", { ok: data.import.ok, remaining: data.import.remaining, fail: data.import.fail })}</span>
           </div>
         )}
-        {msg && (
-          <p className="warn" style={{ marginTop: 12, marginBottom: 0 }}>
-            {msg}
-          </p>
-        )}
+        {/* Le compte rendu vit dans la carte qui l'a déclenché — c'est là que le doigt était. */}
+        <p className={"status " + (msg?.kind === "err" ? "err" : "ok")} role="status">
+          {msg?.text ?? ""}
+        </p>
         {showProps && data && (
-          <table style={{ marginTop: 12 }}>
+          <div className="tableWrap">
+          <table>
             <thead>
               <tr>
                 <th>{t("propAyla")}</th>
@@ -178,7 +186,7 @@ export default function Profils() {
                 <tr key={p.prop}>
                   <td className="mono">{p.prop}</td>
                   <td>{p.kind === "profileNames" ? t("roleProfileNames") : p.kind === "customNames" ? t("roleCustomNames") : p.kind === "priority" ? t("rolePriority") : p.kind}</td>
-                  <td className="mono">{p.stride ?? "—"}</td>
+                  <td className="num">{p.stride ?? "—"}</td>
                   <td>
                     {p.state === "read" ? (
                       t("stateRead")
@@ -194,6 +202,7 @@ export default function Profils() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -204,29 +213,38 @@ export default function Profils() {
           <h2>{t("listHeading", { count: data.model.nProfiles })}</h2>
           {data.profiles.map((p) => (
             <div className="card" key={p.id}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
+              <div className="cardHead">
                 <div>
-                  <strong>
-                    {tc("profileNumbered", { id: p.id })}
-                    {p.name ? ` — ${p.name}` : ""}
-                  </strong>
-                  {!p.name && (
-                    <span className="pill off" style={{ marginLeft: 8 }}>
-                      {t("nameNotRead")}
-                    </span>
-                  )}
-                  {p.icon != null && (
-                    <span className="sub mono" style={{ marginLeft: 8, fontSize: ".8rem" }}>
-                      {t("icon", { n: p.icon })}
-                    </span>
-                  )}
-                  <div className="sub" style={{ margin: "2px 0 0" }}>
+                  {/* Le nom, sa pastille et son numéro d'icône forment UNE ligne de titre. Ils
+                      étaient trois frères dans un conteneur sans gouttière : « Profil 1 — Jérôme » et
+                      « icône 12 » se touchaient, sans un pixel entre eux. */}
+                  <div className="titreLigne">
+                    {/* Un profil est un objet nommé, activable, et il y en a cinq : c'est un titre,
+                        pas une mise en gras. L'accueil donne un `<h3>` à ses cartes de boisson. */}
+                    <h3 className="cardTitle">
+                      {tc("profileNumbered", { id: p.id })}
+                      {p.name ? ` — ${p.name}` : ""}
+                    </h3>
+                    {!p.name && (
+                      <span className="pill off">
+                        {t("nameNotRead")}
+                      </span>
+                    )}
+                    {/* « icône 12 » est une phrase avec un nombre, pas un identifiant : le monospace
+                        n'y avait rien à faire. */}
+                    {p.icon != null && (
+                      <span className="sub num">
+                        {t("icon", { n: p.icon })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="legende">
                     {p.order
                       ? t("orderSummary", { count: p.order.length, list: p.order.map((o) => o.label ?? `#${o.id}`).join(" · ") })
                       : t("orderNotRead")}
                   </div>
                   {p.source && (
-                    <div className="sub mono" style={{ margin: "2px 0 0", fontSize: ".78rem" }}>
+                    <div className="legende mono">
                       {p.source}
                     </div>
                   )}
@@ -240,6 +258,7 @@ export default function Profils() {
 
           <h2>{t("customsHeading", { count: data.model.nCustomRecipes })}</h2>
           <div className="card">
+            <div className="tableWrap">
             <table>
               <thead>
                 <tr>
@@ -254,18 +273,20 @@ export default function Profils() {
                   <tr key={c.slot}>
                     <td>{t("customSlot", { n: c.slot })}</td>
                     <td>{c.name ?? <span className="sub">{t("unnamed")}</span>}</td>
-                    <td className="mono">{c.icon ?? tc("dash")}</td>
-                    <td className="mono">{c.beverageId}</td>
+                    <td className="num">{c.icon ?? tc("dash")}</td>
+                    <td className="num">{c.beverageId}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
+            </div>
+            <p className="note">
               {t("customsNote")}
             </p>
           </div>
         </>
       )}
+      {dialogue}
     </>
   );
 }

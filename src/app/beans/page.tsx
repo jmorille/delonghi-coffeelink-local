@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import Icone from "../icons";
 import { useMachinePush } from "../events";
+import { useConfirm } from "../confirm";
 
 interface Bean {
   index: number;
@@ -79,7 +81,18 @@ export default function Beans() {
   const tc = useTranslations("common");
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  /**
+   * Compte rendu de la dernière action.
+   *
+   * Il s'affichait dans un `<p className="warn">` — le bandeau d'avertissement ambre — quel que
+   * soit son contenu : « Configuration mémorisée » et « Erreur : … » dans la même boîte d'alerte.
+   * `.status` sépare les deux et porte `role="status"`, sinon rien n'est annoncé.
+   */
+  const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  const dire = (text: string) => setMsg({ text, kind: "ok" });
+  const rendre = (r: any, ok: string) =>
+    setMsg(r.error ? { text: tc("error", { message: r.error }), kind: "err" } : { text: ok, kind: "ok" });
+  const { demander, dialogue } = useConfirm();
   const [selected, setSelected] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [flowTime, setFlowTime] = useState(15);
@@ -121,7 +134,7 @@ export default function Beans() {
       });
       // Pas de minuteur : la valeur arrivera quand la machine l'aura poussée, et le flux nous le
       // dira. C'est exactement ce que le `setTimeout(refresh, 6000)` d'avant essayait de devimer.
-      setMsg(t("readQueued", { index }));
+      dire(t("readQueued", { index }));
     } finally {
       setBusy(false);
     }
@@ -137,7 +150,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from: 0, to: 5 }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("scanStarted", { from: r.from, to: r.to }));
+      rendre(r, t("scanStarted", { from: r.from, to: r.to }));
     } finally {
       setBusy(false);
     }
@@ -156,9 +169,9 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, name: src.name ?? "", grinder: src.grinder, temperature: src.temperature, aroma: src.aroma }),
       }).then((x) => x.json());
-      if (r.error) setMsg(tc("error", { message: r.error }));
+      if (r.error) setMsg({ text: tc("error", { message: r.error }), kind: "err" });
       else {
-        setMsg(t("presetSaved", { name: r.preset.name || t("unnamed") }));
+        dire(t("presetSaved", { name: r.preset.name || t("unnamed") }));
         await refresh();
       }
     } finally {
@@ -166,12 +179,14 @@ export default function Beans() {
     }
   };
 
-  const oublie = async (p: Preset) => {
-    if (!confirm(t("presetForgetConfirm", { name: p.name || t("unnamed") }))) return;
+  const oublie = (p: Preset) =>
+    demander({ question: t("presetForgetConfirm", { name: p.name || t("unnamed") }), onConfirm: () => void oublieConfirme(p) });
+
+  const oublieConfirme = async (p: Preset) => {
     setBusy(true);
     try {
       await mfetch(`/api/beanpresets?id=${encodeURIComponent(p.id)}`, { method: "DELETE" });
-      setMsg(t("presetForgotten", { name: p.name || t("unnamed") }));
+      dire(t("presetForgotten", { name: p.name || t("unnamed") }));
       await refresh();
     } finally {
       setBusy(false);
@@ -184,9 +199,16 @@ export default function Beans() {
    * **Écriture persistante** : elle remplace le réglage de cet emplacement. D'où la confirmation qui
    * nomme l'emplacement écrasé — et l'index 0 est exclu, ce n'est pas un café.
    */
-  const ecrire = async (p: Preset, index: number) => {
+  const ecrire = (p: Preset, index: number) => {
     const cible = data?.beans.find((x) => x.index === index);
-    if (!confirm(t("presetWriteConfirm", { name: p.name || t("unnamed"), index, current: cible?.name || t("unnamed") }))) return;
+    demander({
+      question: t("presetWriteConfirm", { name: p.name || t("unnamed"), index, current: cible?.name || t("unnamed") }),
+      warn: t("persistentWarning"),
+      onConfirm: () => void ecrireConfirme(p, index),
+    });
+  };
+
+  const ecrireConfirme = async (p: Preset, index: number) => {
     setBusy(true);
     setMsg(null);
     try {
@@ -195,7 +217,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index, name: p.name, grinder: p.grinder, temperature: p.temperature, aroma: p.aroma, visible: true }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("presetWritten", { name: p.name || t("unnamed"), index }));
+      rendre(r, t("presetWritten", { name: p.name || t("unnamed"), index }));
     } finally {
       setBusy(false);
     }
@@ -219,7 +241,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...draft, flowTime, crema, taste }),
       }).then((x) => x.json());
-      if (r.error) setMsg(tc("error", { message: r.error }));
+      if (r.error) setMsg({ text: tc("error", { message: r.error }), kind: "err" });
       else setSim(r);
     } finally {
       setBusy(false);
@@ -233,12 +255,21 @@ export default function Beans() {
   };
 
   /** Écrit le profil dans la machine (0xBB). Modification persistante. */
-  const save = async (visible = true) => {
+  const save = (visible = true) => {
     if (!draft || selected == null) return;
-    const what = visible
-      ? t("confirmSave", { index: selected, name: draft.name || t("unnamed"), grinder: draft.grinder, temperature: draft.temperature, aroma: draft.aroma })
-      : t("confirmDelete", { index: selected });
-    if (!confirm(`${what}\n\n${t("persistentWarning")}`)) return;
+    demander({
+      // La mise en garde était collée à la question par deux retours à la ligne, faute d'un
+      // endroit pour la mettre : `window.confirm()` n'a qu'un seul champ. Le dialogue en a trois.
+      question: visible
+        ? t("confirmSave", { index: selected, name: draft.name || t("unnamed"), grinder: draft.grinder, temperature: draft.temperature, aroma: draft.aroma })
+        : t("confirmDelete", { index: selected }),
+      warn: t("persistentWarning"),
+      onConfirm: () => void saveConfirme(visible),
+    });
+  };
+
+  const saveConfirme = async (visible: boolean) => {
+    if (!draft || selected == null) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -247,7 +278,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index: selected, ...draft, visible }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("saveSent"));
+      rendre(r, t("saveSent"));
       setTimeout(refresh, 8000);
     } finally {
       setBusy(false);
@@ -255,8 +286,10 @@ export default function Beans() {
   };
 
   /** Sélectionne ce Bean System comme actif sur la machine (0xB9). */
-  const activate = async (index: number) => {
-    if (!confirm(t("confirmActivate", { index }))) return;
+  const activate = (index: number) =>
+    demander({ question: t("confirmActivate", { index }), onConfirm: () => void activateConfirme(index) });
+
+  const activateConfirme = async (index: number) => {
     setBusy(true);
     setMsg(null);
     try {
@@ -265,7 +298,7 @@ export default function Beans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "selectBean", beanId: index }),
       }).then((x) => x.json());
-      setMsg(r.error ? tc("error", { message: r.error }) : t("activateSent"));
+      rendre(r, t("activateSent"));
     } finally {
       setBusy(false);
     }
@@ -281,32 +314,37 @@ export default function Beans() {
       {/* Ce que le flux nous dit de l'activité de la machine. Sans ça, une lecture demandée n'a
           aucune trace à l'écran entre le clic et l'arrivée de la valeur. */}
       {pending && <p className="sub">{t("pushWaiting")}</p>}
-      {!live && <p className="sub">{t("pushOff")}</p>}
+      {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card warn">
+      {/* **Ce n'est pas un avertissement.** « Calcul local, sans le cloud » est la bonne nouvelle
+          de cette page : le questionnaire ne sort pas du réseau. Elle portait pourtant `card warn`,
+          la teinte ambre que le reste du produit emploie pour la mise en garde — et depuis que
+          l'avertissement se reconnaît aussi à son triangle, une boîte ambre sans triangle ne veut
+          plus rien dire. Une carte ordinaire, dont le titre suffit. */}
+      <div className="card">
         <strong>{t("localTitle")}</strong>
-        <div className="sub" style={{ margin: "4px 0 0" }}>
+        <div className="legende">
           {t("localDetail")}
         </div>
       </div>
 
       <h2>{t("profilesHeading")}</h2>
-      <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <span className="sub">{t("scanNote")}</span>
-          <button className="primary" disabled={busy || !!data?.scan} onClick={scan}>
-            {data?.scan ? t("scanning") : t("scan")}
-          </button>
-        </div>
+      {/* Une carte pour une phrase et un bouton : le gabarit tenait lieu de composition. C'est une
+          barre d'actions, elle vit sous le titre de section sans conteneur à elle. */}
+      <div className="cardHead barreActions">
+        <span className="sub">{t("scanNote")}</span>
+        <button className="primary" disabled={busy || !!data?.scan} onClick={scan}>
+          {data?.scan ? t("scanning") : t("scan")}
+        </button>
       </div>
       {!data ? (
         <p className="sub">{tc("loading")}</p>
       ) : !data.beans.length ? (
         <div className="card">
-          <p className="sub" style={{ margin: 0 }}>
+          <p className="sub">
             {t("noneRead")}
           </p>
-          <div className="row" style={{ marginTop: 10 }}>
+          <div className="row note">
             {[0, 1, 2, 3].map((i) => (
               <button key={i} disabled={busy} onClick={() => read(i)}>
                 {t("readIndex", { index: i })}
@@ -319,16 +357,20 @@ export default function Beans() {
         // disposition en pleine largeur ne permettait pas : on comparait mal deux grains.
         // `alignItems: start` évite qu'une carte courte s'étire à la hauteur de la plus grande de sa
         // ligne, ce qui laisserait des blancs et ferait croire à une donnée manquante.
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, alignItems: "start" }}>
+        <div className="cards dense">
           {data.beans.map((bs) => (
-            <div className="card" key={bs.index} style={{ marginBottom: 0 }}>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                <strong>{bs.name ?? t("unnamed")}</strong>
-                <span className="sub mono" style={{ fontSize: ".78rem" }}>
+            <div className="card" key={bs.index}>
+              <div className="cardHead">
+                {/* Le nom d'un emplacement de grain : un titre, pas une mise en gras. Les deux
+                    grilles de cette page — six emplacements machine, N configurations mémorisées —
+                    n'avaient aucun titre de carte, donc rien à parcourir au lecteur d'écran, là où
+                    l'accueil donne un `<h3>` à chacune de ses 28 cartes de boisson. */}
+                <h3 className="cardTitle">{bs.name ?? t("unnamed")}</h3>
+                <span className="sub num">
                   #{bs.index}
                 </span>
               </div>
-              <div className="row" style={{ gap: 6, margin: "6px 0" }}>
+              <div className="row serre note">
                 {bs.active && (
                   <span className="pill on" title={t("activeHint")}>
                     {t("activeBadge")}
@@ -342,18 +384,18 @@ export default function Beans() {
                 )}
               </div>
               {!bs.isToggle && (
-                <div style={{ margin: "4px 0 10px" }}>
+                <div className="chapeau">
                   <div className="kv">
                     <span className="k">{t("grinder")}</span>
-                    <span className="mono">{bs.grinder}</span>
+                    <span className="num">{bs.grinder}</span>
                   </div>
                   <div className="kv">
                     <span className="k">{t("temperature")}</span>
-                    <span className="mono">{bs.temperature}</span>
+                    <span className="num">{bs.temperature}</span>
                   </div>
                   <div className="kv">
                     <span className="k">{t("aroma")}</span>
-                    <span className="mono">{bs.aroma}</span>
+                    <span className="num">{bs.aroma}</span>
                   </div>
                 </div>
               )}
@@ -385,34 +427,34 @@ export default function Beans() {
       <p className="sub">{t("presetsIntro")}</p>
       {!data?.presets.length ? (
         <div className="card">
-          <p className="sub" style={{ margin: 0 }}>
+          <p className="sub">
             {t("presetsEmpty")}
           </p>
         </div>
       ) : (
         // `alignItems: start` : sans lui une carte courte s'étire à la hauteur de la plus grande de
         // sa ligne, ce qui laisse des blancs et fait croire à une donnée manquante.
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, alignItems: "start" }}>
+        <div className="cards dense">
           {data.presets.map((p) => (
-            <div className="card" key={p.id} style={{ marginBottom: 0 }}>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                <strong>{p.name || t("unnamed")}</strong>
-                <span className="sub mono" style={{ fontSize: ".78rem" }}>
+            <div className="card" key={p.id}>
+              <div className="cardHead">
+                <h3 className="cardTitle">{p.name || t("unnamed")}</h3>
+                <span className="sub num">
                   {new Date(p.at).toLocaleDateString("fr-FR")}
                 </span>
               </div>
-              <div style={{ margin: "6px 0 10px" }}>
+              <div className="chapeau">
                 <div className="kv">
                   <span className="k">{t("grinder")}</span>
-                  <span className="mono">{p.grinder}</span>
+                  <span className="num">{p.grinder}</span>
                 </div>
                 <div className="kv">
                   <span className="k">{t("temperature")}</span>
-                  <span className="mono">{p.temperature}</span>
+                  <span className="num">{p.temperature}</span>
                 </div>
                 <div className="kv">
                   <span className="k">{t("aroma")}</span>
-                  <span className="mono">{p.aroma}</span>
+                  <span className="num">{p.aroma}</span>
                 </div>
               </div>
               {/* Écrire dans un emplacement : l'index 0 est écarté, ce n'est pas un café. */}
@@ -424,7 +466,7 @@ export default function Beans() {
                   </button>
                 ))}
               </div>
-              <div className="row" style={{ marginTop: 8 }}>
+              <div className="row note">
                 <button className="mini" disabled={busy} onClick={() => memorise({ name: p.name, grinder: p.grinder, temperature: p.temperature, aroma: p.aroma }, p.id)} title={t("presetUpdateTitle")}>
                   {t("presetUpdate")}
                 </button>
@@ -441,14 +483,14 @@ export default function Beans() {
         <>
           <h2>{t("assistantHeading", { name: bean.name ?? t("unnamed") })}</h2>
           <div className="card">
-            <p className="sub" style={{ marginTop: 0 }}>
+            <p className="sub">
               {t("assistantIntro")}
             </p>
 
             <div className="row">
               <div>
                 <label htmlFor="ft">{t("flowTime")}</label>
-                <input id="ft" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} style={{ width: 90 }} />
+                <input id="ft" className="numField" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
               </div>
               <div>
                 <label htmlFor="crema">{t("crema")}</label>
@@ -472,17 +514,18 @@ export default function Beans() {
             </div>
 
             {flowTime >= 10 && flowTime < 20 ? (
-              <p className="sub" style={{ marginBottom: 0 }}>
+              <p className="sub">
                 {t("windowOk")}
               </p>
             ) : (
-              <p className="sub" style={{ marginBottom: 0 }}>
+              <p className="sub">
                 {t("windowOut")}
               </p>
             )}
 
             {sim && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+              <div className="blocSuite">
+                <div className="tableWrap">
                 <table>
                   <thead>
                     <tr>
@@ -495,30 +538,31 @@ export default function Beans() {
                   <tbody>
                     <tr>
                       <td>{t("grinder")}</td>
-                      <td className="mono">{draft.grinder}</td>
-                      <td className="mono">{fmtDelta(sim.deltas.grinder)}</td>
-                      <td className="mono">{sim.grinder}</td>
+                      <td className="num">{draft.grinder}</td>
+                      <td className="num">{fmtDelta(sim.deltas.grinder)}</td>
+                      <td className="num">{sim.grinder}</td>
                     </tr>
                     <tr>
                       <td>{t("temperature")}</td>
-                      <td className="mono">{draft.temperature}</td>
-                      <td className="mono">{fmtDelta(sim.deltas.temperature)}</td>
-                      <td className="mono">{sim.temperature}</td>
+                      <td className="num">{draft.temperature}</td>
+                      <td className="num">{fmtDelta(sim.deltas.temperature)}</td>
+                      <td className="num">{sim.temperature}</td>
                     </tr>
                     <tr>
                       <td>{t("aroma")}</td>
-                      <td className="mono">{draft.aroma}</td>
-                      <td className="mono">{fmtDelta(sim.deltas.aroma)}</td>
-                      <td className="mono">{sim.aroma}</td>
+                      <td className="num">{draft.aroma}</td>
+                      <td className="num">{fmtDelta(sim.deltas.aroma)}</td>
+                      <td className="num">{sim.aroma}</td>
                     </tr>
                   </tbody>
                 </table>
+                </div>
                 {sim.notes.map((n) => (
-                  <p className="sub" key={n} style={{ margin: "6px 0 0" }}>
+                  <p className="legende" key={n}>
                     {t.has(`note_${n}`) ? t(`note_${n}`) : n}
                   </p>
                 ))}
-                <div className="row" style={{ marginTop: 10 }}>
+                <div className="row note">
                   <button className="good" disabled={!sim.changed} onClick={applySim}>
                     {sim.changed ? t("applyToDraft") : t("nothingToChange")}
                   </button>
@@ -535,7 +579,7 @@ export default function Beans() {
                 <input id="bname" value={draft.name} maxLength={20} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </div>
             </div>
-            <p className="sub" style={{ marginTop: 4 }}>
+            <p className="legende">
               {t("nameHint")}
             </p>
 
@@ -546,8 +590,8 @@ export default function Beans() {
                 ["aroma", b.aroma],
               ] as const
             ).map(([key, bound]) => (
-              <div className="row" key={key} style={{ justifyContent: "space-between", padding: "4px 0" }}>
-                <span style={{ minWidth: 150 }}>
+              <div className="paramRow" key={key}>
+                <span className="nom">
                   {t(key)}
                   {!bound.verified && (
                     <span className="sub" title={t("unverifiedHint")}>
@@ -556,8 +600,8 @@ export default function Beans() {
                     </span>
                   )}
                 </span>
-                <div className="row" style={{ gap: 8 }}>
-                  <span className="sub mono" style={{ fontSize: ".78rem" }}>
+                <div className="ctl">
+                  <span className="sub num">
                     {bound.min}
                   </span>
                   <input
@@ -567,36 +611,37 @@ export default function Beans() {
                     value={draft[key]}
                     aria-label={`${t(key)} (${bound.min}–${bound.max})`}
                     onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })}
-                    style={{ width: 160 }}
                   />
-                  <span className="sub mono" style={{ fontSize: ".78rem" }}>
+                  <span className="sub num">
                     {bound.max}
                   </span>
                   <input
+                    className="numField"
                     type="number"
                     min={bound.min}
                     max={bound.max}
                     value={draft[key]}
                     onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })}
-                    style={{ width: 70 }}
                   />
                 </div>
               </div>
             ))}
 
-            <div className="row" style={{ marginTop: 12 }}>
-              <button className="primary" disabled={busy} onClick={() => save(true)}>
-                {t("writeToMachine")}
+            <div className="row note">
+              <button className="primary iconBtn" disabled={busy} onClick={() => save(true)}>
+                <Icone nom="ecrire" />
+                <span className="lbl">{t("writeToMachine")}</span>
               </button>
               {/* Mémoriser le brouillon sans rien écrire sur la machine : c'est ce qui permet
                   d'essayer un réglage, de le garder, et de revenir à l'ancien. */}
               <button disabled={busy} onClick={() => memorise(draft)} title={t("presetSaveTitle")}>
                 {t("presetSaveDraft")}
               </button>
-              <button disabled={busy} onClick={() => pick(bean)}>
-                {tc("reset")}
+              <button className="iconBtn" disabled={busy} onClick={() => pick(bean)}>
+                <Icone nom="reinitialiser" />
+                <span className="lbl">{tc("reset")}</span>
               </button>
-              <button className="danger" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
+              <button className="danger discret" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
                 {t("delete")}
               </button>
             </div>
@@ -604,7 +649,12 @@ export default function Beans() {
         </>
       )}
 
-      {msg && <p className="warn">{msg}</p>}
+      {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
+          n'est pas annoncé par les lecteurs d'écran. Vide, `.status:empty` le masque. */}
+      <p className={"status " + (msg?.kind === "err" ? "err" : "ok")} role="status">
+        {msg?.text ?? ""}
+      </p>
+      {dialogue}
     </>
   );
 }

@@ -3,6 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { MachineSummary, currentMachine, forId, setCurrentMachine } from "../machine";
 import { useMachineEvents } from "../events";
+import { useConfirm } from "../confirm";
+import Alerte from "../Alerte";
+import Icone from "../icons";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -35,6 +38,15 @@ import { useMachineEvents } from "../events";
  * dispose donc que de `lanKeySet`, `lanKeyId`, `lanKeySource` et `lanKeyCachedAt`.
  */
 
+/**
+ * Un compte rendu d'action : son texte et ce qu'il annonce. Le genre ne se devine pas depuis le
+ * texte — c'est l'appelant qui sait si le serveur a refusé.
+ */
+interface Rapport {
+  text: string;
+  kind: "ok" | "err";
+}
+
 interface Payload {
   defaultId: string;
   machines: MachineSummary[];
@@ -62,7 +74,18 @@ export default function Machines() {
 
   const [d, setD] = useState<Payload | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  /**
+   * Compte rendu des actions de PAGE (ajout, suppression, sélection, session cloud).
+   *
+   * Il portait la classe `.warn` — le bandeau d'avertissement ambre — pour **tous** ses états :
+   * « Machine sélectionnée » et « Session cloud oubliée » s'affichaient dans la même boîte
+   * d'alerte qu'une erreur. `.status` distingue les deux (`ok` / `err`) et porte `role="status"`,
+   * sans quoi rien de ce que fait cette page n'est annoncé à un lecteur d'écran.
+   */
+  const [msg, setMsg] = useState<Rapport | null>(null);
+  const dire = (text: string) => setMsg({ text, kind: "ok" });
+  const echouer = (text: string) => setMsg({ text, kind: "err" });
+  const { demander, dialogue } = useConfirm();
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ label: "", ip: "" });
   /**
@@ -82,7 +105,7 @@ export default function Machines() {
   const [ip, setIp] = useState<Record<string, string>>({});
   const [creds, setCreds] = useState<Record<string, { email: string; password: string }>>({});
   const [showPassword, setShowPassword] = useState<Record<string, boolean>>({});
-  const [note, setNote] = useState<Record<string, string>>({});
+  const [note, setNote] = useState<Record<string, Rapport | null>>({});
 
   const load = useCallback(async () => {
     try {
@@ -107,7 +130,7 @@ export default function Machines() {
         return next;
       });
     } catch (e) {
-      setMsg(tc("error", { message: String(e) }));
+      echouer(tc("error", { message: String(e) }));
     }
   }, [tc]);
 
@@ -140,7 +163,7 @@ export default function Machines() {
 
   /**
    * L'état arrive **poussé** par le serveur (`/api/events`). L'abonnement lui-même vit dans
-   * `../events` : deux pages en dépendent, et une deuxième copie aurait divergé au premier
+   * `../events` : six pages en dépendent, et une deuxième copie aurait divergé au premier
    * correctif.
    *
    * Le repli n'est pas oublié : si le flux échoue (proxy qui ne le laisse pas passer, navigateur
@@ -164,16 +187,19 @@ export default function Machines() {
    * rechargée. `lankey-changed` prévient la barre de navigation, qui masque les pages dépendant
    * des prérequis — sans quoi le menu ne reviendrait qu'au prochain rechargement complet.
    */
-  const run = async (id: string, action: () => Promise<string | null>) => {
+  /** Une erreur renvoyée par le serveur : c'est le seul endroit où le genre du compte rendu se sait. */
+  const refus = (message: string): Rapport => ({ text: tc("error", { message }), kind: "err" });
+
+  const run = async (id: string, action: () => Promise<string | Rapport | null>) => {
     setBusy(id);
-    setNote((n) => ({ ...n, [id]: "" }));
+    setNote((n) => ({ ...n, [id]: null }));
     try {
-      const message = await action();
-      if (message) setNote((n) => ({ ...n, [id]: message }));
+      const r = await action();
+      if (r) setNote((n) => ({ ...n, [id]: typeof r === "string" ? { text: r, kind: "ok" } : r }));
       await load();
       window.dispatchEvent(new Event("lankey-changed"));
     } catch (e) {
-      setNote((n) => ({ ...n, [id]: tc("error", { message: String(e) }) }));
+      setNote((n) => ({ ...n, [id]: refus(String(e)) }));
     } finally {
       setBusy(null);
     }
@@ -187,7 +213,7 @@ export default function Machines() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip: ip[m.id] ?? "" }),
       }).then((x) => x.json());
-      if (r.error) return tc("error", { message: r.error });
+      if (r.error) return refus(r.error);
       const suite = r.initialRead?.length ? " " + t("initialRead", { count: r.initialRead.length }) : "";
       const probe: Probe = r.probe;
       return (probe.isMachine
@@ -197,14 +223,15 @@ export default function Machines() {
           : tm("savedUnreachable", { ip: r.ip, reason: probe.error ?? String(probe.status ?? "?") })) + suite;
     });
 
-  const forgetIp = (m: MachineSummary) => {
-    if (!confirm(tm("forgetConfirm"))) return;
-    return run(m.id, async () => {
+  const forgetIp = (m: MachineSummary) =>
+    demander({
+      question: tm("forgetConfirm"),
+      onConfirm: () => void run(m.id, async () => {
       const r = await fetch(forId("/api/machine", m.id), { method: "DELETE" }).then((x) => x.json());
-      setIp((cur) => ({ ...cur, [m.id]: r.ip ?? "" }));
-      return tm("forgotten", { state: r.ip ?? tm("none") });
+        setIp((cur) => ({ ...cur, [m.id]: r.ip ?? "" }));
+        return tm("forgotten", { state: r.ip ?? tm("none") });
+      }),
     });
-  };
 
   /**
    * Le mot de passe part vers notre serveur, qui s'en sert le temps d'interroger Gigya puis Ayla et
@@ -220,7 +247,7 @@ export default function Machines() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...cred(m.id), remember }),
         }).then((x) => x.json());
-        if (r.error) return tc("error", { message: r.error });
+        if (r.error) return refus(r.error);
         // La lecture qui suit est asynchrone : la machine doit se connecter et pousser les
         // propriétés. On l'annonce, sans faire attendre l'utilisateur devant un compteur.
         return (
@@ -255,7 +282,7 @@ export default function Machines() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(c.email ? { ...c, remember } : {}),
         }).then((x) => x.json());
-        if (r.error) return tc("error", { message: r.error });
+        if (r.error) return refus(r.error);
         return r.updateAvailable
           ? t("otaAvailable", { version: r.version ?? t("otaNoVersion") })
           : t("otaNone", { status: String(r.status) });
@@ -265,13 +292,14 @@ export default function Machines() {
       }
     });
 
-  const forgetKey = (m: MachineSummary) => {
-    if (!confirm(tk("forgetConfirm"))) return;
-    return run(m.id, async () => {
-      const r = await fetch(forId("/api/lankey", m.id), { method: "DELETE" }).then((x) => x.json());
-      return tk("forgotten", { state: r.set ? tk("stillSet") : tk("nowUnset") });
+  const forgetKey = (m: MachineSummary) =>
+    demander({
+      question: tk("forgetConfirm"),
+      onConfirm: () => void run(m.id, async () => {
+        const r = await fetch(forId("/api/lankey", m.id), { method: "DELETE" }).then((x) => x.json());
+        return tk("forgotten", { state: r.set ? tk("stillSet") : tk("nowUnset") });
+      }),
     });
-  };
 
   const add = async () => {
     setBusy("+");
@@ -283,10 +311,10 @@ export default function Machines() {
         body: JSON.stringify({ label: form.label || null, ip: form.ip || null }),
       }).then((x) => x.json());
       if (r.error) {
-        setMsg(tc("error", { message: r.error }));
+        echouer(tc("error", { message: r.error }));
       } else {
         const probe: Probe | null = r.probe;
-        setMsg(
+        dire(
           !probe
             ? t("added", { name: r.machine.label })
             : probe.isMachine
@@ -300,7 +328,7 @@ export default function Machines() {
         window.dispatchEvent(new Event("lankey-changed"));
       }
     } catch (e) {
-      setMsg(tc("error", { message: String(e) }));
+      echouer(tc("error", { message: String(e) }));
     } finally {
       setBusy(null);
     }
@@ -313,7 +341,7 @@ export default function Machines() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }).then((x) => x.json());
-      return r.error ? tc("error", { message: r.error }) : done(r);
+      return r.error ? refus(r.error) : done(r);
     });
 
   /**
@@ -322,27 +350,33 @@ export default function Machines() {
    * emportent le même contenu, donc les deux confirmations nomment ce qui part ; seul le sort de
    * l'entrée elle-même diffère, et le libellé du bouton le dit d'avance.
    */
-  const remove = async (m: MachineSummary) => {
+  const remove = (m: MachineSummary) => {
     const derniere = (d?.machines.length ?? 0) <= 1;
     const params = { name: m.label, props: m.counts.props, stats: m.counts.stats };
-    if (!confirm(derniere ? t("resetConfirm", params) : t("deleteConfirm", params))) return;
+    demander({
+      question: derniere ? t("resetConfirm", params) : t("deleteConfirm", params),
+      onConfirm: () => void supprimer(m),
+    });
+  };
+
+  const supprimer = async (m: MachineSummary) => {
     setBusy(m.id);
     setMsg(null);
     try {
       const r = await fetch(`/api/machines/${encodeURIComponent(m.id)}`, { method: "DELETE" }).then((x) => x.json());
       if (r.error) {
-        setMsg(tc("error", { message: r.error }));
+        echouer(tc("error", { message: r.error }));
       } else if (r.reset) {
         // L'environnement reprend la main sur ce qu'il force : sans le dire, la remise à zéro
         // aurait l'air de n'avoir rien fait.
-        setMsg(
+        dire(
           t("resetDone", { name: m.label, props: r.cleared.props, stats: r.cleared.stats }) +
             (r.envRestored?.length ? " " + t("resetEnv", { vars: r.envRestored.join(", ") }) : ""),
         );
         // Plus aucun prérequis : le bloc de configuration doit être sous les yeux.
         setOpen((o) => ({ ...o, [m.id]: true }));
       } else {
-        setMsg(t("deleted", { name: m.label }));
+        dire(t("deleted", { name: m.label }));
         // Si c'était la machine affichée, on repasse sur celle par défaut du serveur.
         if (currentMachine() === m.id) {
           setCurrentMachine(null);
@@ -352,7 +386,7 @@ export default function Machines() {
       await load();
       window.dispatchEvent(new Event("lankey-changed"));
     } catch (e) {
-      setMsg(tc("error", { message: String(e) }));
+      echouer(tc("error", { message: String(e) }));
     } finally {
       setBusy(null);
     }
@@ -383,7 +417,7 @@ export default function Machines() {
   const readModel = (m: MachineSummary) =>
     run(m.id, async () => {
       const r = await fetch(forId("/api/model", m.id), { method: "POST" }).then((x) => x.json());
-      if (r.error) return tc("error", { message: r.error });
+      if (r.error) return refus(r.error);
       for (let i = 0; i < 10; i++) {
         await new Promise((res) => setTimeout(res, 1500));
         const p: Payload = await fetch("/api/machines").then((x) => x.json());
@@ -399,12 +433,14 @@ export default function Machines() {
     });
 
   /** Oublie le `refresh_token` mémorisé. Le mot de passe redeviendra nécessaire. */
-  const forgetCloud = async () => {
-    if (!confirm(t("cloudSessionForget") + " ?")) return;
+  const forgetCloud = () =>
+    demander({ question: t("cloudSessionForgetConfirm"), onConfirm: () => void oublierCloud() });
+
+  const oublierCloud = async () => {
     setBusy("cloud");
     try {
       await fetch("/api/cloudsession", { method: "DELETE" });
-      setMsg(t("cloudSessionForgotten"));
+      dire(t("cloudSessionForgotten"));
       await load();
     } finally {
       setBusy(null);
@@ -414,7 +450,7 @@ export default function Machines() {
   const select = (id: string) => {
     setCurrentMachine(id);
     setSelected(id);
-    setMsg(t("selected", { name: d?.machines.find((x) => x.id === id)?.label ?? id }));
+    dire(t("selected", { name: d?.machines.find((x) => x.id === id)?.label ?? id }));
   };
 
   const courante = selected ?? d?.defaultId ?? null;
@@ -424,7 +460,11 @@ export default function Machines() {
       <h1>{t("title")}</h1>
       <p className="sub">{t("intro")}</p>
 
-      {msg && <div className="warn">{msg}</div>}
+      {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
+          n'est pas annoncé. Vide, `.status:empty` le masque. */}
+      <p className={"status " + (msg?.kind === "err" ? "err" : "ok")} role="status">
+        {msg?.text ?? ""}
+      </p>
 
       {/* Le repli fonctionne, mais il vaut mieux le dire : sans ça, une page qui met deux secondes
           à se mettre à jour au lieu d'être instantanée passerait pour une lenteur. */}
@@ -438,10 +478,17 @@ export default function Machines() {
         const nom = renaming[m.id] ?? m.custom ?? "";
         return (
           <div className="card" key={m.id}>
-            <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+            <div className="cardHead chapeau">
               <div className="row">
-                <strong style={{ fontSize: "1.05rem" }}>{m.label}</strong>
-                <span className="mono sub" style={{ margin: 0 }}>
+                {/* L'accueil donne un `<h3>` à chacune de ses 28 cartes de boisson ; ici la carte
+                    porte un appareil qu'on peut piloter, effacer et renommer, et son nom était un
+                    `<strong>`. Un lecteur d'écran ne pouvait donc pas parcourir la liste.
+                    `h2` et non `h3` : chaque machine est une section de premier rang de la page —
+                    « Ajouter une machine » en est déjà une — et ses blocs de configuration internes
+                    portent des `h3` (`.titreBloc`). Le niveau vient de la structure, l'apparence de
+                    `.cardTitle` : le titre ne grossit pas. */}
+                <h2 className="cardTitle">{m.label}</h2>
+                <span className="mono sub">
                   {m.id}
                 </span>
                 {m.id === courante && <span className="pill on">{t("current")}</span>}
@@ -471,7 +518,7 @@ export default function Machines() {
                     {t("makeDefault")}
                   </button>
                 )}
-                <button className="danger" onClick={() => remove(m)} disabled={!!busy}>
+                <button className="danger discret" onClick={() => remove(m)} disabled={!!busy}>
                   {d.machines.length <= 1 ? t("reset") : t("delete")}
                 </button>
               </div>
@@ -481,19 +528,18 @@ export default function Machines() {
                 restera muette. C'est l'erreur naturelle (nom court puis nom complet), et rien
                 d'autre ne la signalerait. */}
             {m.duplicates.length > 0 && (
-              <div className="warn" style={{ marginBottom: 10 }}>
-                ⚠️{" "}
+              <Alerte className="chapeau">
                 {t("duplicate", {
                   names: m.duplicates.map((x) => x.label).join(", "),
                   reason: m.duplicates.some((x) => x.reason === "dsn") ? t("duplicateDsn") : t("duplicateAddress"),
                 })}
-              </div>
+              </Alerte>
             )}
 
             {m.model.matchesCatalog === false && (
-              <div className="warn" style={{ marginBottom: 10 }}>
-                ⚠️ {t("modelMismatch", { detected: m.model.key ?? "?", catalog: m.model.catalogType })}
-              </div>
+              <Alerte className="chapeau">
+                {t("modelMismatch", { detected: m.model.key ?? "?", catalog: m.model.catalogType })}
+              </Alerte>
             )}
 
             <div className="kv">
@@ -555,10 +601,10 @@ export default function Machines() {
 
             {/* ------------------------------------------------ configuration, sur place */}
             {ouvert && (
-              <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+              <div className="blocSuite">
                 {/* 0. le nom — purement décoratif, donc en premier : c'est le réglage sans
                        conséquence, et celui qu'on vient changer le plus souvent. */}
-                <h3 style={{ margin: "0 0 6px" }}>{t("nameHeading")}</h3>
+                <h3 className="titreBloc">{t("nameHeading")}</h3>
                 <div className="row">
                   <input
                     value={nom}
@@ -567,7 +613,7 @@ export default function Machines() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !occupe && nom !== (m.custom ?? "")) rename(m);
                     }}
-                    style={{ minWidth: 240 }}
+                    className="champ"
                   />
                   <button className="primary" onClick={() => rename(m)} disabled={occupe || nom === (m.custom ?? "")}>
                     {t("rename")}
@@ -581,7 +627,7 @@ export default function Machines() {
                 </div>
 
                 {/* 1. l'adresse — elle conditionne la clé, d'où cet ordre. */}
-                <h3 style={{ margin: "18px 0 6px" }}>{tm("heading")}</h3>
+                <h3 className="titreBloc">{tm("heading")}</h3>
                 {m.envForced.ip && <p className="sub">{tm("envForced")}</p>}
                 <div className="row">
                   <input
@@ -597,7 +643,7 @@ export default function Machines() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && (ip[m.id] ?? "").trim() && !occupe) saveIp(m);
                     }}
-                    style={{ minWidth: 240 }}
+                    className="champ"
                   />
                   <button className="primary" onClick={() => saveIp(m)} disabled={occupe || !(ip[m.id] ?? "").trim()}>
                     {occupe ? tm("testing") : tm("save")}
@@ -611,8 +657,8 @@ export default function Machines() {
                 </div>
 
                 {/* 2. la clé — rangée chez Ayla sous le DSN, donc dépendante de ce qui précède. */}
-                <h3 style={{ margin: "18px 0 6px" }}>{tk("heading")}</h3>
-                {!m.dsn && <div className="warn" style={{ marginBottom: 10 }}>⚠️ {tk("needsDsn")}</div>}
+                <h3 className="titreBloc">{tk("heading")}</h3>
+                {!m.dsn && <Alerte className="chapeau">{tk("needsDsn")}</Alerte>}
                 {d.discovery.missingConfig.length ? (
                   <p className="sub">{tk("missingConfig", { vars: d.discovery.missingConfig.join(", ") })}</p>
                 ) : (
@@ -624,12 +670,12 @@ export default function Machines() {
                         placeholder={tk("email")}
                         value={c.email}
                         onChange={(e) => setCreds({ ...creds, [m.id]: { ...c, email: e.target.value } })}
-                        style={{ minWidth: 240 }}
+                        className="champ"
                       />
                       {/* En clair, le champ redevient un champ texte ordinaire : sans autoCapitalize /
                           autoCorrect / spellCheck, le clavier mobile met une majuscule au premier
                           caractère et le correcteur s'en mêle. */}
-                      <span className="row" style={{ gap: 4 }}>
+                      <span className="row serre">
                         <input
                           type={showPassword[m.id] ? "text" : "password"}
                           autoComplete="off"
@@ -642,7 +688,7 @@ export default function Machines() {
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && c.email && c.password && !occupe) discover(m);
                           }}
-                          style={{ minWidth: 200 }}
+                          className="champ"
                         />
                         <button
                           type="button"
@@ -665,14 +711,14 @@ export default function Machines() {
                       )}
                       <span className="sub">{tk("privacy")}</span>
                     </div>
-                    <label className="row" style={{ marginTop: 6, marginBottom: 0 }}>
+                    <label className="row note">
                       <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                       <span>{t("remember")}</span>
                       <span className="sub">{t("rememberNote")}</span>
                     </label>
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
                         récupération de clé obtient ouvre aussi la fiche OTA. */}
-                    <div className="row" style={{ marginTop: 10 }}>
+                    <div className="row note">
                       <button onClick={() => checkOta(m)} disabled={occupe || !m.dsn}>
                         {t("otaCheck")}
                       </button>
@@ -683,17 +729,18 @@ export default function Machines() {
               </div>
             )}
 
-            {note[m.id] && (
-              <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
-                {note[m.id]}
-              </p>
-            )}
+            {/* La suite d'une action sur CETTE machine — adresse enregistrée, clé récupérée, OTA
+                interrogée. C'était un `<p className="note">` : du texte gris secondaire, jamais
+                annoncé, pour la réponse d'un serveur qui vient peut-être de refuser. */}
+            <p className={"status " + (note[m.id]?.kind === "err" ? "err" : "ok")} role="status">
+              {note[m.id]?.text ?? ""}
+            </p>
           </div>
         );
       })}
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>{t("addTitle")}</h2>
+        <h2>{t("addTitle")}</h2>
         <div className="row">
           <span>
             <label>{t("nameOptional")}</label>
@@ -714,9 +761,9 @@ export default function Machines() {
       <div className="card">
         <div className="kv">
           <span className="k">{tm("ourServer")}</span>
-          <span className="mono">
+          <span className={d?.server.problem ? "mono alerte" : "mono"}>
             {d?.server.ip ? `${d.server.ip}:${d.server.port}` : tc("dash")}
-            {d?.server.problem ? " ⚠️" : ""}
+            {d?.server.problem && <Icone nom="alerte" taille={15} />}
           </span>
         </div>
         <div className="kv">
@@ -736,7 +783,7 @@ export default function Machines() {
         </div>
         <div className="kv">
           <span className="k">{t("limitsTitle")}</span>
-          <span className="sub" style={{ textAlign: "right" }}>
+          <span className="sub">
             {t("limitsCatalog")}
             <br />
             {t("limitsEnv")}
@@ -745,6 +792,7 @@ export default function Machines() {
           </span>
         </div>
       </div>
+      {dialogue}
     </>
   );
 }

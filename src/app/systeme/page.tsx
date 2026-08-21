@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import Alerte, { TitreAlerte } from "../Alerte";
 
 interface Finding {
   level: "warn" | "info";
@@ -147,7 +148,7 @@ export default function Systeme() {
       <h1>{t("heading")}</h1>
       <p className="sub">{t("intro", { date: d.deviceSheet.capturedAt })}</p>
 
-      <div className="row" style={{ marginBottom: 16 }}>
+      <div className="row barreActions">
         <button className="primary" disabled={busy} onClick={load}>
           {busy ? t("refreshing") : tc("refresh")}
         </button>
@@ -189,13 +190,14 @@ export default function Systeme() {
       <div className="card">
         <div className="kv">
           <span className="k">{t("otaRequests")}</span>
-          <span className="mono">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
+          <span className="num">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
         </div>
-        <p className="sub" style={{ marginTop: 8 }}>
+        <p className="note">
           {d.ota.lanNote}
         </p>
         {d.ota.lanRequests.length > 0 && (
-          <table style={{ marginTop: 8 }}>
+          <div className="tableWrap">
+          <table>
             <thead>
               <tr>
                 <th>{t("otaWhen")}</th>
@@ -206,7 +208,7 @@ export default function Systeme() {
             <tbody>
               {d.ota.lanRequests.map((r, i) => (
                 <tr key={i}>
-                  <td className="mono">{new Date(r.at).toLocaleString("fr-FR")}</td>
+                  <td className="num">{new Date(r.at).toLocaleString("fr-FR")}</td>
                   <td className="mono">
                     {r.method} {r.url}
                   </td>
@@ -215,12 +217,13 @@ export default function Systeme() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 {/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
             terminait par « vérification cloud désactivée » : le libellé et la note disaient la même
             chose. Et la vérification n'est plus subordonnée à AYLA_TOKEN — elle se lance depuis la
             page Machines, avec les identifiants du compte. */}
-        <div className="kv" style={{ marginTop: 10 }}>
+        <div className="kv blocSuite">
           <span className="k">{t("cloudCheck")}</span>
           <span>
             {!d.ota.cloud.last ? (
@@ -244,7 +247,7 @@ export default function Systeme() {
 
       <h2>{t("wifiModule")}</h2>
       <div className="card">
-        <p className="sub" style={{ marginTop: 0 }}>
+        <p className="sub">
           {t("liveNote", { others: "status.json, wifi_status.json, time.json, module_info.json, ota.json, wifi_scan.json" })}
         </p>
         <div className="kv">
@@ -260,7 +263,7 @@ export default function Systeme() {
               <span className="mono">{String(v)}</span>
             </div>
           ))}
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <div className="blocSuite">
           <Rows obj={d.deviceSheet.hardware} />
         </div>
       </div>
@@ -268,7 +271,7 @@ export default function Systeme() {
       <h2>{t("aylaPlatform")}</h2>
       <div className="card">
         <Rows obj={d.deviceSheet.platform} />
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <div className="blocSuite">
           <Rows obj={d.deviceSheet.lifecycle} />
         </div>
       </div>
@@ -291,30 +294,29 @@ export default function Systeme() {
             globalTemperature: d.model.globalTemperature,
           }}
         />
-        <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
+        <p className="note">
           {t("modelSource")}
         </p>
         {/* Ce bloc décrit le catalogue EN SERVICE. Quand c'est un remplaçant, il décrit donc un
             modèle qui n'est pas celui de la machine : le taire serait affirmer le contraire. */}
         {d.model.fallback && (
-          <p className="warn" style={{ marginTop: 10, marginBottom: 0 }}>
-            ⚠️ {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
-          </p>
+          <Alerte className="note">
+            {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
+          </Alerte>
         )}
       </div>
 
       <h2>{t("identification")}</h2>
       <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
         {d.identification.matchesCatalog === false && (
-          <p style={{ margin: "0 0 10px" }}>
-            <strong>
-              ⚠{" "}
+          <p className="chapeau">
+            <TitreAlerte>
               {t("idMismatch", {
                 detected: d.identification.key ?? "?",
                 catalog: String(d.identification.catalog.key ?? "?"),
                 catalogType: String(d.identification.catalog.type ?? "?"),
               })}
-            </strong>
+            </TitreAlerte>
           </p>
         )}
         <Rows
@@ -333,29 +335,29 @@ export default function Systeme() {
           }}
         />
         {d.identification.key && !d.identification.detected && (
-          <p className="sub" style={{ margin: "10px 0 0" }}>
+          <p className="note">
             {t("idUnknownModel", { key: d.identification.key, version: d.identification.tableVersion })}
           </p>
         )}
         {d.identification.lastError && (
-          <p className="sub mono" style={{ margin: "10px 0 0", fontSize: ".78rem" }}>
+          <p className="note mono">
             {t("idFailed", { reason: d.identification.lastError.reason })} — {d.identification.lastError.hex || "(trame vide)"}
           </p>
         )}
-        <div style={{ marginTop: 12 }}>
+        <div className="blocSuite">
           <button onClick={readModel} disabled={busy}>
             {d.identification.key ? t("idReread") : t("idRead")}
           </button>
           {idMsg && (
-            <span className="sub" style={{ marginLeft: 10 }}>
+            <span className="sub">
               {idMsg}
             </span>
           )}
         </div>
-        <p className="sub" style={{ margin: "10px 0 0" }}>
+        <p className="note">
           {t("idNote", { prop: d.identification.serialProp, count: d.identification.knownModels, version: d.identification.tableVersion })}
         </p>
-        <p className="sub" style={{ margin: "6px 0 0" }}>
+        <p className="legende">
           {t("idScopeNote")}
         </p>
       </div>
@@ -379,13 +381,13 @@ export default function Systeme() {
         </div>
         <div className="kv">
           <span className="k">{t("lastEcamResponse")}</span>
-          <span className="mono" style={{ fontSize: ".78rem", textAlign: "right" }}>
+          <span className="mono">
             {d.machineState.lastDataResponse?.hex ?? tc("dash")}
           </span>
         </div>
         <div className="kv">
           <span className="k">{t("cachedProps")}</span>
-          <span className="mono">{d.machineState.propsRead}</span>
+          <span className="num">{d.machineState.propsRead}</span>
         </div>
         {d.machineState.checksums && (
           <>
@@ -427,36 +429,35 @@ export default function Systeme() {
         </div>
         <div className="kv">
           <span className="k">{t("storageFile")}</span>
-          <span className="mono" style={{ fontSize: ".78rem", textAlign: "right", wordBreak: "break-all" }}>
+          <span className="mono" style={{ wordBreak: "break-all" }}>
             {d.storage.file} ({Math.round(d.storage.sizeBytes / 1024)} ko)
           </span>
         </div>
-        <p className="sub" style={{ margin: "8px 0 0" }}>{t("storageNote")}</p>
+        <p className="note">{t("storageNote")}</p>
       </div>
 
       <h2>{t("protocolNetwork")}</h2>
       <div className="card">
         <Rows obj={d.protocol} />
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <div className="blocSuite">
           <Rows obj={d.network} />
         </div>
       </div>
 
       <h2>{t("findings")}</h2>
       {d.deviceSheet.findings.map((f, i) => (
-        <div className={f.level === "warn" ? "card warn" : "card"} key={i} style={{ marginBottom: 10 }}>
-          <strong>
-            {f.level === "warn" ? "⚠ " : ""}
-            {f.title}
-          </strong>
-          <div className="sub" style={{ margin: "4px 0 0" }}>
+        <div className={f.level === "warn" ? "card warn" : "card"} key={i}>
+          {/* Onze constats, dont quatre en avertissement : le pictogramme est ce qui les distingue
+              en balayant la liste, et il est maintenant dessiné comme les autres. */}
+          {f.level === "warn" ? <TitreAlerte>{f.title}</TitreAlerte> : <strong>{f.title}</strong>}
+          <div className="legende">
             {f.detail}
           </div>
         </div>
       ))}
 
       <p className="sub">{d.deviceSheet._privacy}</p>
-      <p className="sub mono" style={{ fontSize: ".78rem" }}>
+      <p className="sub mono">
         {d.deviceSheet._source}
       </p>
     </>
@@ -476,7 +477,7 @@ function Rows({ obj }: { obj: Record<string, unknown> }) {
           </div>
         ))}
       {typeof obj.note === "string" && (
-        <p className="sub" style={{ marginBottom: 0, marginTop: 10 }}>
+        <p className="note">
           {obj.note}
         </p>
       )}

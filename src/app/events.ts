@@ -13,8 +13,9 @@ import { MachineSummary, currentMachine } from "./machine";
  * Le serveur émet quand quelque chose bouge — son déclencheur est le journal, qui voit tout
  * changement d'état. Voir `sseTouch()` / `sseWatch()` dans `server.mjs`.
  *
- * Extrait ici parce que **deux pages** en ont besoin, et qu'une deuxième copie de la logique
- * d'abonnement aurait divergé au premier correctif.
+ * Extrait ici parce que **six pages** en dépendent — les six qui affichent quelque chose que la
+ * machine peut changer — et qu'une deuxième copie de la logique d'abonnement aurait divergé au
+ * premier correctif.
  */
 export interface PushState {
   machines: MachineSummary[];
@@ -76,8 +77,9 @@ export const isBusy = (m: MachineSummary | null) => !!m && (!!m.reading || !!m.r
 /**
  * État poussé de la machine courante, prêt à l'emploi — **la règle « quand relire », en un endroit**.
  *
- * Trois pages en avaient besoin (`/beans`, `/profils`, `/statistiques`) et chacune l'écrivait à sa
- * façon, avec son propre minuteur. La règle est la même partout, et elle tient en deux signaux :
+ * Quatre pages en ont besoin (`/`, `/beans`, `/profils`, `/statistiques`) et les trois premières à
+ * l'écrire le faisaient chacune à sa façon, avec son propre minuteur. La règle est la même partout,
+ * et elle tient en deux signaux :
  *
  * - `importedAt` a bougé → la machine a écrit une donnée. Toute écriture de donnée lue passe par
  *   `putProp` / `putStats` / `putBeanSystem`, qui l'horodatent : c'est le signal exact ;
@@ -87,8 +89,19 @@ export const isBusy = (m: MachineSummary | null) => !!m && (!!m.reading || !!m.r
  * Rend aussi `busyRef` : une référence, pas un état, pour qu'un enchaînement `await` puisse attendre
  * que la machine soit libre **sans** relancer de requête. C'est ce qui remplace les boucles qui
  * interrogeaient `/api/…` toutes les 1,5 s pour savoir si elles pouvaient continuer.
+ *
+ * **Deux signaux, un seul flux.** `onChange` répond à « il y a une donnée neuve à relire » ;
+ * `onAny`, facultatif, répond à « quelque chose a bougé », ce qui n'est pas la même question. Le
+ * journal, le monitor, l'état de session ne sont pas des données *écrites* : rien ne les horodate,
+ * et le seul signal qui les concerne est la poussée elle-même. Les deux pages qui les affichent
+ * (`/` et `/pilotage`) en avaient besoin ; sans ce second rappel, elles auraient ouvert un
+ * **deuxième** `EventSource` pour la même connexion, ce qui coûte plus cher que le minuteur qu'on
+ * vient d'enlever.
+ *
+ * `onAny` reçoit aussi le **premier** état poussé, contrairement à `onChange` : au montage, une
+ * page n'a encore rien affiché, donc le premier état est bien une nouvelle.
  */
-export function useMachinePush(onChange: () => void): {
+export function useMachinePush(onChange: () => void, onAny?: () => void): {
   live: boolean;
   busy: boolean;
   busyRef: React.RefObject<boolean>;
@@ -98,6 +111,8 @@ export function useMachinePush(onChange: () => void): {
   const marqueur = useRef<{ importedAt: number | null; busy: boolean } | null>(null);
   const cb = useRef(onChange);
   cb.current = onChange;
+  const cbAny = useRef(onAny);
+  cbAny.current = onAny;
 
   const { live } = useMachineEvents(
     useCallback((p: PushState) => {
@@ -108,6 +123,7 @@ export function useMachinePush(onChange: () => void): {
       marqueur.current = { importedAt, busy: occupe };
       busyRef.current = occupe;
       setBusy(occupe);
+      cbAny.current?.();
       // Le premier état poussé n'est pas un changement : la page vient de charger ses données.
       if (!avant) return;
       if (importedAt !== avant.importedAt || (avant.busy && !occupe)) cb.current();
