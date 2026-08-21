@@ -8,3 +8,7 @@ out/
 data/
 next-env.d.ts
 *.tsbuildinfo
+
+# Artefacts de travail du skill Impeccable (instantanes de critique, session du serveur
+# de previsualisation avec son jeton). Local, jamais publie.
+.impeccable/

@@ -528,7 +528,7 @@ h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
 .pill.on { background: var(--ok-tint); color: var(--ok-text); border-color: var(--ok-edge); }
 .pill.off { background: var(--danger-tint); color: var(--danger-text); border-color: var(--danger-edge); }
 /* Ce que nous avons choisi ou lu : profil de grain, provenance d'une valeur. Distinct du vert
-   parce que ce n'est pas un état de l'appareil — « Bean Adapt : Bonifieur » décrit une
+   parce que ce n'est pas un état de l'appareil — « Bean Adapt : Grain A » décrit une
    configuration, pas une machine prête. */
 .pill.info { background: var(--accent-tint); color: var(--accent-text); border-color: var(--accent-edge); }
 /* **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un

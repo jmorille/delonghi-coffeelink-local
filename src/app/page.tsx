@@ -450,7 +450,7 @@ export default function Boissons() {
       }
     }
     const nomProfil = profileLabel(profiles, profile);
-    // Dans une phrase, « pour 1 - Jerome » se lit mal : la question porte le couple numero-nom
+    // Dans une phrase, « pour 1 - Profil A » se lit mal : la question porte le couple numero-nom
     // entre parentheses, la phrase de provenance n'a besoin que du nom.
     const nomSeul = profiles.find((p) => p.id === profile)?.name ?? tc("profileNumbered", { id: profile });
     const source = override
@@ -986,7 +986,7 @@ function BeverageCard({
           </div>
           <div className="legende">
             {/* Le nom d'usine n'est montré que s'il apprend quelque chose. « Espresso macchiato /
-                Espresso Macchiato » disait deux fois la même chose ; « Lacteso / Custom » dit que
+                Espresso Macchiato » disait deux fois la même chose ; « Nom perso / Custom » dit que
                 c'est un emplacement personnalisé, ce qui est une information. */}
             {bev.factoryName.toLowerCase() !== nom.toLowerCase() && <>{bev.factoryName} · </>}
             {t("paramCount", { count: bev.ingredients.length })}
