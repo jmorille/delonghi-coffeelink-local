@@ -921,3 +921,51 @@ JWT Gigya, token Ayla, `app_id`/`app_secret` de l'application, identifiants mach
 personnelles restituées par le cloud.
 
 Ce fichier-ci ne contient donc plus de secret et peut être versionné.
+
+### 7quater bis. L'accusé de datapoint — ce qui bloquait l'application officielle
+
+**Relevé sur la vraie application, et ça bloquait tout.** Elle ouvre **chaque** session en
+écrivant `device_connected` dans son bloc `commands.json`, avec un champ `id` — donc en demandant
+un accusé :
+
+```json
+{"properties":[{"property":{"name":"device_connected","value":1787413302,"id":"…"}}]}
+```
+
+`device_connected` n'est pas une propriété de transport ECAM : lan-server n'a aucune raison de la
+relayer à la cafetière, et il ne le fait pas. Mais il **sortait de cette branche sans accuser**.
+
+> ⚠️ **L'accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »).** Il est donc dû dès
+> que `id` est présent, que la propriété soit relayée ou ignorée. Les confondre laisse
+> l'application attendre un message qui ne viendra jamais.
+
+Du point de vue du téléphone, la machine à laquelle il vient de se présenter ne répond pas : il
+n'allait pas plus loin, et **aucune commande ne partait**. Le symptôme côté utilisateur est
+« l'application n'arrive pas à allumer la machine » ; le symptôme côté serveur était visible sans
+être lisible — session établie, datapoints reçus, et `commandes = 0` pendant toute la vie de
+l'entrée dans le registre.
+
+### 7quater ter. Une sonde expirée casse le flux, définitivement
+
+Le serveur sonde `commands.json` toutes les 2 s avec une échéance de 4 s. Si la requête **atteint**
+le téléphone et que la réponse se perd ensuite, l'application a produit et **chiffré** sa réponse :
+son flux sortant a avancé, le nôtre non. Un flux AES-CBC persistant ne se rattrape pas.
+
+On le découvrait deux sondes plus tard, sous la forme d'un bloc illisible, sans qu'aucune ligne ne
+relie les deux événements. Désormais un `ETIMEDOUT` relance l'échange de clés tout de suite, et le
+journal porte le **motif** de la relance :
+
+| motif journalisé | ce qui l'a déclenché |
+|---|---|
+| `sonde expirée, réponse peut-être perdue` | la sonde `commands.json` a dépassé 4 s |
+| `déchiffrement refusé` | `decapsulate` a refusé le corps (remplissage invalide) |
+| `bloc illisible, flux désynchronisé` | déchiffré, mais ce n'est pas du JSON |
+
+Le bloc illisible est **conservé tel quel** dans le journal : c'est la seule preuve de ce qui s'est
+passé, et sa signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, la
+suite se recale seule, d'où des octets illisibles finissant proprement par `…a":{}}`.
+
+Un échange de clés ne touche pas la cafetière : il ne recrée que le chiffrement entre
+l'application et nous. Rouvrir tôt ne coûte donc rien, et un verrou de 15 s empêche l'emballement
+si le téléphone est seulement lent.
+

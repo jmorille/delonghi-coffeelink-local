@@ -1343,6 +1343,14 @@ async function sonderAppSerialise(m, app) {
     // secondes : c'est un téléphone verrouillé — mais au bout de quelques REFUS d'affilée,
     // c'est un port fermé, et l'entrée doit partir sans attendre `DELAI_APP_MUETTE`.
     constaterEchecApp(m, app, e);
+    // ⚠️ **Un délai dépassé n'est pas un silence : c'est un flux DOUTEUX.** La requête a pu
+    // atteindre le téléphone, qui a alors produit ET CHIFFRÉ sa réponse — son flux sortant a
+    // avancé, le nôtre non, et rien ne le rattrapera jamais. On le découvrait deux sondes plus
+    // tard, sous la forme d'un bloc illisible, sans jamais faire le lien avec l'expiration qui
+    // l'avait causé. Rouvrir tout de suite ne coûte qu'un échange de clés, qui ne touche pas la
+    // cafetière ; le même verrou de 15 s qu'ailleurs empêche l'emballement si le téléphone est
+    // simplement lent.
+    if (e?.code === "ETIMEDOUT") relancerSessionApp(m, app, "sonde expirée, réponse peut-être perdue");
     return;
   }
   if (rep.status !== 200 || !rep.corps.trim()) return;
@@ -1351,7 +1359,11 @@ async function sonderAppSerialise(m, app) {
   try {
     clair = app.session.decapsulate(JSON.parse(rep.corps));
   } catch (e) {
-    LA("in", `bloc de commandes illisible (${e.message})`, app, m);
+    // Même cause que le cas `illisible` plus bas — un flux perdu — mais détectée un cran plus
+    // tôt, quand c'est le déchiffrement lui-même qui refuse (remplissage invalide). On
+    // journalisait et on repartait sonder un flux qui ne redeviendrait jamais lisible.
+    LA("in", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
+    relancerSessionApp(m, app, "déchiffrement refusé");
     return;
   }
   for (const intention of analyserCommandes(clair)) await executerPourApp(m, app, intention);
@@ -1371,6 +1383,27 @@ async function sonderAppSerialise(m, app) {
  * qu'elles ne se marchent pas dessus — ce que le créneau unique de la machine, lui, ne garantit
  * pas du tout.
  */
+/**
+ * **L'accusé est dû dès que la propriété porte un `id`, que nous la relayions ou non.**
+ *
+ * Il dit « reçu », pas « exécuté » : c'est un accusé de transport. Le confondre avec une
+ * validation métier — et donc ne l'envoyer que pour les propriétés qu'on relaie — laisse
+ * l'application attendre un message qui ne viendra jamais, puis conclure à un échec.
+ *
+ * Relevé en direct : la vraie application ouvre CHAQUE session en écrivant `device_connected`,
+ * une propriété que nous n'avons aucune raison de relayer à la cafetière — et nous sortions
+ * par le `return` de la branche « ignorée » sans jamais accuser. Du point de vue du téléphone,
+ * la machine à qui il vient de se présenter ne répond pas ; il ne va donc pas plus loin, et
+ * aucune commande ne part. Le registre le montrait sans qu'on sache le lire : session établie,
+ * datapoints reçus, et `commandes = 0` pendant toute la vie de l'entrée.
+ */
+async function accuserSiDemande(m, app, intention) {
+  if (!intention.ackId) return false;
+  // Le retour est celui de l'ENVOI, pas de l'intention : dire « accusée » sur une poussée qui a
+  // échoué journaliserait le contraire de ce qui s'est produit.
+  return pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
+}
+
 async function executerPourApp(m, app, intention) {
   switch (intention.type) {
     case "vide":
@@ -1400,7 +1433,11 @@ async function executerPourApp(m, app, intention) {
         // connaissons pas encore — c'est-à-dire exactement ce qu'on vient chercher ici. La jeter
         // sans la montrer, c'était perdre la seule occasion de la voir : l'application officielle
         // est le seul émetteur au monde à produire ces trames-là, et elle ne les rejoue pas.
-        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée) · ${chargeBrute(intention.valeur)}`, app, m);
+        // L'accusé part quand même — voir `accuserSiDemande` : il porte le transport, pas
+        // l'exécution. Il est DIT dans la ligne, sans quoi « ignorée » se lirait comme « sans
+        // réponse » alors que c'est exactement le contraire qui se produit.
+        const accuse = await accuserSiDemande(m, app, intention);
+        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)${accuse ? " · accusée" : ""} · ${chargeBrute(intention.valeur)}`, app, m);
         return;
       }
       app.commandes++;
@@ -1439,9 +1476,9 @@ async function executerPourApp(m, app, intention) {
         meta: { app: app.id },
         i18n: { k: "appWrite", p: { app: app.id, commande: decrite } },
       });
-      // L'accusé n'est dû que si la propriété portait un `id` : sa présence EST la demande.
-      // L'application attend dessus, et son absence lui fait conclure à un échec.
-      if (intention.ackId) await pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
+      // Même accusé que pour une écriture ignorée, et par le même chemin : sa présence EST la
+      // demande, et l'application attend dessus.
+      await accuserSiDemande(m, app, intention);
       return;
     }
     case "illisible":
@@ -1455,7 +1492,12 @@ async function executerPourApp(m, app, intention) {
       // La signature ne trompe pas : en CBC, un chaînage faux ne salit que le bloc de tête, la
       // suite se recale seule sur le chiffré qui la précède — d'où ces octets illisibles finissant
       // proprement par `…a":{}}`. Une charge réellement inattendue, elle, serait lisible.
-      relancerSessionApp(m, app);
+      // La charge illisible est CONSERVÉE : c'est la seule preuve de ce qui s'est passé, et la
+      // signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, d'où
+      // des octets illisibles finissant proprement par `…a":{}}`. Sans elle, « désynchronisé »
+      // est un verdict qu'on ne peut ni vérifier ni contredire.
+      LA("in", `bloc illisible, conservé tel quel — ${String(intention.brut ?? "").slice(0, 200)}`, app, m);
+      relancerSessionApp(m, app, "bloc illisible, flux désynchronisé");
       return;
     default:
       // 400 et non 160 : cette ligne est le seul endroit où une demande que nous ne savons pas
@@ -1481,11 +1523,14 @@ const DELAI_RELANCE_APP = 15_000;
  * Rouvrir est donc la seule issue, et c'est sans risque pour l'appareil : un échange de clés ne
  * touche pas la cafetière, il ne recrée que le chiffrement entre l'application et nous.
  */
-function relancerSessionApp(m, app) {
+function relancerSessionApp(m, app, motif = "flux illisible") {
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
   app.relanceA = maintenant;
-  LA("sys", "flux illisible — désynchronisé sans retour, nouvel échange de clés", app, m);
+  // Le MOTIF est journalisé, pas seulement le verdict. « Désynchronisé » se constatait trois
+  // fois par session sans qu'aucune ligne ne dise ce qui l'avait provoqué, ce qui laissait la
+  // cause au rang d'hypothèse pendant des jours.
+  LA("sys", `${motif} — nouvel échange de clés`, app, m);
   app.session = null;
   app.etat = "annoncee";
   ouvrirSessionApp(m, app).catch(() => {});

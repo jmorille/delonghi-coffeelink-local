@@ -63,6 +63,18 @@ if (!LAN_KEY) {
 let session = null;
 let servi = false;
 let datapoints = 0;
+/**
+ * L'ouverture de session de la VRAIE application : elle écrit `device_connected` avec un `id`,
+ * donc en demandant un accusé, avant de faire quoi que ce soit d'autre.
+ *
+ * Reproduit ici parce que c'est là que le serveur a échoué en conditions réelles : il ne relaie
+ * pas cette propriété à la cafetière — à raison — et il en concluait qu'il n'avait rien à
+ * répondre. Le téléphone attendait un accusé qui ne venait jamais et n'envoyait plus une seule
+ * commande. Un banc qui n'ouvre pas sa session comme l'original ne peut pas voir ce défaut-là.
+ */
+const ID_PRESENCE = "faux-app-presence";
+let presenceServie = false;
+let accusePresence = false;
 
 /**
  * Le serveur HTTP que l'« appareil » va venir visiter. Les trois routes sont exactement celles
@@ -93,6 +105,16 @@ const serveur = createServer(async (req, res) => {
 
   if (url === "/local_lan/commands.json" && req.method === "GET") {
     if (!session) return repondre("{}", 412);
+    // La présence D'ABORD, comme l'application officielle : une seule fois, et on attend
+    // l'accusé. Le reste vient ensuite.
+    if (!presenceServie) {
+      presenceServie = true;
+      console.log("  → commande servie : device_connected (accusé demandé)");
+      const charge = JSON.stringify({ properties: [{ property: {
+        base_type: "integer", name: "device_connected", value: Math.floor(Date.now() / 1000), id: ID_PRESENCE,
+      } }] });
+      return repondre(session.encapsulate(charge));
+    }
     if (aLire && !servi) {
       servi = true;
       console.log(`  → commande servie : lecture ${aLire}`);
@@ -110,7 +132,10 @@ const serveur = createServer(async (req, res) => {
       for (const e of j.data?.properties ?? j.properties ?? []) {
         const p = e.property ?? e;
         datapoints++;
-        if (p.ack_status !== undefined) console.log(`  ← accusé ${p.id} statut ${p.ack_status}`);
+        if (p.ack_status !== undefined) {
+          if (p.id === ID_PRESENCE) accusePresence = true;
+          console.log(`  ← accusé ${p.id} statut ${p.ack_status}`);
+        }
         else console.log(`  ← datapoint ${p.name} = ${String(p.value).slice(0, 60)}`);
       }
     } catch (e) {
@@ -166,6 +191,9 @@ serveur.listen(monPort, "0.0.0.0", async () => {
 
   setTimeout(async () => {
     console.log(`\nBilan : session ${session ? "ÉTABLIE" : "JAMAIS OUVERTE"}, ${datapoints} datapoint(s) reçu(s).`);
+    // Dit en toutes lettres, parce que c'est l'affirmation que ce banc sert à vérifier : sans cet
+    // accusé, une vraie application se tait définitivement au lieu d'envoyer ses commandes.
+    console.log(`  device_connected : ${presenceServie ? "servi" : "jamais servi"}, accusé ${accusePresence ? "REÇU" : "JAMAIS REÇU — le serveur laisse l'application attendre"}.`);
     if (session) {
       // Fin de session propre : c'est `DeleteSessionCommand` du SDK, et le serveur doit retirer
       // l'entrée du registre plutôt que d'attendre l'expiration.

@@ -1211,6 +1211,30 @@ makes N independent applications possible where the machine allows one.
   the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
   {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
   the only signal, and not answering leaves the app waiting then concluding failure.
+- ⚠️ **The ack is owed to any property carrying an `id`, INCLUDING one we do not relay.** It says
+  "received", not "executed" — it is a transport ack, and treating it as a business validation is
+  what broke the real app. Measured: the official app opens **every** session by writing
+  `device_connected`, a property we have no reason to relay to the appliance — and the ignore
+  branch `return`ed without acking. From the phone's side the machine it had just introduced
+  itself to did not answer, so it went no further and **not one command was ever sent**. The
+  registry showed it and nobody could read it: session established, datapoints received,
+  `commandes = 0` for the whole life of the entry. `accuserSiDemande()` now handles both paths
+  and the journal line says `· accusée`, because "ignorée" alone reads as "unanswered" when the
+  opposite is what happens. `faux-app.mjs` opens its session the same way and prints whether the
+  ack came back, so the bench can fail on this rule; `verif-apps.mjs` pins it on the pure side.
+- **A timed-out poll invalidates the session, because a response we never read may have been
+  produced.** `commands.json` is polled with a 4 s deadline; if the request reached the phone, the
+  phone encrypted its answer and **its outbound stream advanced while ours did not** — nothing
+  recovers from that. It used to surface two polls later as an unreadable block, with no line
+  linking it to the expiry that caused it. `ETIMEDOUT` now re-keys immediately, behind the same
+  15 s debounce; a key exchange never touches the appliance. Same treatment when `decapsulate`
+  itself refuses (bad padding) — that path logged and went back to polling a stream that would
+  never become readable again.
+- **`relancerSessionApp` logs the MOTIVE, not just the verdict**, and the unreadable block is kept
+  verbatim. "Désynchronisé" was observed three times a session for days with no line saying what
+  had caused it, which left the cause at the rank of a hypothesis. The CBC signature is readable
+  by eye — a wrong chaining value dirties only the leading block, hence garbage ending cleanly in
+  `…a":{}}`.
 - `POST /local_reg.json` carries **`?dsn=`** on the first registration only (`!_isActive` branch).
   It is the one moment the protocol says out loud which appliance the app believes it is talking
   to, hence the only chance to refuse a request that is not ours. A `PUT` carries none, but always

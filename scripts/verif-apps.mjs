@@ -165,6 +165,24 @@ test("le champ `id` EST la demande d'accusé", () => {
   eq(analyserCommandes(c)[0].ackId, "a1b2c3d4", "identifiant d'accusé relevé");
 });
 
+test("l'accusé est dû même à une propriété que nous ne relayons PAS", () => {
+  // ⚠️ Relevé sur la vraie application, et ça bloquait tout : elle ouvre chaque session en
+  // écrivant `device_connected`, propriété que nous n'avons aucune raison de relayer à la
+  // cafetière — et le serveur sortait par la branche « ignorée » sans jamais accuser. Du point
+  // de vue du téléphone, la machine à qui il vient de se présenter ne répond pas : il n'allait
+  // pas plus loin et AUCUNE commande ne partait. Le registre le montrait sans qu'on sache le
+  // lire — session établie, datapoints reçus, `commandes = 0` pendant toute la vie de l'entrée.
+  //
+  // L'accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »). Le décodage de la
+  // charge est donc le seul juge de ce qui atteint l'appareil ; l'accusé, lui, est dû dans les
+  // deux cas dès que `id` est là.
+  const c = JSON.stringify({ properties: [{ property: { name: "device_connected", value: 1787413302, id: "d7e8" } }] });
+  const r = analyserCommandes(c)[0];
+  eq(r.type, "ecriture", "c'est bien une écriture");
+  eq(r.nom, "device_connected", "et elle ne porte pas de trame ECAM");
+  eq(r.ackId, "d7e8", "l'accusé reste dû : rien dans l'analyse ne dépend de ce qu'on relaie");
+});
+
 test("l'enveloppe {seq_no, data} est acceptée comme son contenu", () => {
   // `decapsulate` rend l'enveloppe entière ; certains appelants passent déjà `data`. Accepter les
   // deux évite un dépliage en double, qui rendrait « vide » une charge parfaitement valide.
