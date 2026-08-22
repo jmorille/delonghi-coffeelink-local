@@ -92,6 +92,13 @@ jobs:
       - name: Vérifier le registre d'applications
         run: node scripts/verif-apps.mjs
 
+      # Le décodage des arguments de trames est l'inverse des constructeurs de server.mjs. Un
+      # décalage d'un octet entre les deux ne lève aucune erreur : il produit des valeurs
+      # plausibles et fausses, dans le journal même où l'on décide si une vraie cafetière vient de
+      # lancer un café ou d'écraser une recette.
+      - name: Vérifier le décodage des arguments de trames
+        run: node scripts/verif-args.mjs
+
       # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
       # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à
       # l'exécution sans casser le build.

@@ -1273,6 +1273,21 @@ Writing that journal is also what finally made the **state re-broadcast** visibl
 the multiplexer — one real read, N recipients — was logged nowhere, surviving only as a cumulative
 counter. It is also the only trace of what an application RECEIVED from us.
 
+**Relayed commands are DECODED, not just named** — `src/lib/ecam-args.mjs`, pure, proven by
+`scripts/verif-args.mjs` in CI. `describeFrame()` gives the operation and the bytes, which is
+enough when you know the frame by heart and unreadable otherwise: "préparation d'une boisson"
+says neither which drink, nor which profile, nor with what settings — and a relayed write reaches
+a real appliance, so the line has to distinguish a coffee being poured from a recipe being
+overwritten. The decoder is the **inverse of this file's frame builders**, each case naming the
+one it mirrors, and `TWO` (the 16-bit recipe parameters) now lives in that module so builder and
+decoder read the same table — a one-byte drift between them raises nothing and yields plausible,
+wrong values. What is not protocol is **injected** (a beverage's name for this machine, a
+setting's name), so the module knows neither a model's catalog nor the names typed on the
+appliance. Arguments are inserted **before** the hex, because that is the order one reads them in;
+the bytes never disappear. ⚠️ **Never guess**: an unhandled command returns `null` and keeps its
+raw bytes, which is the useful material — inventing a plausible argument for a never-observed
+frame would produce a journal line that reads like a fact.
+
 **Treat it as a reverse-engineering instrument, not just a status panel.** The official app is the
 only emitter in the world that produces frames we have never seen, and it does not replay them — so
 whatever is not captured as it goes past is lost. Two consequences already in the code. A write to a

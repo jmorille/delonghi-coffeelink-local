@@ -17,7 +17,8 @@ import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
-import { CATEGORIES, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { TWO, argumentsTrame as argsEcam } from "./src/lib/ecam-args.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
@@ -652,7 +653,8 @@ function frameBeanSystemSave(id, name, grinder, temperature, aroma, visible = tr
   bytes[49] = visible ? 1 : 0;
   return seal(bytes);
 }
-const TWO = new Set([1, 9, 15]);
+// `TWO` vit maintenant dans `ecam-args.mjs` : le constructeur ci-dessous et le décodeur DOIVENT
+// lire la même table, un décalage d'un octet entre eux ne lèverait aucune erreur.
 function frameDispense(bev, prof, mode, action, params, check = false) {
   const body = [];
   for (const p of params) { body.push(p.id & 0xff); if (TWO.has(p.id)) body.push((p.value >> 8) & 0xff, p.value & 0xff); else body.push(p.value & 0xff); }
@@ -994,6 +996,46 @@ function describeFrame(ecamB64) {
   } catch {
     return "trame illisible";
   }
+}
+
+/**
+ * Les arguments d'une trame, en clair. Le décodage vit dans `src/lib/ecam-args.mjs`, **pur et
+ * vérifié en CI** ; ici on ne fournit que ce qui n'est pas du protocole : le nom d'une boisson
+ * pour CETTE machine — un nom tapé sur l'appareil prime sur le libellé du catalogue — et le nom
+ * d'un réglage. Les deux dépendent de l'état, le décodeur ne doit pas les connaître.
+ */
+function argumentsTrame(m, ecamB64) {
+  let t;
+  try { t = opTrame(ecamB64).trame; } catch { return null; }
+  return argsEcam(t, {
+    boisson: (id) => machineBeverageNames(m.store.machineView())[id]?.name ?? m.catalog.byId(id)?.label ?? `boisson ${id}`,
+    reglage: nomReglage,
+    params: PARAMS,
+  });
+}
+/** L'adresse d'un réglage machine, nommée quand `REGLAGES` la connaît. Sinon le nombre, nu. */
+function nomReglage(addr) {
+  const r = REGLAGES.find((x) => x.addr === addr);
+  return r ? `réglage ${r.cle} (${addr})` : `réglage ${addr}`;
+}
+
+/**
+ * La description complète d'une commande relayée : opération, **arguments**, puis octets.
+ *
+ * Cet ordre est le propos. `describeFrame` termine par la trame, ce qui convient à une ligne de
+ * file où l'on cherche l'opération ; ici on lit d'abord la question qu'on se pose devant une
+ * commande venue d'un tiers — *quelle boisson, quel profil, quels réglages* — et les octets
+ * viennent après, pour vérifier ou pour rétro-concevoir. Ils ne disparaissent jamais : c'est la
+ * seule trace exploitable d'une trame que nous ne saurions pas encore décoder.
+ */
+function decrireCommande(m, ecamB64) {
+  const base = describeFrame(ecamB64);
+  let args = null;
+  try { args = argumentsTrame(m, ecamB64); } catch { /* décodage douteux : la trame suffit */ }
+  if (!args) return base;
+  // On réinsère avant « · trame … » plutôt que d'ajouter à la fin.
+  const i = base.lastIndexOf(" · trame ");
+  return i < 0 ? `${base} · ${args}` : `${base.slice(0, i)} · ${args}${base.slice(i)}`;
 }
 
 /**
@@ -1461,7 +1503,10 @@ async function executerPourApp(m, app, intention) {
         return;
       }
       app.commandes++;
-      LA("in", describeFrame(intention.valeur), app, m);
+      // Les arguments AVANT les octets : c'est la question qu'on se pose en lisant cette ligne —
+      // quelle boisson, quel profil, quels réglages — et les octets ne servent qu'ensuite, pour
+      // vérifier ou pour rétro-concevoir. Une commande sans argument connu garde sa seule trame.
+      LA("in", decrireCommande(m, intention.valeur), app, m);
       // Une commande relayée qui vise un profil DÉPLACE le profil actif de l'appareil, au même
       // titre que si nous l'avions envoyée nous-mêmes. On adopte donc la valeur ici — au moment de
       // la mise en file, comme le fait `/api/command` — sans quoi nos pages continueraient
