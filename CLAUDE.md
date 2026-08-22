@@ -1542,9 +1542,31 @@ together against a `PROXY_APPS=1` server they demonstrate the central claim — 
 the machine, two applications served, each in its own stream** (verified). `faux-app` is
 deliberately read-only: it cannot build an ECAM frame and never will.
 
-**What is still NOT proven**, and no local test can close it: that a *real* De'Longhi app will
-accept us. It may check things our fake client does not. The mDNS responder (spec step 1) is also
-unwritten, so an app cannot yet find us by itself.
+**The central claim is now PROVEN with real clients, on 2026-08-22 at 19:38.** Two official
+De'Longhi apps — a Pixel 7 Pro (`a1`) and a Galaxy Tab (`a2`), different Android versions —
+held simultaneous sessions against one appliance whose local-peer slot fits exactly one. Every
+state read once off the machine left twice, each in its own AES stream, both readable, with no
+unreadable block and no key-exchange loop:
+
+```
+19:38:55  OUT a1  état rediffusé · sélection de profil (0xa9)
+19:38:55  OUT a2  état rediffusé · sélection de profil (0xa9)
+19:38:56  OUT a1  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+19:38:56  OUT a2  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+```
+
+That is the inference this file and `doc/spec-proxy-multi-app.md` both flagged as unclosable by
+any local test — a real app might check what `faux-app.mjs` does not. It does not.
+
+**What is still NOT proven**: the mDNS responder (spec step 1) is unwritten, so an app cannot
+find us by itself — both apps above reached us through a **binat** rewriting the appliance's
+`ip:80` to the server. That is a deployment answer, not a protocol one, and it is the remaining
+gap. Worth recording from the same session: the SDK's own startup errors are transient and
+identified — `404 No device found` (15 B) and `404 No LAN module found` (19 B) from
+`CommandHandler.get()`, and a `500` of 60 B that is **not** an `AylaLanModule` error body but
+NanoHTTPD's router catching an exception (`"Error: " + class + " : " + message`, plaintext).
+None of them carries an encrypted payload, so `porteUneCharge()` correctly leaves the stream
+untouched — at the cost of discarding a body that was readable as it stood.
 
 ## Internationalisation
 

@@ -343,3 +343,69 @@ parler à la cafetière, le plus incertain est derrière.
 **Que doit voir l'utilisateur ?** Une page qui liste les applications connectées, avec leur adresse
 et leur activité, semble nécessaire — mais elle n'a de sens qu'une fois l'étape 4 atteinte, et sa
 forme dépend de ce que les mesures du §7 auront appris. À trancher plus tard, pas maintenant.
+
+## 13. L'inférence est fermée — deux vraies applications, 2026-08-22 19:38
+
+Le § 4 portait quatre inférences, dont celle-ci : **une vraie application De'Longhi
+acceptera-t-elle de nous parler ?** `faux-app.mjs` ne pouvait pas y répondre — il vérifie ce que
+nous avons compris du protocole, pas ce que l'application vérifie, elle.
+
+Elle accepte. Et à deux.
+
+```
+19:32:32  IN  a1  IP_TEL_A s'annonce · Android 17, Pixel 7 Pro
+19:32:32  OUT a1  session établie
+19:38:21  IN  a2  IP_TEL_B s'annonce · Android 16, SM-X820
+19:38:21  OUT a2  session établie
+…
+19:38:55  OUT a1  état rediffusé · sélection de profil (0xa9)
+19:38:55  OUT a2  état rediffusé · sélection de profil (0xa9)
+19:38:56  OUT a1  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+19:38:56  OUT a2  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+```
+
+> ⚠️ **C'est l'affirmation centrale du multiplexeur, et elle tient : une lecture réelle sur la
+> cafetière, N destinataires.** Deux applications officielles, deux versions d'Android
+> différentes, sur un appareil dont le créneau local vaut exactement un (§ 7.1). Chaque état part
+> deux fois, chacun dans son propre flux AES persistant — aucun bloc illisible, aucun ré-échange
+> de clés.
+
+### Ce qui reste ouvert, et ce n'est plus le protocole
+
+**Le répondeur mDNS (étape 1) n'est toujours pas écrit.** Les deux applications ci-dessus ne nous
+ont pas trouvés toutes seules : elles sont arrivées par un **binat** du pare-feu, qui réécrit
+l'adresse de la cafetière en port 80 vers celle du serveur. Relevé côté pare-feu, même paquet,
+deux lignes :
+
+```
+binat  in IF_LAN_TEL  IP_TEL_A:55120 -> IP_MACHINE:80
+                IP_TEL_A:55120 -> IP_SERVEUR:80
+```
+
+C'est une réponse de déploiement, pas de protocole — elle marche, elle est transparente pour
+l'application, et elle a l'avantage de ne rien annoncer sur le réseau. Elle a aussi un piège que
+cette session a payé : **une règle de filtrage écrite pour le réseau des téléphones voit la
+destination APRÈS traduction.** Une règle « bloquer ce pool vers le réseau de la cafetière » ne
+verra jamais ce trafic — il ne porte plus cette adresse à ce moment-là — tandis qu'une règle trop
+large coupe le trafic déjà redirigé vers le serveur, et le symptôme est un journal applicatif
+vide : pas même un refus, puisque rien n'arrive.
+
+### Les erreurs de démarrage du SDK, identifiées
+
+Une application qui vient de s'annoncer répond quelques secondes en erreur avant d'être prête.
+Aucune n'est un refus, toutes sont transitoires, et les tailles suffisent à les nommer :
+
+| statut | taille | origine | sens |
+|---|---|---|---|
+| `404` | 15 o | `CommandHandler.get()`, texte brut | `No device found` — l'appareil ne lui est pas encore connu |
+| `404` | 19 o | `CommandHandler.get()`, texte brut | `No LAN module found` — connu, module LAN pas encore attaché |
+| `500` | 60 o | **routeur NanoHTTPD**, texte brut | `"Error: " + classe + " : " + message` — une exception dans un gestionnaire |
+
+Le `500` mérite d'être distingué : ce n'est **pas** un corps d'erreur d'`AylaLanModule` (ils font
+50, 34, 29 et 35 octets), c'est le routeur qui rattrape une exception. Autrement dit un plantage
+chez l'application, pas un rejet de notre part.
+
+Aucun de ces trois ne porte de charge chiffrée, donc `porteUneCharge()` laisse le flux AES
+intact — ce qui est la règle juste (§ 7quinquies). Le prix à payer est que le corps, lisible tel
+quel, est jeté avec : nommer l'exception demanderait de le journaliser sans le déchiffrer.
+
