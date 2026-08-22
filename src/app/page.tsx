@@ -1228,14 +1228,26 @@ function BeverageCard({
         <div className="blocSuite">
           {/* Monté seulement à l'ouverture : son état repart donc des valeurs de la machine
               à chaque fois, sans logique de réinitialisation à écrire. */}
-          <RecipeEditor bev={bev} profile={profile} profileName={profileName} busy={busy} working={working} onDispense={onDispense} onWrite={onWrite} />
-
-          <div className="row note">
-            <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
-              <Icone nom="info" />
-              {tech ? t("hideTechnicalInfo") : t("technicalInfo")}
-            </button>
-          </div>
+          {/* « Infos techniques » est passe a l'editeur pour tenir dans SA barre d'actions : les
+              quatre boutons de la carte ouverte etaient sur trois lignes. L'etat et le panneau
+              restent ici — c'est la carte qui les possede, et le panneau s'ouvre bien sous la
+              barre puisqu'il est rendu juste apres l'editeur. Le libelle passe en `.lbl` comme
+              les trois autres, sans quoi il ne se replierait pas avec eux en etroit. */}
+          <RecipeEditor
+            bev={bev}
+            profile={profile}
+            profileName={profileName}
+            busy={busy}
+            working={working}
+            onDispense={onDispense}
+            onWrite={onWrite}
+            actions={
+              <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
+                <Icone nom="info" />
+                <span className="lbl">{tech ? t("hideTechnicalInfo") : t("technicalInfo")}</span>
+              </button>
+            }
+          />
 
           {tech && (
           <>
@@ -1291,6 +1303,7 @@ function RecipeEditor({
   working,
   onDispense,
   onWrite,
+  actions,
 }: {
   bev: Beverage;
   profile: number;
@@ -1299,6 +1312,14 @@ function RecipeEditor({
   working: boolean;
   onDispense: (params?: RecipeParam[]) => void;
   onWrite: (params: RecipeParam[]) => void;
+  /**
+   * Boutons de la carte à poser dans la barre d'actions de l'éditeur — aujourd'hui « Infos
+   * techniques ». Il vit dans la carte (c'est elle qui tient l'état et le panneau), mais il
+   * s'affiche ici : les quatre boutons de la carte ouverte étaient sur trois lignes différentes,
+   * dont deux ne contenaient qu'un bouton. Passer un nœud plutôt que de remonter l'état évite de
+   * déplacer le panneau technique et ses traductions.
+   */
+  actions?: React.ReactNode;
 }) {
   const t = useTranslations("editor");
   const tc = useTranslations("common");
@@ -1358,6 +1379,61 @@ function RecipeEditor({
    * 80, puce 78 : 558 px incompressibles pour un paramètre, dans une carte qui peut en faire 300.
    * `.paramRow` laisse le libellé prendre sa ligne quand il faut et le curseur absorber le reste.
    */
+  /**
+   * **Un paramètre qui ne vaut que 0 ou 1 est un interrupteur, pas un curseur.**
+   *
+   * `VISIBLE` et `VISIBLE_IN_PROGRAMMING` sont des booléens : un curseur de deux crans, doublé d'un
+   * champ numérique et bordé de « 0 » et « 1 », demande au lecteur de traduire lui-même deux
+   * nombres en oui/non — et l'invite à taper une valeur qui n'existe pas. L'interrupteur dit l'état
+   * et n'en propose aucun autre.
+   *
+   * Le critère est **intrinsèque au paramètre** (`min === 0 && max === 1`), pas une liste de noms :
+   * ces deux-là ne sont pas des cas particuliers, ce sont les seuls booléens que ce modèle expose
+   * aujourd'hui. Il ne dépend pas non plus de `kind` — c'est notre propre regroupement, pas le
+   * protocole, et le contrôle d'un paramètre ne doit pas changer selon le bloc où on l'a rangé.
+   *
+   * `INVERSION` ne passe jamais par là : `min === max`, donc il est déjà écarté par `adjustable` et
+   * reste envoyé tel quel dans la charge utile, ce qui est le comportement à préserver.
+   */
+  const bascule = (b: Param) => {
+    const v = vals[b.id] ?? seedFor(b);
+    return (
+      <div className="paramRow" key={b.id}>
+        <span className="nom">
+          {paramLabel(b)}
+          {b.unit ? ` (${unitLabel(b.unit)})` : ""}
+        </span>
+        <div className="ctl">
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={v === 1}
+              aria-label={paramLabel(b)}
+              onChange={(e) => set(b, e.target.checked ? 1 : 0)}
+            />
+            <span className="track" aria-hidden="true">
+              <span className="knob" />
+            </span>
+          </label>
+          {defOf(b) !== null ? (
+            <button
+              className="mini"
+              disabled={v === defOf(b)}
+              onClick={() => set(b, defOf(b) as number)}
+              title={t("paramDefaultHint")}
+            >
+              {t("paramDefaultBool", { on: defOf(b) === 1 ? 1 : 0 })}
+            </button>
+          ) : (
+            <span className="sub" title={t("noParamDefaultHint")}>
+              {t("noParamDefault")}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const slider = (b: Param) => (
     <div className="paramRow" key={b.id}>
       <span className="nom">
@@ -1410,6 +1486,9 @@ function RecipeEditor({
     </div>
   );
 
+  /** Aiguillage : deux états ⇒ interrupteur, sinon curseur. */
+  const reglage = (b: Param) => (b.min === 0 && b.max === 1 ? bascule(b) : slider(b));
+
   return (
     <div className="blocEditeur">
       <div className="cardHead chapeau">
@@ -1440,7 +1519,7 @@ function RecipeEditor({
         </div>
       </div>
 
-      {basic.map(slider)}
+      {basic.map(reglage)}
 
       {fixed.map((b) => (
         <div className="paramRow" key={b.id}>
@@ -1454,28 +1533,25 @@ function RecipeEditor({
         </div>
       ))}
 
-      {advanced.length > 0 && (
-        <div className="blocSuite">
-          {/* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
-              de changer de dessin. */}
-          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)}>
+      {/* **Une seule barre d'actions pour la carte ouverte.** Les quatre boutons — deux depliants
+          a gauche, deux actions a droite — occupaient trois lignes, dont deux ne portaient qu'un
+          bouton chacune. Les depliants restent des depliants : leur contenu s'ouvre SOUS la barre,
+          jamais au-dessus, sinon cliquer en bas ferait apparaitre du texte plus haut.
+
+          Les deux actions gardent les memes glyphes que sur /recipes pour les memes gestes : la
+          tasse coule la boisson avec ces valeurs, la machine nomme la destination de l'ecriture.
+          Cette derniere est PERSISTANTE sur l'appareil — c'est la seule chose de cette carte qui
+          survive a la fermeture de l'onglet. */}
+      <div className="row note">
+        {advanced.length > 0 && (
+          /* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
+             de changer de dessin. */
+          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
             <Icone nom="chevron" />
             <span className="lbl">{showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})</span>
           </button>
-          {showAdvanced && (
-            <div>
-              <p className="chapeau">{t("advancedNote")}</p>
-              {advanced.map(slider)}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Les deux sorties de l'editeur, et les memes glyphes que sur /recipes pour les memes
-          gestes : la tasse coule la boisson avec ces valeurs, la machine nomme la destination de
-          l'ecriture. Cette derniere est persistante sur l'appareil — c'est la seule chose de cette
-          carte qui survive a la fermeture de l'onglet. */}
-      <div className="row note">
+        )}
+        {actions}
         <button className="good iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
           <Icone nom="preparer" />
           <span className="lbl">{t("prepareWith")}</span>
@@ -1491,6 +1567,13 @@ function RecipeEditor({
           <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
         </button>
       </div>
+
+      {advanced.length > 0 && showAdvanced && (
+        <div className="blocSuite">
+          <p className="chapeau">{t("advancedNote")}</p>
+          {advanced.map(reglage)}
+        </div>
+      )}
     </div>
   );
 }

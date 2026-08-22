@@ -87,6 +87,28 @@ Docker-less tarball. `packageManager` in `package.json` pins pnpm for corepack a
 (The sibling HA repo does have one, runnable with plain pytest and no Home Assistant install:
 `cd ../delonghi_coffeelink_ha && pytest tests/`, or a single file `pytest tests/test_monitor.py`.)
 
+**A branch merged into `master` is deleted locally in the same breath.** `git merge --no-ff`, then
+`git branch -d <branch>` — **never `-D`**. From the moment the merge lands the commits live in
+`master`, so the branch pointer carries nothing; leaving it behind turns `git branch` into a list of
+things you have to re-verify before you can trust it, and the one branch that genuinely is *not*
+merged stops standing out. `-d` **is** the safety mechanism: it refuses when the branch is not
+contained in `master`, so the cleanup checks its own precondition instead of taking your word for
+it. Same rule for the remote copy once `master` is pushed, with the proof made explicit first —
+`git merge-base --is-ancestor origin/<branch> master`, then `git push origin --delete <branch>`, and
+skip any branch whose check fails rather than deleting it anyway. A remote branch can hold a commit
+the local clone has never seen; that is the one case a blind delete destroys.
+
+**Pushing to GitHub, and confirming the build that follows, is delegated to a subagent.** The push
+is the outward-facing step, and its verdict does not arrive with it — CI answers minutes later. One
+agent owns the whole round trip: push, prune the merged remote branches, watch the run to its
+verdict, and **quote any annotations** rather than reporting a bare green. Give it the interdictions
+in writing, because they are what makes the delegation safe: no `--force`, no rebase, no history
+rewrite, no commit, no file edits, and **no attempt to repair a red CI** — it reports the failure
+with the useful log lines and stops, since fixing a build is a decision, not an errand. It also
+requires a clean tree and must **abort and say so** rather than stash or commit whatever it finds.
+Corollary worth knowing: do not edit files while that agent runs, or it will abort on a tree that
+was clean when you launched it.
+
 Container: `Dockerfile` (multi-stage, `node:26-alpine`, prod deps installed — **not** Next's
 `standalone`, whose dependency tracing starts from Next's own server, not our `server.mjs`),
 `docker-compose.yml`, and **`DOCKER.md` for every configuration option**. The two

@@ -280,7 +280,9 @@ export const PARAMS = {
   24: { name: "PROGRAMABLE", label: "Programmable", unit: "", kind: "advanced" },
   25: { name: "VISIBLE", label: "Visible", unit: "", kind: "advanced" },
   26: { name: "VISIBLE_IN_PROGRAMMING", label: "Visible en programmation", unit: "", kind: "advanced" },
-  27: { name: "INDEX_LENGTH", label: "Index de longueur", unit: "", kind: "advanced" },
+  // « longueur » est le nom de l'enum, pas ce que le parametre fait : bornes IDENTIQUES sur un
+  // espresso et sur un cafe long, donc il ne decrit pas le volume verse. Voir doc/commandes-cafe.md.
+  27: { name: "INDEX_LENGTH", label: "Index de calibre", unit: "", kind: "advanced" },
   28: { name: "ACCESSORIO", label: "Accessoire", unit: "", kind: "user" },
   30: { name: "PROG_TIME", label: "Programmation horaire", unit: "", kind: "advanced" },
   31: { name: "ICED", label: "Glacé", unit: "", kind: "user" },

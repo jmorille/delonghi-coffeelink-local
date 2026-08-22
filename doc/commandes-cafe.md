@@ -238,7 +238,7 @@ Chaque paramètre inséré dans la trame est un couple `id` + `valeur`. Table de
 | 24 | `PROGRAMABLE` | Programmable | 1 |
 | 25 | `VISIBLE` | Visible | 1 |
 | 26 | `VISIBLE_IN_PROGRAMMING` | Visible en prog. | 1 |
-| 27 | `INDEX_LENGTH` | Longueur d'index | 1 |
+| 27 | `INDEX_LENGTH` | Index de calibre (voir note) | 1 |
 | 28 | `ACCESSORIO` | Accessoire (carafe lait…) | 1 |
 | 31 | `ICED` | Glacé | 1 |
 | 32 | `MUG_SIZE` | Taille mug | 1 |
@@ -251,6 +251,26 @@ Filtre `E0()` — paramètres réellement insérés dans une trame de dispensing
 `ACCESSORIO(28)`, `ICED(31)`, `INDEX_LENGTH(27)`, `MUG_ADJUST(33)`, `INTENSITY(38)`, `RINSE(39)`.
 Le paramètre `DUExPER(8)` est systématiquement retiré avant construction ; `TASTE(2)` est omis
 pour `beverageId = 200` (sauf `checkValues`).
+
+> ⚠️ **lan-server n'applique AUCUN de ces trois filtres.** `frameDispense` sérialise tous les
+> paramètres que l'éditeur lui donne, et l'éditeur les donne tous. Mesuré sur les 28 boissons de
+> cette machine, cela fait partir dans la trame `0x83` trois identifiants que l'app n'y met jamais :
+> `PROGRAMABLE(24)` sur 26 boissons, `VISIBLE(25)` sur 28, `PROG_TIME(30)` sur 1. Sans conséquence
+> connue — mais `0x83` sert aussi l'écriture PERSISTANTE d'une recette dans un profil
+> (`SAVE_BEVERAGE`), donc ce sont des octets écrits dans un appareil réel que le constructeur n'y
+> écrit pas. Décision à prendre ; en attendant, ne pas croire que le comportement est aligné parce
+> que la règle est écrite ci-dessus.
+
+> **`INDEX_LENGTH(27)` n'est pas une longueur en millilitres.** L'app le passe par une énumération
+> `SMALL(0) / MID(1) / LARGE(2) / NOT_SET(255)` dont le paramètre s'appelle `mugSize`, et
+> `RecipeData.J()` traite la valeur 4 comme un cas spécial sur Maestosa. Mais les bornes lues sur
+> cette machine disent **0–4, défaut 1** (0–3 sur la verseuse), soit cinq positions pour une
+> énumération qui en connaît trois. Surtout, elles sont **identiques sur un espresso et sur un café
+> long** : un paramètre décrivant le volume versé n'aurait pas la même plage sur deux boissons de
+> longueurs si différentes — le volume a ses propres paramètres (`COFFEE`, `MILK`, `HOT_WATER`).
+> D'où le libellé « Index de calibre » plutôt que « longueur ». **Effet observable non établi** :
+> il reste à faire varier la valeur et à observer ce qui coule, ce qui exige de préparer une
+> boisson sur l'appareil.
 
 > **Longueur des paramètres** : `COFFEE`, `MILK`, `HOT_WATER` sont sur 2 octets (quantités en ml,
 > big-endian). La liste exacte des paramètres 2 octets est portée par la `DefaultsTable` de la
