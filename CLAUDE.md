@@ -1198,6 +1198,15 @@ makes N independent applications possible where the machine allows one.
   can start a preparation or persist a recipe. That is the point, and it is why every relay is
   logged and why `/pilotage` lists who is connected.
 - Only `m.send` is relayed. An app writing anything else is **logged and ignored**, never guessed.
+- **A relayed frame that targets a profile sets `m.activeProfile`**, exactly as `/api/command`
+  does. This is not hypothetical: the *very first* command a real De'Longhi app relayed to us was
+  `0D 06 A9 F0 01` — a profile select. The app asserts its own current profile at session open,
+  taken from a phone-side preference defaulting to 1. Without it, a phone connecting silently moves
+  the appliance's active profile while our pages keep showing the old one — the failure this file's
+  "any new command that targets a profile must also set `m.activeProfile`" rule exists to prevent.
+  `profilVise()` reads it from both layouts: `0xA9` carries it plainly at byte 4, `0x83` encodes it
+  as `(profile << 2) | action` in the last byte before the CRC. The change is logged, because a
+  profile switch decided by a third party is precisely what one needs to be able to trace.
 
 **`/pilotage` gained an "Applications branchées" panel**, rendered **even when the multiplexer is
 off**: hiding it would make the feature invisible to anyone not reading the docs, and "no

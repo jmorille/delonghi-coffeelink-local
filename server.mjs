@@ -927,6 +927,30 @@ function describeFrame(ecamB64) {
 }
 
 /**
+ * Le profil que vise une trame, ou `null` si elle n'en vise aucun.
+ *
+ * Existe pour le multiplexeur, et pour une raison concrète : la **toute première** commande qu'une
+ * application officielle nous a relayée était `0D 06 A9 F0 01 …` — une sélection de profil. L'app
+ * impose son profil courant à l'appareil dès l'ouverture de session, et ce profil vient d'une
+ * préférence stockée dans le téléphone, avec 1 par défaut. Sans cette lecture, une application qui
+ * se branche déplace le profil actif de la machine **et notre interface continue d'annoncer
+ * l'ancien** — exactement ce que la règle « toute commande qui vise un profil doit poser
+ * `m.activeProfile` » existe pour empêcher.
+ *
+ * Deux dispositions, relevées dans les constructeurs de trames de ce fichier :
+ * - `0xA9` : `0D 06 A9 F0 <profil> <crc>` — le profil est en clair à l'octet 4 ;
+ * - `0x83` : le profil est encodé `(profil << 2) | action` dans le dernier octet avant le CRC.
+ */
+function profilVise(ecamB64) {
+  try {
+    const { cmd, trame } = opTrame(ecamB64);
+    if (cmd === 0xa9) return trame[4] ?? null;
+    if (cmd === 0x83) return (trame[trame.length - 3] ?? 0) >> 2;
+  } catch { /* trame illisible : aucun profil à en tirer */ }
+  return null;
+}
+
+/**
  * Met une COMMANDE ECAM en file. Signature conservée : quinze sites d'appel l'utilisent, et les
  * réécrire tous en même temps que l'ordonnanceur aurait mêlé deux changements dans un seul pas.
  *
@@ -1323,6 +1347,19 @@ async function executerPourApp(m, app, intention) {
       }
       app.commandes++;
       L("in", `app ${app.id} → ${describeFrame(intention.valeur)}`, m);
+      // Une commande relayée qui vise un profil DÉPLACE le profil actif de l'appareil, au même
+      // titre que si nous l'avions envoyée nous-mêmes. On adopte donc la valeur ici — au moment de
+      // la mise en file, comme le fait `/api/command` — sans quoi nos pages continueraient
+      // d'afficher l'ancien profil pendant que la machine, elle, a changé. Journalisé parce qu'un
+      // changement de profil décidé par un tiers est précisément ce qu'on doit pouvoir retracer.
+      const profil = profilVise(intention.valeur);
+      if (profil >= 1 && profil <= 5 && (profil !== m.activeProfile || !m.activeProfileConfirmed)) {
+        const avant = m.activeProfile;
+        m.activeProfile = profil;
+        m.activeProfileConfirmed = true;
+        rememberActiveProfile(m);
+        L("sys", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
+      }
       startProgram(m, intention.valeur, `App ${app.id} · ${describeFrame(intention.valeur)}`, 75000, "monitor", {
         rang: RANG.COMMANDE,
         meta: { app: app.id },
