@@ -204,6 +204,37 @@ const charger = (nom) =>
   ok("les deux libellés nomment la carafe", [lib(t[0]), lib(t[1])].every((l) => /^carafe à lait /.test(l)));
 }
 
+// ── Ce que les QUATRE preparations disent des bits carafe, et de l'alarme de nettoyage ───────
+// Le decompte a deja ete ecrit faux une fois (« les trois boissons lactees »), or il n'y a que
+// deux boissons lactees : c'est trois preparations sur quatre qui portent IFD_CARAFFE, dont un
+// espresso pur. La nuance est le raisonnement lui-meme — si c'etait le lait qui levait le bit,
+// la conclusion « c'est la molette » tomberait. On le compte donc plutot que de le redire.
+{
+  const prepas = ["espresso", "espresso-macchiato", "lait-chaud", "espresso-veille"].map(charger);
+  const porte = (t, n) => t.some((x) => x.switches.some((sw) => sw.name === n));
+  ok("préparations : 3 sur 4 portent IFD_CARAFFE", prepas.filter((t) => porte(t, "IFD_CARAFFE")).length === 3);
+  ok("préparations : 1 sur 4 porte CIOCCO_TANK", prepas.filter((t) => porte(t, "CIOCCO_TANK")).length === 1);
+  ok(
+    "aucune trame ne porte JAMAIS les deux bits carafe",
+    prepas.flat().every((x) => !(porte([x], "IFD_CARAFFE") && porte([x], "CIOCCO_TANK"))),
+  );
+  // L'alarme CLEAN_KNOB (bit 14) suit le LAIT, pas la molette : levee en cours de macchiato, a la
+  // trame ou le lait coule, et jamais sur les deux espressos.
+  const ck = (t) => t.map((x) => x.alarms.some((a) => a.name === "CLEAN_KNOB"));
+  ok("macchiato : l'alarme de nettoyage se lève EN COURS de boisson", (() => {
+    const v = ck(prepas[1]);
+    return v[0] === false && v.includes(true) && v[v.length - 1] === true;
+  })());
+  ok("espresso : l'alarme de nettoyage ne se lève jamais", ck(prepas[0]).every((x) => x === false));
+  ok("espresso (2e) : l'alarme de nettoyage ne se lève jamais", ck(prepas[3]).every((x) => x === false));
+  // Le CAPTEUR homonyme (groupe 1, bit 2) n'a jamais ete observe, molette sur nettoyage comprise.
+  ok(
+    "le capteur CLEAN_KNOB n'est levé nulle part",
+    [...prepas, charger("carafe"), charger("carafe-molette")].flat()
+      .every((x) => !x.switches.some((sw) => sw.name === "CLEAN_KNOB")),
+  );
+}
+
 // L'invariant qui rend la regle ci-dessus sure : sur TOUTES les captures, l'etape 0 n'apparait
 // qu'au repos. Si une preparation utilisait un jour l'etape 0 comme etape de travail, la barre
 // disparaitrait en plein milieu — et cette assertion le dirait avant l'utilisateur.

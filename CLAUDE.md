@@ -948,8 +948,10 @@ measured (froth as found, froth at minimum, and the "insert" graduation) and all
 frame, byte for byte, CRC included*; neither the froth level nor "insert" is reported anywhere in
 `0x75`. The first label written here said "knob on froth", which over-read a single measurement —
 the position the knob happened to be in. Never both bits at once, which is what the four recorded
-preparations already showed unexplained (the three milk drinks carry `IFD_CARAFFE` — knob
-necessarily off clean — and the idle capture carries `CIOCCO_TANK`). The enum names come from the app and mislead: `CIOCCO_TANK` names no chocolate tank
+preparations already showed unexplained: **three of the four carry `IFD_CARAFFE`** (the espresso,
+the macchiato and the hot milk) and **the fourth carries `CIOCCO_TANK`** (the second espresso). So
+it is not milk that raises the bit — a plain espresso raises it too — it is the knob:
+`espresso-veille` is the only capture recorded with the knob on clean. The enum names come from the app and mislead: `CIOCCO_TANK` names no chocolate tank
 here, this model has no chocolate beverage at all. Keep the names, they are protocol; the *labels*
 say the knob position, and `verif-monitor.mjs` asserts both the frames and the labels
 (`scripts/captures/carafe-molette.json`). This supersedes the earlier correction in this file, which

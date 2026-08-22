@@ -564,14 +564,28 @@ octets 9,10,11    PROGRESSION — fonction, étape, pourcentage (§ 11.5)
 > une seule mesure, la position où la molette se trouvait ce jour-là.
 >
 > Jamais les deux ensemble — ce que les quatre préparations enregistrées montraient déjà sans
-> qu'on sache l'expliquer : les trois boissons lactées portent `IFD_CARAFFE` (molette sur mousse,
-> forcément) et la capture au repos porte `CIOCCO_TANK`. **Les noms de l'énum induisent en
+> qu'on sache l'expliquer : **trois des quatre préparations portent `IFD_CARAFFE`** (l'espresso, le
+> macchiato et le lait chaud) et **la quatrième porte `CIOCCO_TANK`** (le second espresso). Ce
+> n'est donc pas le lait qui lève le bit — un espresso pur le lève aussi — c'est bien la molette :
+> la capture `espresso-veille` est la seule enregistrée molette sur nettoyage. **Les noms de l'énum induisent en
 > erreur** : `CIOCCO_TANK` ne désigne aucun bac à chocolat ici, ce modèle n'expose aucune boisson
 > chocolatée sur les 28 entrées de son catalogue. On garde les noms, qui viennent du protocole, et
 > on corrige les libellés. L'app officielle n'aide pas : `MonitorDataV2.g()` **exclut** de sa liste
 > `IFD_CARAFFE`, `CIOCCO_TANK`, `WATER_SPOUT` et les inconnus — elle n'en montre aucun.
 > Captures : `scripts/captures/carafe.json` (retrait) et `carafe-molette.json` (molette).
 >
+> ✅ **L'alarme `CLEAN_KNOB` (bit 14) est la demande de nettoyage du circuit lait.** Relevée dans
+> les captures : elle est absente au début du macchiato, se lève **à la trame où le lait coule**
+> (`f=10 e=4`, 18 s), reste levée jusqu'à la fin de la boisson, et est **encore levée à l'ouverture
+> de la capture du lait chaud** enregistrée plus tard. Les deux espressos ne la lèvent jamais, et
+> elle est retombée sur toutes les lectures du lendemain. Lecture la plus simple : « du lait est
+> passé, il faut nettoyer », persistante jusqu'au nettoyage — c'est une inférence, mais les quatre
+> préparations la soutiennent sans exception.
+>
+> ⚠️ **À ne pas confondre avec le CAPTEUR `CLEAN_KNOB` (groupe 1, bit 2), qui porte le même nom et
+> n'a jamais été observé levé** — y compris molette physiquement sur nettoyage, où seul le bit 1.1
+> se lève. Son rôle reste inconnu ; ce n'est pas « la molette est sur nettoyage ».
+
 > ⛔ **Ni le cran de mousse ni la position « insert » ne sont rapportés.** Les deux bits sont des
 > détecteurs tout-ou-rien et aucun octet continu ne varie avec la graduation. Vrai de `0x75`, la
 > seule trame qu'on interroge — inutile de refaire la mesure, mais rien ne dit qu'une autre

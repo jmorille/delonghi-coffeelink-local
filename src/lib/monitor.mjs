@@ -140,8 +140,9 @@ export const MONITOR_ETAPES = {
  * graduation « insert » — qui donnent la MEME trame, octet pour octet, CRC compris.
  *
  * Jamais les deux ensemble, ce que les quatre préparations enregistrées montraient déjà sans
- * qu'on sache l'expliquer : les trois boissons lactées ont `IFD_CARAFFE` (molette sur mousse,
- * forcément) et la capture au repos a `CIOCCO_TANK`. Les noms d'énum sont ceux de l'app et
+ * qu'on sache l'expliquer : TROIS DES QUATRE ont `IFD_CARAFFE` (l'espresso, le macchiato et le
+ * lait chaud) et la quatrieme a `CIOCCO_TANK` (le second espresso). Ce n'est donc pas le lait qui
+ * leve le bit — un espresso pur le leve aussi — c'est la molette. Les noms d'énum sont ceux de l'app et
  * induisent en erreur — `CIOCCO_TANK` ne désigne aucun bac à chocolat ici, ce modèle n'a pas de
  * boisson chocolatée. On garde les noms (ils viennent du protocole) et on corrige les libellés.
  *
