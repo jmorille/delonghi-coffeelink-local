@@ -310,9 +310,30 @@ pas celle qu'on devine à la lecture des trames :
 
 | famille | commandes | la machine… |
 |---|---|---|
-| **lecture** | `0x75`, `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA`, `0x60`, `0x70` | renvoie un `data_response` |
+| **lecture** | `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA` | renvoie un `data_response` |
+| **lecture (monitor)** | `0x75`, `0x60`, `0x70` | pousse un datapoint `d302_monitor` — **pas** de `data_response` |
 | **action** | `0x83`, `0x84`, `0xA9`, `0xB9` | ne répond **rien** |
 | **écriture** | `0x90`, `0xA5`, `0xAB`, `0xAD`, `0xBB` | ne répond **rien** non plus |
+
+> ⚠️ **La ligne « monitor » a été séparée le 2026-08-22, et c'est une correction, pas une nuance.**
+> Ce document rangeait `0x75` avec les lectures qui renvoient un `data_response`. C'est faux :
+> la machine répond à une demande de monitor en **poussant la propriété `d302_monitor`**, jamais
+> par un `data_response`. Mesuré trois fois de suite sur l'appareil, monitor reçu et décodé —
+> `état=0x02`, capteurs, alarmes — pendant que la tâche qui l'avait demandé était déclarée « sans
+> réponse » puis « échouée ». Aucun `d0 .. 75 ..` n'a jamais été observé, alors que les
+> `d0 41 a2 0f …` des statistiques abondent dans le même journal.
+>
+> Conséquence pratique pour qui écrit un client : **une lecture d'état ne s'attend pas comme les
+> autres lectures.** L'attendre sous forme de `data_response` la fait échouer à tous les coups, et
+> le symptôme est trompeur — l'état arrive et s'affiche, mais la commande est comptée en échec, ce
+> qui ressemble à s'y méprendre à une machine déconnectée.
+>
+> Et le corollaire qui compte autant : ces poussées de monitor sont **aussi spontanées**. Pendant
+> une préparation la machine en émet une toutes les 1 à 3 secondes sans que rien ne l'ait demandée
+> (voir § 11.5). Un client qui apparierait n'importe quelle poussée à n'importe quelle lecture en
+> attente déclarerait donc lues des données jamais reçues. L'appariement doit porter sur la
+> commande demandée.
+
 
 Les deux dernières familles se distinguent par ce qu'elles laissent derrière (une écriture est
 persistante dans l'appareil), pas par leur comportement en réponse : **aucune des deux n'accuse

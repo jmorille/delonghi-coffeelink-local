@@ -316,11 +316,25 @@ A **task** is a list of **steps** plus a policy. An import of 21 properties is o
 "Allumer" is a task of one step; a bean sweep is one task of six — where it used to be six separate
 programs chained by a guessed `setTimeout(11000)`, with a two-second dead zone between each. Three
 kinds of wait, because the machine does not answer the same way for everything: `prop` (it will push
-that property), `reponse` (a `data_response` will come — true of `0x75`, `0xA2`, `0xA3`, `0xA6`,
+that property), `reponse` (an answer will come — true of `0x75`, `0xA2`, `0xA3`, `0xA6`,
 `0xB0`, `0xBA`), and `fenetre` (it has nothing to answer — `0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`).
 For `fenetre`, `ms` is a **sustained-presence duration, not a failure deadline: reaching it is
 success.** The kind is derived from `ECAM_OPS` via `natureTrame()`, so no call site decides it and
 there is no second table to keep in sync.
+
+⚠️ **`0x75` does NOT answer with a `data_response` — it answers with a `d302_monitor` datapoint
+push**, and this file said the opposite for a long time. The consequence was not subtle: the monitor
+branch of `handleProperty` returned without ever calling `apparier`, so a "Présence" step could only
+be satisfied by a message the machine never sends for that command. Measured three times running —
+monitor received at 16:19:58 and 16:20:11, the task declared "sans réponse" at 16:20:01 and "échouée
+: 1 sans réponse" at 16:20:15. The state was there, decoded and on screen, and the task died anyway.
+**Every state read failed**, which in use reads exactly like a disconnected machine while the link is
+working perfectly. The match is deliberately **narrow** — a step now carries its ECAM `cmd` and
+`reponse(file, {reponse: true, cmd})` only completes a step that asked for that command: monitor
+pushes are *also* spontaneous (one every 1–3 s during a brew), so matching broadly would mark a
+pending statistics step as answered and file counters as read that were never read. Without `cmd`
+the old permissive behaviour stands, on purpose: the byte-for-byte correspondence has not been
+verified for every command, and narrowing blindly would break reads that work today.
 
 **Four ranks, one preemption rule**: a task may be suspended at a **step boundary** by a task of
 strictly higher rank. `URGENT` (0) is `stop` alone — it preempts even a running dispense, at a cost

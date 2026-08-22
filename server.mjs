@@ -1051,9 +1051,13 @@ function profilVise(ecamB64) {
  */
 function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
   const lecture = natureTrame(ecamB64) === "lecture";
+  // La commande ECAM voyage avec le pas : c'est elle qui permet d'apparier étroitement la réponse.
+  // Voir `reponse()` dans `tasks.mjs` — une poussée de monitor ne doit valider qu'un pas qui a
+  // justement demandé un monitor, jamais une lecture de statistiques en attente.
+  const cmd = (() => { try { return opTrame(ecamB64).cmd ?? null; } catch { return null; } })();
   const pas = [pasTrame(label, ecamB64, lecture
-    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain }
-    : { attente: "fenetre", ms: durationMs, sustain })];
+    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain, cmd }
+    : { attente: "fenetre", ms: durationMs, sustain, cmd })];
   return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
 }
 
@@ -1784,6 +1788,18 @@ function handleProperty(m, name, value) {
     } catch (e) {
       L("in", `${name}: monitor illisible (${e.message})`, m);
     }
+    // ⚠️ **La poussée de monitor EST la réponse à `0x75`.** Ce retour se faisait sans jamais
+    // apparier, si bien qu'un pas « Présence » ne pouvait être satisfait que par un
+    // `data_response`… que la machine n'envoie pas pour cette commande. Mesuré trois fois de
+    // suite : monitor reçu à 16:19:58 et 16:20:11, tâche déclarée « sans réponse » à 16:20:01 puis
+    // « échouée : 1 sans réponse » à 16:20:15 — l'état était là, affiché à l'écran, et la tâche
+    // mourait quand même. Toute lecture d'état échouait ainsi, ce qui donne à l'usage l'impression
+    // d'une machine déconnectée alors que la liaison fonctionne.
+    //
+    // Apparié sur la commande, jamais largement : ces poussées sont aussi spontanées pendant une
+    // préparation, et valider un pas qui attend autre chose déclarerait lues des données jamais
+    // lues. Même quand le décodage échoue : la machine a répondu, c'est ce que le pas attendait.
+    apparier(m.file, { reponse: true, cmd: 0x75 }, Date.now());
     return;
   }
   if (name === "data_response") {

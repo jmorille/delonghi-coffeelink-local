@@ -219,5 +219,35 @@ test("le repli libère de la place : cinq demandes distinctes restent visibles",
   eq(new Set(vue(f).finies.map((t) => t.label)).size, 5, "cinq demandes distinctes");
 });
 
+console.log("\n— la réponse à 0x75 arrive en poussée de monitor, pas en data_response —");
+
+test("une poussée de monitor satisfait un pas 0x75", () => {
+  // Le défaut mesuré sur la machine : le pas « Présence » ne pouvait être satisfait que par un
+  // data_response, que la machine n'envoie pas pour cette commande — elle répond en poussant
+  // d302_monitor. État reçu et affiché à l'écran, tâche déclarée « sans réponse » puis échouée.
+  const f = nouvelleFile();
+  const pres = tache({ label: "Présence", rang: RANG.LECTURE, genre: "lecture",
+    pas: [pasTrame("Présence", "AAA=", { attente: "reponse", cmd: 0x75 })] });
+  enfiler(f, pres, 1000);
+  aServir(f, 1000);
+  eq(reponse(f, { reponse: true, cmd: 0x75 }, 2000)?.label, "Présence", "le monitor apparie le pas 0x75");
+  eq(pres.faits, 1, "pas fait");
+});
+
+test("un monitor SPONTANÉ ne valide pas un pas qui attend autre chose", () => {
+  // Pendant une préparation la machine pousse un monitor toutes les 1 à 3 s. Apparier largement
+  // déclarerait lus des compteurs jamais lus — le pire des résultats, silencieux et faux.
+  const f = nouvelleFile();
+  const st = tache({ label: "Statistiques", rang: RANG.LECTURE_BASSE, genre: "lecture",
+    pas: [pasTrame("Paramètres 3001", "AAA=", { attente: "reponse", cmd: 0xa2 })] });
+  enfiler(f, st, 1000);
+  aServir(f, 1000);
+  eq(reponse(f, { reponse: true, cmd: 0x75 }, 2000), null, "le monitor n'apparie pas le pas 0xA2");
+  eq(st.faits, 0, "pas intact");
+  // Sans cmd, comportement d'origine conservé : restreindre à l'aveugle ferait échouer des
+  // lectures qui fonctionnent aujourd'hui.
+  eq(reponse(f, { reponse: true }, 3000)?.label, "Statistiques", "un data_response non qualifié apparie encore");
+});
+
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

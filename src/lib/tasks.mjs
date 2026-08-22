@@ -84,8 +84,8 @@ export function pasLecture(nom, ms = DELAIS.prop) {
  * `attente` vaut `reponse` (la machine répondra) ou `fenetre` (elle n'a rien à répondre) — le
  * choix se déduit de l'octet de commande côté `server.mjs`, qui possède déjà la table.
  */
-export function pasTrame(nom, b64, { attente = "fenetre", ms = DELAIS.reponse, sustain = "monitor" } = {}) {
-  return { type: attente === "reponse" ? "reponse" : "fenetre", nom, trame: b64, sustain, ms, etat: "attente", servieA: null, repris: false };
+export function pasTrame(nom, b64, { attente = "fenetre", ms = DELAIS.reponse, sustain = "monitor", cmd = null } = {}) {
+  return { type: attente === "reponse" ? "reponse" : "fenetre", nom, trame: b64, sustain, ms, cmd, etat: "attente", servieA: null, repris: false };
 }
 
 /**
@@ -257,7 +257,18 @@ export function aServir(file, maintenant) {
  * seulement celle de tête : une tâche suspendue par une préemption peut très bien recevoir la
  * réponse qu'elle attendait, et la jeter serait perdre une lecture déjà payée.
  *
- * @param quoi {{prop?: string, reponse?: boolean}}
+ * `quoi.cmd` **restreint** l'appariement aux pas qui portent cette commande ECAM, et n'existe que
+ * pour un cas : la réponse à une demande de monitor (`0x75`) n'arrive PAS en `data_response`, elle
+ * arrive en poussée de propriété `d302_monitor` — mesuré, voir `doc/commandes-cafe.md`. Or ces
+ * poussées sont aussi **spontanées** : pendant une préparation la machine en émet une toutes les 1
+ * à 3 secondes. Les apparier largement validerait le pas d'une tâche qui attend tout autre chose —
+ * une lecture de statistiques, par exemple — avec des compteurs jamais lus déclarés lus.
+ *
+ * Sans `cmd`, le comportement est inchangé : un `data_response` apparie le premier pas `reponse`
+ * venu. C'est délibérément conservé, faute d'avoir vérifié la correspondance octet à octet pour
+ * toutes les commandes ; restreindre à l'aveugle ferait échouer des lectures qui fonctionnent.
+ *
+ * @param quoi {{prop?: string, reponse?: boolean, cmd?: number}}
  * @returns la tâche appariée, ou null
  */
 export function reponse(file, quoi, maintenant) {
@@ -265,7 +276,9 @@ export function reponse(file, quoi, maintenant) {
   for (const t of file.liste) {
     const p = t.pas[t.i];
     if (!p || p.etat !== "servi") continue;
-    const colle = quoi.prop ? p.type === "prop" && p.prop === quoi.prop : p.type === "reponse";
+    const colle = quoi.prop
+      ? p.type === "prop" && p.prop === quoi.prop
+      : p.type === "reponse" && (quoi.cmd === undefined || p.cmd === quoi.cmd);
     if (!colle) continue;
     p.etat = "fait";
     t.faits++;
