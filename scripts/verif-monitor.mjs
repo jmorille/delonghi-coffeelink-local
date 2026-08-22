@@ -184,7 +184,12 @@ const charger = (nom) =>
 // Le detecteur ne connait qu'UNE frontiere : nettoyage ou pas. Trois positions hors nettoyage
 // (mousse au cran courant, mousse au minimum, graduation « insert ») donnent une trame identique
 // octet pour octet — elles ne sont donc pas archivees, une capture en double ne prouve rien de
-// plus, mais le libelle ne doit jamais redire « mousse ».
+// plus.
+//
+// Le LIBELLE dit « mousse » et non « hors nettoyage » : c'est un choix d'interface, la position
+// de service normale plutot que le predicat exact. Le fait precis vit dans `doc/commandes-cafe.md`
+// et dans le commentaire de `monitor.mjs`. Ne pas en deduire que « insert » leverait un autre bit
+// — il leve celui-ci.
 // Les noms viennent de l'app et induisent en erreur — `CIOCCO_TANK` ne designe aucun bac a
 // chocolat sur ce modele, qui n'a pas de boisson chocolatee. Les LIBELLES, eux, doivent dire la
 // position ; sans cette assertion un « nettoyage » recolle au mauvais bit passerait inapercu,
@@ -200,7 +205,7 @@ const charger = (nom) =>
   // echouer une interversion des deux libelles, le piege exact que cette section documente.
   const lib = (x) => x.switches[0]?.label ?? "";
   ok("molette nettoyage : libellé « carafe à lait (nettoyage) »", lib(t[0]) === "carafe à lait (nettoyage)", lib(t[0]));
-  ok("molette hors nettoyage : libellé « carafe à lait (hors nettoyage) »", lib(t[1]) === "carafe à lait (hors nettoyage)", lib(t[1]));
+  ok("molette hors nettoyage : libellé « carafe à lait (mousse) »", lib(t[1]) === "carafe à lait (mousse)", lib(t[1]));
   ok("les deux libellés nomment la carafe", [lib(t[0]), lib(t[1])].every((l) => /^carafe à lait /.test(l)));
 }
 

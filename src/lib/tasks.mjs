@@ -118,6 +118,12 @@ export function tache({ label, rang = RANG.LECTURE, pas, cle = null, meta = null
     /** Pas menés à bien. */
     faits: 0,
     motif: null,
+    /**
+     * Combien de tâches de MÊME `cle` ce verdict résume. Voir `finir` : les terminées se replient
+     * comme le journal replie ses lignes identiques, et le compte est ce qui empêche « réussie »
+     * de faire oublier les quatre échecs qui l'ont précédée.
+     */
+    repetitions: 1,
   };
 }
 
@@ -159,6 +165,7 @@ export function vue(file) {
     pasCourant: t.etat === "encours" ? (t.pas[t.i]?.nom ?? null) : null,
     repris: t.pas.filter((p) => p.repris).length,
     motif: t.motif,
+    repetitions: t.repetitions ?? 1,
     creeA: t.creeA,
     demarreA: t.demarreA,
     finiA: t.finiA,
@@ -350,6 +357,30 @@ function finir(file, t, etat, motif, maintenant) {
   t.finiA = maintenant;
   const i = file.liste.indexOf(t);
   if (i >= 0) file.liste.splice(i, 1);
+  /**
+   * **Les terminées se replient sur leur `cle`, et seul le dernier verdict reste.**
+   *
+   * Une même `cle` désigne déjà LA MÊME demande — c'est ce qui fusionne deux tâches encore en
+   * attente. Le panneau « Activité » ne l'appliquait pas aux terminées, et le résultat était
+   * trompeur dans le cas le plus fréquent : un coupe-circuit annule toute la file d'un coup, donc
+   * cinq « Présence » échouées ou annulées ; la présence suivante réussit, mais elle n'occupe
+   * qu'une des cinq lignes et les quatre verdicts périmés restent à l'écran. Ils décrivaient un
+   * état de la machine qui n'existait plus.
+   *
+   * Le compte survit (`repetitions`), même règle que le repli du journal : une ligne repliée sans
+   * son compte se lit comme un incident isolé là où il y en a eu cinq. Ici il dit « il a fallu s'y
+   * reprendre », ce que le seul dernier verdict effacerait.
+   *
+   * **Sans `cle`, aucun repli** : c'est exactement la frontière que `cle` trace déjà — demander
+   * deux cafés n'est pas demander un café, et deux préparations gardent deux lignes.
+   */
+  if (t.cle) {
+    const j = file.finies.findIndex((x) => x.cle === t.cle);
+    if (j >= 0) {
+      t.repetitions = (file.finies[j].repetitions ?? 1) + 1;
+      file.finies.splice(j, 1);
+    }
+  }
   file.finies.unshift(t);
   file.finies.length = Math.min(file.finies.length, GARDE_FINIES);
 }

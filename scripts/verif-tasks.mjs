@@ -157,5 +157,54 @@ test("la vue distingue en cours, en attente et terminées", () => {
   eq(v.attente.map((t) => t.label), ["Autre"], "en attente");
 });
 
+console.log("");
+console.log("— repli des terminées —");
+// Cas reel signale sur /pilotage : un coupe-circuit annule toute la file d'un coup, donc cinq
+// « Presence » echouees ; la presence suivante reussit mais n'occupe qu'une des cinq lignes, et
+// les quatre verdicts perimes restent affiches alors qu'ils decrivent un etat revolu.
+const presence = () => tache({ label: "Présence", rang: RANG.LECTURE, pas: [pasLecture("p")], cle: "presence" });
+test("une même demande ne laisse qu'UN verdict, le dernier", () => {
+  const f = nouvelleFile();
+  for (let i = 0; i < 4; i++) {
+    enfiler(f, presence(), i * 100);
+    annuler(f, null, "muette", i * 100 + 50);
+  }
+  eq(vue(f).finies.length, 1, "une seule ligne");
+  eq(vue(f).finies[0].repetitions, 4, "le compte est gardé");
+  // Puis elle reussit : c'est CE verdict qui doit rester.
+  enfiler(f, presence(), 1000);
+  aServir(f, 1000);
+  reponse(f, { prop: "p" }, 1100);
+  tic(f, 1100);
+  eq(vue(f).finies.map((t) => [t.label, t.etat, t.repetitions]), [["Présence", "faite", 5]], "dernier verdict");
+});
+test("le repli ne masque pas une AUTRE demande", () => {
+  const f = nouvelleFile();
+  enfiler(f, presence(), 0);
+  enfiler(f, tache({ label: "Sommes", rang: RANG.LECTURE, pas: [pasLecture("s")], cle: "checksums" }), 0);
+  annuler(f, null, "muette", 50);
+  eq(vue(f).finies.map((t) => t.label), ["Sommes", "Présence"], "deux lignes distinctes");
+});
+test("sans clé, aucun repli : deux cafés font deux lignes", () => {
+  const f = nouvelleFile();
+  enfiler(f, commande("Préparer Espresso"), 0);
+  annuler(f, null, "annulée", 10);
+  enfiler(f, commande("Préparer Espresso"), 20);
+  annuler(f, null, "annulée", 30);
+  eq(vue(f).finies.map((t) => [t.label, t.repetitions]), [["Préparer Espresso", 1], ["Préparer Espresso", 1]], "deux lignes");
+});
+test("le repli libère de la place : cinq demandes distinctes restent visibles", () => {
+  const f = nouvelleFile();
+  for (const c of ["presence", "checksums", "reglages", "initiale", "profils"]) {
+    enfiler(f, tache({ label: c, rang: RANG.LECTURE, pas: [pasLecture("p")], cle: c }), 0);
+  }
+  annuler(f, null, "muette", 50);
+  // Une nouvelle presence se replie sur l'ancienne au lieu de chasser la plus vieille des cinq.
+  enfiler(f, presence(), 100);
+  annuler(f, null, "muette", 150);
+  eq(vue(f).finies.length, 5, "cinq lignes");
+  eq(new Set(vue(f).finies.map((t) => t.label)).size, 5, "cinq demandes distinctes");
+});
+
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

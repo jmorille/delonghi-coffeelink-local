@@ -295,6 +295,18 @@ returns `taskId` and `position`; `/api/status` returns `queue` (running / waitin
 `{action:"clear"}` cancels everything, or one task with `taskId`. Cancelled and failed tasks land in
 `finies` with their motive — they do not evaporate, which was the original defect.
 
+**`finies` folds on `cle`, keeping only the LAST verdict per request.** Reported from real use: the
+circuit breaker cancels the whole queue at once, so the five slots filled with five failed
+"Présence" lines; the next presence succeeded but occupied only one of them, and the four stale
+verdicts stayed on screen describing a state that no longer existed. Folding uses the key that
+already means "these two are the same request" — the one that merges two *pending* tasks — so
+nothing new decides what is a duplicate. **No key, no folding**: two dispenses keep two lines, which
+is the boundary `cle` already draws (asking for two coffees is not asking for one). The count
+survives as `repetitions` and `/pilotage` renders it `×5`, same rule as the journal's line folding:
+"réussie" without the count would erase the fact that it took five tries. It also makes the five
+slots hold five *distinct* requests instead of five copies of one. `verif-tasks.mjs` asserts all
+four behaviours against the reported scenario.
+
 **`POST /api/readall` reads everything the machine can tell us** — presence, model, checksums,
 profile names + favourite order, the active profile's beverage bounds and values, the six bean
 slots, and the full 62-counter sweep: **7 tasks, 90 steps**, all rank `LECTURE` so a user command
@@ -951,7 +963,11 @@ the position the knob happened to be in. Never both bits at once, which is what 
 preparations already showed unexplained: **three of the four carry `IFD_CARAFFE`** (the espresso,
 the macchiato and the hot milk) and **the fourth carries `CIOCCO_TANK`** (the second espresso). So
 it is not milk that raises the bit — a plain espresso raises it too — it is the knob:
-`espresso-veille` is the only capture recorded with the knob on clean. The enum names come from the app and mislead: `CIOCCO_TANK` names no chocolate tank
+`espresso-veille` is the only capture recorded with the knob on clean. **The UI label deliberately
+reads "carafe à lait (mousse)", shorter than the fact** — the normal service position rather than
+the exact predicate; the precise "anywhere but clean" lives in the docs and in `monitor.mjs`. Do
+not "correct" the label back, and do not infer from it that "insert" raises a different bit: it
+raises this one. `verif-monitor.mjs` pins both labels to the captured frames. The enum names come from the app and mislead: `CIOCCO_TANK` names no chocolate tank
 here, this model has no chocolate beverage at all. Keep the names, they are protocol; the *labels*
 say the knob position, and `verif-monitor.mjs` asserts both the frames and the labels
 (`scripts/captures/carafe-molette.json`). This supersedes the earlier correction in this file, which

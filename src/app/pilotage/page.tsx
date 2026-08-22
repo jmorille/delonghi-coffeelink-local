@@ -695,6 +695,18 @@ export default function Dashboard() {
                           {t(("state_" + tache.etat) as any)}
                         </span>
                         <span className="sub">{t("taskProgress", { faits: tache.faits, total: tache.total })}</span>
+                        {/* **Le compte des demandes repliées.** Les terminées se replient sur leur
+                            clé : une présence rejouée cinq fois ne laisse que son dernier verdict,
+                            les quatre précédents décrivant un état révolu. Mais le compte reste,
+                            même règle que le repli du journal juste en dessous — « réussie » sans
+                            « ×5 » ferait oublier qu'il a fallu s'y reprendre. Il vit dans la
+                            colonne de VALEUR : la colonne d'étiquette est bornée à 13 rem, une
+                            pastille y passe sous le label et se lit comme un second label. */}
+                        {tache.repetitions > 1 && (
+                          <span className="sub" title={t("taskRepeatsHint")}>
+                            {t("taskRepeats", { count: tache.repetitions })}
+                          </span>
+                        )}
                         {tache.nonLus > 0 && <span className="sub">{t("taskUnread", { count: tache.nonLus })}</span>}
                         {/* Le motif « muette » a une cause précise et une réparation précise : la
                             dire ici évite d'aller la chercher dans le journal. Mais **une seule
