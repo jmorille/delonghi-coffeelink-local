@@ -866,7 +866,13 @@ export default function Dashboard() {
       <section aria-labelledby="titre-apps">
       <h2 id="titre-apps">{tapps("heading")}</h2>
       <div className="card">
-        {!apps?.actif ? (
+        {/* Trois états, pas deux. Tant que `/api/apps` n'a pas répondu, on ne sait pas — et la
+            première version affichait « multiplexeur éteint » pendant ce temps, c'est-à-dire une
+            affirmation fausse sur un onglet fraîchement ouvert alors qu'une vraie application était
+            branchée. Même règle que le menu et son `lanKeySet === null` : l'inconnu ne se rend pas
+            comme le négatif. Une carte vide le temps d'un aller-retour vaut mieux qu'une phrase à
+            démentir. */}
+        {!apps ? null : !apps.actif ? (
           <>
             <p className="sub">{tapps("off")}</p>
             <p className="sub">{tapps("offHint")}</p>
@@ -921,33 +927,6 @@ export default function Dashboard() {
                   </div>
                 ))}
               </dl>
-            )}
-
-            {/* Le journal des applications, et non celui de la machine. La séparation est la
-                raison d'être du bloc : une application branchée bavarde — réannonces, sondes,
-                rediffusions d'état — et ce trafic, versé dans le journal principal, en chassait
-                en quelques secondes ce qu'on y cherche, à savoir ce que la cafetière a répondu.
-                Il vit ici, sous la liste qu'il raconte, plutôt que dans une section à lui : on
-                lit « qui est branché » puis « ce qu'ils ont dit » sans changer de regard. */}
-            <h3>{tapps("journalHeading")}</h3>
-            {!apps.journal?.length ? (
-              <p className="sub">{tapps("journalNone")}</p>
-            ) : (
-              <div className="log">
-                {apps.journal.map((e: any, i: number) => (
-                  <div key={e.n ?? i} className={e.dir}>
-                    [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
-                    {/* L'identifiant est une COLONNE, pas un préfixe de message : c'est ce qui
-                        permet de suivre un téléphone parmi trois. Pour un refus, il n'y a pas
-                        encore d'entrée au registre, et c'est l'adresse qui tient la place. */}
-                    {e.app ? ` · ${e.app}` : ""} · {e.msg}
-                    {/* Le serveur replie les lignes consécutives identiques (voir `LA()`), et une
-                        rediffusion d'état se répète toutes les 1 à 3 s pendant une préparation :
-                        sans ce compte, vingt envois se liraient comme un seul. */}
-                    {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
-                  </div>
-                ))}
-              </div>
             )}
           </>
         )}
@@ -1029,6 +1008,43 @@ export default function Dashboard() {
       <h2 id="titre-confirmations">{tconf("heading")}</h2>
       <ConfirmSettings />
       </section>
+
+      {/* Le journal des applications, en bloc autonome et jumeau de celui de la machine : même
+          `pleine`, même `card log`, même rendu de ligne. Ce sont deux chronologies de même rang —
+          ce que la cafetière a répondu d'un côté, ce que les téléphones ont demandé de l'autre —
+          et les lire côte à côte est précisément ce qu'on fait quand une commande d'application
+          n'aboutit pas. Sous-titre d'une carte, il se lisait comme une annexe de la liste ; il en
+          est le pendant. Il précède celui de la machine parce que la conversation avec le
+          téléphone est en amont : c'est elle qui déclenche ce que la machine finit par répondre.
+
+          Rendu seulement quand le multiplexeur est ACTIF, contrairement au panneau au-dessus : ce
+          dernier doit dire « nous ne regardons pas », ce qu'aucune ligne de journal ne peut dire.
+          Une fois cette phrase écrite là-haut, un journal vide ne ferait que la répéter, en moins
+          clair. */}
+      {apps?.actif && (
+        <section className="pleine" aria-labelledby="titre-journal-apps">
+        <h2 id="titre-journal-apps">{tapps("journalHeading")}</h2>
+        <div className="card log">
+          {!apps.journal?.length ? (
+            <p className="sub">{tapps("journalNone")}</p>
+          ) : (
+            apps.journal.map((e: any, i: number) => (
+              <div key={e.n ?? i} className={e.dir}>
+                [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
+                {/* L'identifiant est une COLONNE, pas un préfixe de message : c'est ce qui permet
+                    de suivre un téléphone parmi trois. Pour un refus, il n'y a pas encore d'entrée
+                    au registre, et c'est l'adresse qui tient la place. */}
+                {e.app ? ` · ${e.app}` : ""} · {e.msg}
+                {/* Le serveur replie les lignes consécutives identiques (voir `LA()`), et une
+                    rediffusion d'état se répète toutes les 1 à 3 s pendant une préparation : sans
+                    ce compte, vingt envois se liraient comme un seul. */}
+                {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
+              </div>
+            ))
+          )}
+        </div>
+        </section>
+      )}
 
       <section className="pleine" aria-labelledby="titre-journal">
       <h2 id="titre-journal">{t("journal")}</h2>

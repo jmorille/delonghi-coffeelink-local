@@ -977,6 +977,35 @@ function describeFrame(ecamB64) {
 }
 
 /**
+ * La charge d'une écriture, **telle quelle** : hexadécimal complet et base64 d'origine.
+ *
+ * Sert au journal des applications, et pour une raison de méthode. `describeFrame()` est un outil
+ * de lecture : il nomme l'opération et **retire les 4 octets d'horodatage** parce que ce ne sont
+ * pas des octets de commande. C'est le bon choix quand on sait ce qu'on regarde. Ça devient le
+ * mauvais dès qu'on ne sait pas : un outil qui a déjà décidé quoi jeter ne peut plus rien
+ * apprendre, et ce projet s'est déjà fait prendre — voir `/regtoken.json`, où reconstruire la
+ * réponse « évidente » revenait à parier sur une liste de champs qu'on ne connaissait pas.
+ *
+ * Donc ici : aucun retrait, aucune interprétation. Les deux formes parce qu'elles ne servent pas à
+ * la même chose — l'hexadécimal se lit et se compare aux tables de `doc/commandes-cafe.md`, le
+ * base64 se recolle tel quel dans un test ou un rejeu. Borné, parce qu'une ligne de journal reste
+ * une ligne de journal ; la coupe est DITE plutôt que silencieuse.
+ */
+function chargeBrute(valeur, max = 120) {
+  const b64 = String(valeur ?? "");
+  if (!b64) return "charge vide";
+  let hex;
+  try {
+    const buf = Buffer.from(b64, "base64");
+    hex = buf.subarray(0, max).toString("hex").replace(/(..)/g, "$1 ").trim();
+    if (buf.length > max) hex += ` … (+${buf.length - max} octets)`;
+  } catch {
+    return `charge non décodable · b64 ${b64.slice(0, max)}`;
+  }
+  return `brut ${hex} · b64 ${b64.length > max ? `${b64.slice(0, max)}…` : b64}`;
+}
+
+/**
  * Le profil que vise une trame, ou `null` si elle n'en vise aucun.
  *
  * Existe pour le multiplexeur, et pour une raison concrète : la **toute première** commande qu'une
@@ -1394,7 +1423,12 @@ async function executerPourApp(m, app, intention) {
       // écrirait autre chose se verrait ignorée plutôt que devinée : `m.send` est la propriété
       // qui porte les trames ECAM, et c'est la seule dont nous sachions ce qu'elle déclenche.
       if (intention.nom !== m.send) {
-        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)`, app, m);
+        // Ignorée pour l'appareil, PAS pour le journal : la charge est relevée telle quelle. Une
+        // propriété que nous ne relayons pas est, par définition, du protocole que nous ne
+        // connaissons pas encore — c'est-à-dire exactement ce qu'on vient chercher ici. La jeter
+        // sans la montrer, c'était perdre la seule occasion de la voir : l'application officielle
+        // est le seul émetteur au monde à produire ces trames-là, et elle ne les rejoue pas.
+        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée) · ${chargeBrute(intention.valeur)}`, app, m);
         return;
       }
       app.commandes++;
@@ -1428,7 +1462,10 @@ async function executerPourApp(m, app, intention) {
       return;
     }
     default:
-      LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 160)}`, app, m);
+      // 400 et non 160 : cette ligne est le seul endroit où une demande que nous ne savons pas
+      // interpréter laisse une trace, et une demande tronquée à 160 caractères ne s'analyse pas.
+      // C'est de la matière de rétro-ingénierie, pas un accusé de réception.
+      LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 400)}`, app, m);
   }
 }
 

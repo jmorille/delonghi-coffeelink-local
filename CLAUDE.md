@@ -1236,7 +1236,18 @@ which the page would not know there is anything new), with one difference: the a
 **column**, not a message prefix, which is what lets you follow one phone among three. It accepts a
 registry entry *or* a bare address, because refusals happen before an entry exists — and those are
 the ones you most want to see. It travels on `GET /api/apps`, which `/pilotage` already polls, so
-tracing costs no extra request, and renders inside the same panel, under the list it narrates.
+tracing costs no extra request.
+
+**It renders as its own full-width section, the twin of the machine journal** — same `pleine`, same
+`card log`, same line rendering — and sits immediately *above* it. Two chronologies of equal rank:
+what the coffee machine answered on one side, what the phones asked on the other, and reading them
+side by side is exactly what one does when an app command does not go through. As a sub-heading
+inside the "Applications branchées" card it read as an appendix to the list; it is that list's
+counterpart. It comes first because the phone's conversation is upstream — it is what triggers
+whatever the machine ends up answering. Unlike the panel above it, it is rendered **only when the
+multiplexer is active**: that panel has to be able to say "we are not looking", which no journal
+line can say, and once that sentence is on screen an empty journal would only repeat it, less
+clearly.
 
 One line is deliberately written to **both**: `app aN a imposé le profil P`. The active profile is
 a state of the *appliance*, so it belongs to the machine's chronology; and a third party decided
@@ -1247,6 +1258,23 @@ duplicate: the first says who wanted it, the second says what became of it.
 Writing that journal is also what finally made the **state re-broadcast** visible: the very heart of
 the multiplexer — one real read, N recipients — was logged nowhere, surviving only as a cumulative
 counter. It is also the only trace of what an application RECEIVED from us.
+
+**Treat it as a reverse-engineering instrument, not just a status panel.** The official app is the
+only emitter in the world that produces frames we have never seen, and it does not replay them — so
+whatever is not captured as it goes past is lost. Two consequences already in the code. A write to a
+property we do not relay is ignored *for the appliance* but **not for the journal**: its payload is
+recorded verbatim by `chargeBrute()`, where the line used to name the property and drop the bytes —
+and a property we do not relay is by definition protocol we do not yet know, i.e. exactly what one
+comes here for. And `chargeBrute()` deliberately does **no** interpretation, unlike `describeFrame()`
+which strips the 4 trailing timestamp bytes: stripping is right when you know what you are looking
+at and wrong the moment you do not, because a tool that has already decided what to discard can no
+longer teach you anything (same lesson as `/regtoken.json`, where rebuilding the "obvious" response
+meant betting on a field list nobody knew). It prints both hex — to compare against the tables in
+`doc/commandes-cafe.md` — and the original base64, which pastes straight into a test or a replay,
+with the truncation **stated** rather than silent. For the same reason an unrecognised request is
+logged at 400 characters, not 160: a request truncated to 160 cannot be analysed. The other half of
+the round trip — what the machine answered — stays in the machine journal by the boundary above; the
+two sections sit one under the other precisely so the correlation is a glance.
 
 ⚠️ **`scripts/faux-app.mjs` must stay faithful on the response bodies, and one line proves why.** It
 used to answer `datapoint.json` with an `encapsulate("{}")`, where the real SDK returns an **empty**
