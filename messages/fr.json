@@ -185,7 +185,12 @@
     "paramDefaultBool": "défaut {on, select, 1 {activé} other {désactivé}}",
     "paramDefaultHint": "Valeur d'usine du modèle pour ce paramètre — cliquer pour la remettre.",
     "noParamDefault": "pas de défaut",
-    "noParamDefaultHint": "Le modèle ne donne pas de défaut utilisable pour ce paramètre (hors bornes, jamais configuré) : à régler à la main."
+    "noParamDefaultHint": "Le modèle ne donne pas de défaut utilisable pour ce paramètre (hors bornes, jamais configuré) : à régler à la main.",
+    "groupCoffee": "Café",
+    "groupMilk": "Lait",
+    "ingredientsHint": "Cochez un ingrédient pour ouvrir ses réglages. Décoché, il part à zéro : c'est ainsi que la machine enregistre « absent ».",
+    "noIngredient": "Ni café ni lait : cette recette ne verserait rien.",
+    "noWaterHere": "Pas d'eau chaude ni de thé ici : pour un emplacement perso, la cafetière ne déclare que le café, le lait et leurs options."
   },
   "settings": {
     "heading": "Réglages de la machine",

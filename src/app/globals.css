@@ -1397,3 +1397,11 @@ button.danger.discret { color: var(--danger-text); border-color: var(--danger-ed
    l'aire et faisait passer la cible sous les 44 px sur un axe. Le mauvais échange : ce qui rend ce
    groupe bruyant n'est pas sa taille, c'est le remplissage du segment actif — donc un poids de
    couleur, et ça appartient à la passe couleur, pas à celle-ci. Les 44 px sont rétablis. */
+
+/* **Un ingrédient d'une recette perso : sa case, puis ses réglages en retrait.**
+   Le filet à gauche relie visuellement les réglages à la case qui les a ouverts — sans lui, cocher
+   « Lait » fait apparaître trois lignes qui flottent au même niveau que celles du café. Le retrait
+   seul ne suffit pas : les lignes de réglage ont déjà leur propre gouttière. */
+.blocIngredient { margin: var(--s-3) 0; }
+.blocIngredient > .caseLibelle { font-weight: 600; }
+.blocIngredient > .paramRow { margin-left: var(--s-4); border-left: 2px solid var(--border); padding-left: var(--s-3); }

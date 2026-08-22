@@ -1511,6 +1511,58 @@ function BeverageCard({
  * Le regroupement « recette » / « avancé » est cosmétique : une première version filtrait sur
  * notre propre classification et masquait de vraies options (« 2 tasses », « accessoire »).
  */
+/**
+ * **Une quantité nulle veut dire « ingrédient absent », et l'option qui en dépend vaut 255.**
+ *
+ * Mesuré sur les six emplacements perso de la machine, profil 1 :
+ *
+ * ```
+ * Lacteso     café   0  arôme 255  lait 100     ← une recette SANS café
+ * Mini Lait   café  20  arôme   0  lait 113     ← les deux
+ * test TT     café   0  arôme 255  lait  50
+ * Perso 4-6   café   0  arôme 255  lait   0     ← emplacements vides
+ * ```
+ *
+ * C'est aussi la règle de l'application : `Q6.g.i()` n'ajoute le bloc café — quantité puis
+ * `TASTE` — que `if (recipeData.k() > 0)`. Cocher un ingrédient, c'est lui donner une quantité.
+ *
+ * ⚠️ **255 (0xFF) est le marqueur « sans objet », et il vaut aussi pour les VALEURS enregistrées,**
+ * pas seulement pour les défauts du modèle comme la doc le notait. Il tombe hors des bornes
+ * (`TASTE` va de 0 à 5), donc `valeurProfil` le rejetait et l'éditeur repartait du minimum : il
+ * affichait « Arôme 0 » pour une recette sans café, et **réécrivait 0 à la place de 255**. Une
+ * altération silencieuse d'un marqueur que la machine avait posé elle-même.
+ */
+const QUANTITE_ABSENTE = 0;
+const OPTION_SANS_OBJET = 255;
+
+/**
+ * Les ingrédients d'une recette perso, et les réglages que chacun ouvre.
+ *
+ * ⚠️ **Il n'y a ni eau chaude ni thé, et ce n'est pas une omission.** Pour les six emplacements
+ * perso, la machine déclare exactement `[1, 2, 4, 9, 12, 24, 25, 28]` — ni `HOT_WATER` (15) ni
+ * `THE_TEMP` (13). Deux sources indépendantes le disent : la trame `0xB0` lue sur l'appareil pour
+ * les six emplacements, et la table du catalogue extraite de l'APK. Les bornes sont d'ailleurs
+ * **identiques sur un emplacement vide et sur un emplacement configuré**, donc ce jeu ne dépend
+ * pas du contenu : il est fixé par le modèle. Que « Eau chaude » (16) existe comme boisson ne
+ * change rien — la liste des paramètres est attachée à la BOISSON, elle ne se compose pas.
+ *
+ * L'application officielle n'offre donc rien pour le thé pour la même raison, et c'est une limite
+ * de la cafetière, pas de son logiciel.
+ *
+ * `INVERSION` (12) et `ACCESSORIO` (28) sont rangés avec le lait : l'ordre lait/café n'a de sens
+ * qu'avec du lait, et `ACCESSORIO` n'apparaît que sur les boissons lactées (16 sur 16, absent des
+ * 12 autres). Un paramètre qui ne tombe dans aucun groupe reste rendu normalement — il ne doit
+ * jamais DISPARAÎTRE parce qu'une table le passe sous silence.
+ */
+const INGREDIENTS = [
+  // `BLEND` (4) suit le CAFÉ, mesuré : les deux recettes réelles sans café (« Lacteso », « test TT »)
+  // le portent à 255 comme `TASTE`, celle qui a du café l'a à 0. Il n'est pas réglable sur ce modèle
+  // (`min == max == 0`) donc il n'affiche aucun contrôle — mais il part quand même dans la trame,
+  // et il doit y partir avec la valeur que la machine y met elle-même.
+  { cle: "cafe", quantite: 1, options: [2, 4] },
+  { cle: "lait", quantite: 9, options: [12, 28] },
+] as const;
+
 function RecipeEditor({
   bev,
   profile,
@@ -1559,6 +1611,19 @@ function RecipeEditor({
   const [vals, setVals] = useState<Record<number, number>>(seed);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  /**
+   * Un emplacement perso se règle par INGRÉDIENT, comme l'écran de création de l'application :
+   * on coche le lait et sa quantité s'ouvre, on coche le café et sa quantité plus son arôme
+   * s'ouvrent. La présence n'a pas d'état à elle — elle se LIT dans la quantité enregistrée, ce
+   * qui évite d'avoir deux sources de vérité à tenir d'accord.
+   */
+  const estPerso = bev.customSlot !== null && bev.customSlot !== undefined;
+  const presenceInitiale = () =>
+    Object.fromEntries(
+      INGREDIENTS.map((g) => [g.cle, (bev.values?.params.find((x) => x.id === g.quantite)?.value ?? 0) > 0]),
+    ) as Record<string, boolean>;
+  const [presents, setPresents] = useState<Record<string, boolean>>(presenceInitiale);
+
   if (!bev.bounds) {
     return <Alerte>{t("boundsNotRead")}</Alerte>;
   }
@@ -1570,13 +1635,68 @@ function RecipeEditor({
     );
   }
 
-  const params: RecipeParam[] = all.map((b) => ({ id: b.id, value: vals[b.id] ?? seedFor(b) }));
+  /** Le groupe auquel un paramètre appartient, ou `null` — seulement pour un emplacement perso. */
+  const groupeDe = (id: number) =>
+    estPerso ? INGREDIENTS.find((g) => g.quantite === id || (g.options as readonly number[]).includes(id)) ?? null : null;
+
+  /**
+   * Ce qui part dans la trame. Un ingrédient décoché n'est pas « omis » : il est écrit ABSENT,
+   * avec la convention de la machine elle-même — quantité 0, option 255. Omettre le paramètre
+   * laisserait l'ancienne valeur en place, donc l'ingrédient présent.
+   */
+  const valeurEnvoyee = (b: Param): number => {
+    const g = groupeDe(b.id);
+    if (g && !presents[g.cle]) return g.quantite === b.id ? QUANTITE_ABSENTE : OPTION_SANS_OBJET;
+    return vals[b.id] ?? seedFor(b);
+  };
+  const params: RecipeParam[] = all.map((b) => ({ id: b.id, value: valeurEnvoyee(b) }));
+
+  /**
+   * Cocher ou décocher un ingrédient.
+   *
+   * En le rallumant on redonne une valeur utilisable à ses réglages : celle enregistrée est le
+   * marqueur d'absence (0, ou 255 pour une option) et tombe hors des bornes, donc la laisser
+   * afficherait un curseur au mauvais bout de sa course. Le défaut du modèle d'abord, le minimum
+   * sinon — la même règle que `valeurDepart`, pas une seconde.
+   */
+  const basculerIngredient = (g: (typeof INGREDIENTS)[number], actif: boolean) => {
+    setPresents((prec) => ({ ...prec, [g.cle]: actif }));
+    if (!actif) return;
+    setVals((v) => {
+      const suite = { ...v };
+      for (const b of all) {
+        if (b.id !== g.quantite && !(g.options as readonly number[]).includes(b.id)) continue;
+        const cur = v[b.id];
+        if (cur === undefined || cur < (b.min as number) || cur > (b.max as number)) {
+          suite[b.id] = defautModele(b) ?? (b.min as number);
+        }
+      }
+      return suite;
+    });
+  };
+
+  /** Les groupes que ce modèle déclare réellement — un ingrédient sans paramètre n'existe pas. */
+  const groupes = INGREDIENTS.map((g) => ({
+    g,
+    qte: basic.find((b) => b.id === g.quantite) ?? null,
+    opts: basic.filter((b) => (g.options as readonly number[]).includes(b.id)),
+  })).filter((x) => x.qte !== null);
+  /** Ce qu'aucun groupe ne couvre reste rendu tel quel : rien ne doit disparaître par oubli. */
+  const horsGroupe = basic.filter((b) => groupeDe(b.id) === null);
+  const aucunIngredient = groupes.length > 0 && groupes.every((x) => !presents[x.g.cle]);
+  // Deux appels littéraux plutôt qu'une clé construite : `verif-messages.mjs` ne sait vérifier
+  // que les littéraux, et une clé dynamique lui échapperait silencieusement.
+  const nomGroupe = (cle: string) => (cle === "cafe" ? t("groupCoffee") : t("groupMilk"));
   const set = (b: Param, raw: number) =>
     setVals((v) => ({
       ...v,
       [b.id]: Math.min(b.max as number, Math.max(b.min as number, Number.isFinite(raw) ? raw : (b.min as number))),
     }));
-  const dirty = adjustable.some((b) => vals[b.id] !== seedFor(b));
+  const dirty =
+    adjustable.some((b) => vals[b.id] !== seedFor(b)) ||
+    // Décocher un ingrédient ne touche à aucun curseur : sans ça, « réinitialiser » resterait
+    // grisé alors que la recette a bel et bien changé.
+    INGREDIENTS.some((g) => presents[g.cle] !== presenceInitiale()[g.cle]);
 
   /**
    * Retour aux défauts du modèle — distinct de « réinitialiser », qui revient à ce que le profil a
@@ -1718,7 +1838,14 @@ function RecipeEditor({
             </span>
           )}
           {dirty && (
-            <button className="iconBtn" onClick={() => setVals(seed)} title={t("resetTitle")}>
+            <button
+              className="iconBtn"
+              onClick={() => {
+                setVals(seed);
+                setPresents(presenceInitiale());
+              }}
+              title={t("resetTitle")}
+            >
               <Icone nom="reinitialiser" />
               <span className="lbl">{tc("reset")}</span>
             </button>
@@ -1735,7 +1862,39 @@ function RecipeEditor({
         </div>
       </div>
 
-      {basic.map(reglage)}
+      {/* **Un emplacement perso se règle par ingrédient**, comme l'écran de création de
+          l'application : on coche, et les réglages de cet ingrédient s'ouvrent. Les boissons du
+          catalogue gardent la liste à plat — leurs ingrédients ne se choisissent pas. */}
+      {estPerso ? (
+        <>
+          <p className="chapeau">{t("ingredientsHint")}</p>
+          {groupes.map(({ g, qte, opts }) => (
+            <div className="blocIngredient" key={g.cle}>
+              <label className="caseLibelle">
+                <input
+                  type="checkbox"
+                  checked={!!presents[g.cle]}
+                  onChange={(e) => basculerIngredient(g, e.target.checked)}
+                />
+                <span>{nomGroupe(g.cle)}</span>
+              </label>
+              {presents[g.cle] && (
+                <>
+                  {reglage(qte as Param)}
+                  {opts.map(reglage)}
+                </>
+              )}
+            </div>
+          ))}
+          {horsGroupe.map(reglage)}
+          {/* Averti, pas interdit : rien dans le protocole ne dit qu'une recette vide est refusée,
+              et inventer ce refus serait ajouter une règle que la machine n'a pas énoncée. */}
+          {aucunIngredient && <Alerte>{t("noIngredient")}</Alerte>}
+          <p className="sub">{t("noWaterHere")}</p>
+        </>
+      ) : (
+        basic.map(reglage)
+      )}
 
       {fixed.map((b) => (
         <div className="paramRow" key={b.id}>
