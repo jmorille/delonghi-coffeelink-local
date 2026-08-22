@@ -1310,6 +1310,14 @@ function machinePourApp(dsn) {
  * supercherie, l'application ayant obtenu la même clé du cloud pour ce DSN.
  */
 async function ouvrirSessionApp(m, app) {
+  // ⚠️ **Un seul échange en vol par application**, même idiome que `app.sondeEnCours` et pour la
+  // même raison : deux échanges concurrents produisent deux flux AES dont un seul survit à
+  // `etablir`, tandis que l'application peut très bien retenir l'autre. Rien ne lève d'erreur —
+  // elle obtiendrait des octets plausibles et illisibles, et sa session « cesserait de répondre ».
+  // Le cas est atteignable : l'échange initial dure jusqu'à son délai (5 s mesurées sur un vrai
+  // téléphone) et une annonce peut tomber pendant ce temps — la voie `nouvelle` ne posant pas
+  // `relanceA`, le verrou de 15 s ne la couvrait pas.
+  app.echangeEnCours = true;
   try {
     const random1 = token(16);
     const time1 = String(Math.floor(Date.now() / 1000));
@@ -1324,6 +1332,8 @@ async function ouvrirSessionApp(m, app) {
     app.dernierMotif = "echecEchange";
     refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
     LA("out", `échange de clés échoué — ${e.message}`, app, m);
+  } finally {
+    app.echangeEnCours = false;
   }
 }
 
@@ -1375,7 +1385,14 @@ const MAX_BLOCS_ENCHAINES = 12;
 const FRAICHEUR_LECTURE_APP = 10000;
 
 async function sonderApp(m, app) {
-  if (app.etat !== "etablie" || !app.session) return;
+  if (app.etat !== "etablie" || !app.session) {
+    // **La sonde est la seule horloge de ce côté ; elle sert donc aussi à réparer.** Elle
+    // repartait à vide sur une entrée sans session, ce qui laissait un échange de clés raté sans
+    // aucune seconde chance. Le verrou de 15 s de `reprendreSessionApp` fait le débit ; ici on
+    // ne fait que lui donner le tempo, sans minuterie supplémentaire à armer ni à désarmer.
+    reprendreSessionApp(m, app);
+    return;
+  }
   if (app.sondeEnCours) return;
   app.sondeEnCours = true;
   try {
@@ -1687,7 +1704,57 @@ const DELAI_RELANCE_APP = 15_000;
  * Rouvrir est donc la seule issue, et c'est sans risque pour l'appareil : un échange de clés ne
  * touche pas la cafetière, il ne recrée que le chiffrement entre l'application et nous.
  */
+/**
+ * **Reprendre une session ABSENTE — le pendant manquant de `relancerSessionApp`.**
+ *
+ * Les deux fonctions se ressemblent et ne traitent pas la même situation, ce qui est exactement
+ * pourquoi il en faut deux : `relancerSessionApp` jette un flux VIVANT devenu illisible,
+ * celle-ci essaie d'en rouvrir un qui n'existe plus.
+ *
+ * ⚠️ **Sans elle, un échange de clés raté était DÉFINITIF.** Relevé en direct sur un vrai
+ * téléphone :
+ *
+ * ```
+ * 21:15:04  sonde expirée, réponse peut-être perdue — nouvel échange de clés
+ * 21:15:09  échange de clés échoué — délai dépassé
+ * 21:16:31  muette depuis 90 s, oubliée
+ * ```
+ *
+ * Entre les deux dernières lignes, 82 secondes pendant lesquelles l'application était là — elle
+ * continuait à s'annoncer — et où nous n'avons rien tenté. Deux impasses s'y ajoutaient :
+ *
+ *   1. `sonderApp` sort immédiatement quand la session manque, donc la sonde de 2 s, seule
+ *      horloge de ce côté, tournait à vide sur une entrée morte au lieu de la réparer ;
+ *   2. une nouvelle annonce ne déclenche l'échange que `if (nouvelle)` — or l'entrée existait
+ *      déjà, donc le téléphone pouvait s'annoncer indéfiniment sans que rien ne reparte.
+ *
+ * Le symptôme visible était le pire des deux mondes : `/pilotage` affichait une application
+ * branchée, avec son `User-Agent` et ses compteurs, qui ne pouvait plus rien recevoir.
+ *
+ * ⚠️ **Cela ne contredit pas « un PUT ne doit JAMAIS déclencher d'échange de clés ».** Cette
+ * règle protège un flux AES sur lequel l'application est en train de lire : le remplacer sous
+ * elle la ferait décrocher. Ici il n'y a **rien à casser** — `session` est nul, il n'existe
+ * aucun flux. La garde en première ligne rend la distinction exécutable plutôt que verbale.
+ *
+ * Le même verrou de 15 s que `relancerSessionApp` : au pire une tentative toutes les 15 s, et
+ * l'expiration à 90 s emporte de toute façon l'entrée si le téléphone est vraiment parti. Les
+ * tentatives sont donc bornées à cinq environ, sans compteur à tenir.
+ */
+function reprendreSessionApp(m, app, motif = null) {
+  // Jamais sur un flux vivant : c'est `relancerSessionApp` qui traite ce cas, et lui seul.
+  if (app.etat === "etablie" && app.session) return false;
+  if (app.echangeEnCours) return false;
+  const maintenant = Date.now();
+  if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return false;
+  app.relanceA = maintenant;
+  if (motif) LA("sys", motif, app, m);
+  app.etat = "annoncee";
+  ouvrirSessionApp(m, app).catch(() => {});
+  return true;
+}
+
 function relancerSessionApp(m, app, motif = "flux illisible") {
+  if (app.echangeEnCours) return;
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
   app.relanceA = maintenant;
@@ -2060,6 +2127,13 @@ async function handleAppReg(req, res) {
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.
     ouvrirSessionApp(m, app).catch(() => {});
+  } else if (!app.session || app.etat !== "etablie") {
+    // **Une annonce reçue sur une entrée SANS session est le signal de réparation le plus sûr
+    // qui soit** : l'application vient de dire elle-même qu'elle est là et qu'elle écoute. Le
+    // test `if (nouvelle)` au-dessus ne couvrait que la première annonce, si bien qu'après un
+    // échange raté le téléphone pouvait s'annoncer cent fois sans que rien ne reparte.
+    // Passe avant `notify` : sans session, aucune commande ne peut être servie de toute façon.
+    reprendreSessionApp(m, app, "annonce reçue sans session — nouvelle tentative d'échange de clés");
   } else if (reg.notify) {
     // `notify: 1` veut dire « j'ai quelque chose pour toi ». Aller le chercher tout de suite,
     // plutôt que d'attendre le prochain tour de sonde, est ce qui rend l'app réactive.
@@ -2338,7 +2412,11 @@ function readNames(store, kind) {
 function machineBeverageNames(store) {
   const out = {};
   for (const [slot, entry] of Object.entries(readNames(store, "customNames"))) {
-    if (entry?.name) out[229 + Number(slot)] = { name: entry.name, icon: entry.icon, prop: entry.prop, source: "recette perso" };
+    // L'EMPLACEMENT voyage avec l'entrée. C'est lui qu'attend `0xAB` (`V0(slot, slot, …)` dans
+    // l'app, `d.f0` ensuite), et le 229 qui le relie à l'identifiant de boisson est une constante
+    // de protocole : la recalculer côté client en ferait une seconde source de vérité, à
+    // diverger au premier modèle qui décale la plage.
+    if (entry?.name) out[229 + Number(slot)] = { slot: Number(slot), name: entry.name, icon: entry.icon, prop: entry.prop, source: "recette perso" };
   }
   return out;
 }
@@ -4016,7 +4094,23 @@ async function handleApi(req, res) {
         catalogLabel: b.label, // libellé générique conservé pour référence
         machineName: named?.name ?? null,
         machineNameProp: named?.prop ?? null,
+        /**
+         * **L'octet d'icône EST l'index 0-19 dans la liste du sélecteur de l'app** — vérifié de
+         * bout en bout dans son code, sans rien écrire sur l'appareil :
+         *
+         * 1. `CreateBeverageViewModel.J()` construit 20 images ; la sélectionnée est celle dont
+         *    la **position** vaut `gVar.n()`.
+         * 2. `Q6.g.n()` rend `f6459b`, que le `toString` de la classe nomme `recipeImageIndex`.
+         * 3. À la validation, `m0()` appelle `f0(idBoisson, nom, gVar2.n())`.
+         * 4. `DeLonghiWifiConnectService.f0` le journalise `"saveRecipeName … iconIndex:"` et le
+         *    passe à `p097j6.d.f0`, qui pose `bArr[2] = 0xAB` puis l'octet 20 de l'entrée.
+         *
+         * C'est exactement l'octet que `decodeNames` rend ici. Non nul pour les seules recettes
+         * perso : `machineBeverageNames` ne couvre qu'elles.
+         */
         icon: named?.icon ?? null,
+        /** Emplacement perso 1-6, ou `null`. C'est l'index qu'attend `POST /api/profiles/name`. */
+        customSlot: named?.slot ?? null,
         boundsProp,
         valuesProp,
         bounds,
@@ -4521,10 +4615,44 @@ async function handleApi(req, res) {
       rang: RANG.COMMANDE,
       i18n: { k: perso ? "renameCustom" : "renameProfile", p: { index, nom } },
     });
+    /**
+     * **La machine ne repousse RIEN après un `0xAB` / `0xA5`, et il faut donc relire.**
+     *
+     * Constaté en direct : la tâche d'écriture finit « faite », l'appareil affiche bel et bien la
+     * nouvelle icône — et notre cache garde l'ancienne, indéfiniment. Rapporté tel quel : « l'image
+     * est changée sur la machine mais pas dans l'application ».
+     *
+     * ⚠️ C'est l'INVERSE de `0x83`, qui pousse spontanément les cinq profils après une écriture de
+     * recette (voir `beverages.mjs`, § recettes perso par profil). Rien ne laissait deviner cette
+     * asymétrie, et son coût est le pire qui soit pour une écriture : elle réussit, et la page
+     * continue d'affirmer le contraire — sans le moindre signe que la valeur affichée est périmée.
+     *
+     * On ne relit QUE le bloc qui contient l'index écrit, pas les quatre propriétés de la famille :
+     * c'est le même raisonnement que pour l'écriture, qui ne touche qu'une entrée. Rang `LECTURE`,
+     * donc une commande passe devant — et la relecture reste derrière l'écriture qu'elle suit,
+     * puisque `enfiler` insère avant la première tâche de rang STRICTEMENT inférieur.
+     *
+     * Aucun `checksumMark` n'est posé au passage, volontairement : `startImport` n'en pose pas, et
+     * marquer les noms « à jour » ici risquerait de supprimer une relecture ultérieure. Une lecture
+     * redondante ne coûte qu'un aller-retour ; une lecture supprimée à tort n'est récupérable
+     * qu'avec `force: true`.
+     */
+    const famille = perso ? CUSTOM_NAME_PROPS : PROFILE_NAME_PROPS;
+    const bloc = famille
+      .filter((x) => x.stride === STRIDE_CLASSIC && x.first <= index)
+      .sort((a, b) => b.first - a.first)[0] ?? null;
+    const relecture = bloc
+      ? startImport(m, [bloc.prop], 0, { i18n: { k: "readOne", p: { prop: bloc.prop } } })
+      : null;
+
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true, kind: perso ? "custom" : "profile", index, name: nom, icon: icone,
       frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      // Le client sait ainsi qu'une relecture suit, et laquelle : sans elle il afficherait
+      // l'ancienne valeur en croyant l'écriture sans effet.
+      reread: bloc?.prop ?? null,
+      rereadTaskId: relecture?.taskId ?? null,
       register: reg, ...tacheRendue(t),
     }));
   }

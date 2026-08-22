@@ -441,8 +441,28 @@ not in nature. It asks **no confirmation**, unlike the three
 above it: the question it used to pose warned about queueing seven tasks at once, back when each new
 request destroyed the previous one. The queue removed that risk — the tasks stack at rank `LECTURE`,
 a command overtakes them, "Activité" shows them one by one and each carries its own "Annuler". The
-confirmations that remain guard a gesture that reaches the appliance (a hot-water rinse, a
-persistent write) and that no queue can undo afterwards; this one only asks.
+confirmations that remain guard a gesture that reaches the appliance and that no queue can undo
+afterwards; this one only asks.
+
+⚠️ **"Persistent write" is no longer one of those gestures, by the owner's explicit decision.**
+"Écrire dans le profil" (`0x83` / `SAVE_BEVERAGE`, on both `/` and `/recipes`) and "Enregistrer
+l'image" (`0xAB`) now fire on the click. Three things about how that was done, because each is
+the difference between a change and a regression:
+
+- **The warning moved, it did not vanish.** `editor.writeTitle` already said "Remplace durablement
+  la recette de ce profil… La valeur précédente est perdue" in the button's tooltip; the other two
+  buttons gained one carrying the same text (`beverages.imageConfirmWarning`,
+  `recipes.writeToProfileWarning`). Removing the **interruption** is what was asked; removing the
+  **fact** would have been a second, unasked change.
+- **Both pages moved together.** `/` and `/recipes` write the same frame through the same
+  endpoint; leaving one of them asking would have made one gesture behave two ways depending on
+  the page — the exact divergence this file warns about everywhere else.
+- **The `Geste` list stayed closed.** These two did NOT become disableable preferences in
+  `confirmPrefs.ts`; they simply have no dialogue any more. The renounceable set is still
+  `power` / `dispense` and still defaults to asking. That module's own comment used to assert
+  that a profile write "ne doit jamais" lose its dialogue — it was corrected in the same commit,
+  because **a comment stating an invariant has to fall with the invariant**; left standing it
+  would promise the next reader a guarantee the code no longer offers.
 
 **`L()` folds consecutive identical lines instead of writing them again.** Measured on a real
 circuit-breaker run: 24 of the last 30 journal lines were `local_reg erreur: socket hang up`, and
@@ -573,11 +593,11 @@ has **no** default to offer: it is labelled "pas de défaut" and left untouched 
 rather than forced to `min`. Both resets are local — nothing reaches the machine until "Préparer" or
 "Écrire"), `/profils` (imports profile names/icons, favourite order, custom-recipe names, and
 lists **all** profiles including factory-named ones), `/pilotage`
-(dashboard: on/off, live monitor, **activity**, log), `/recipes` (custom recipes, **constrained by the model's min/def/max bounds** — the `0xB0` bounds are
-model characteristics shared by all 5 profiles, so a profile may only pick a value inside them; the
-page shows them and clamps inputs, shows the profile's stored value beside them, and can **write a
-recipe into a profile on the machine** — `0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a
-persistent device write), `/statistiques` (usage counters: the
+(dashboard: on/off, live monitor, **activity**, log), `/recipes` (a local library of recipes: name
+one, pick its beverage and profile, keep it here, write it into the profile on the machine —
+`0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a persistent device write. **The values are
+edited by the shared `RecipeEditor`, not by a second editor of its own** — see below),
+`/statistiques` (usage counters: the
 10 identified ones with labels and unit conversion, the 52 unlabelled ones raw, and buttons that
 read them — 3 range requests for the known set, 8 for a full sweep, exploiting the fact that the
 machine enumerates), `/machines` (**every machine's configuration, in place** — see the
@@ -777,6 +797,47 @@ and then a sentence ending in "vérification cloud désactivée".
 with the per-card "Lire" button; `POST /api/beverages/import` still accepts a full-catalog import if
 a bulk entry point is ever needed again.
 
+**There is ONE recipe editor, `src/app/RecipeEditor.tsx`, and `/` and `/recipes` both mount it.**
+`/recipes` used to hold its own: a Paramètre / Min / Max / Défaut machine / Profil / Valeur table
+with bare sliders. Same gesture, same `0x83` frame, same endpoint — two interfaces, and the
+`/recipes` one had none of what `/` had grown: no switches for the 0/1 parameters, no ingredient
+checkboxes for a custom slot, no return to the **model's** defaults, no advanced fold. An
+ergonomic fix landed on one page out of two, and someone who had learned one had to learn the
+other. The types and the four value rules (`defautModele`, `valeurProfil`, `valeurDepart`,
+`valeurSure`) went with it into `src/app/beverage.ts` — `/recipes` had typed `values.params` as
+bare `{id, value}` couples where the server sends full parameters, which is precisely what had
+kept it from reusing anything.
+
+Two extension points, and their shape is the point. **`initial`** imposes the starting values so a
+locally-saved recipe reopens as it was saved; without it the editor would restart from the profile
+and silently erase what "Modifier" was clicked to retrieve. **`actions`** is a function that
+*receives* the current payload rather than the host keeping a copy of the editor's state — two
+states for one recipe is two chances to diverge, which is the defect being repaired. `/` passes
+"Infos techniques" through it (it ignores the payload), `/recipes` passes "Enregistrer
+localement" (it needs it).
+
+**`/recipes` opens on a custom slot, and its saved recipes are cards.** Two defects the shared
+editor made visible rather than caused. The page started on beverage 1 — a *catalog* beverage,
+i.e. precisely the one where nothing can be composed: its ingredients are fixed by the model, so
+the Café/Lait checkboxes do not exist there. On a page whose gesture is "create a recipe", that
+was the one starting point leading nowhere. It now picks the first **custom slot** once the
+catalog arrives (a `useRef`, not state: the refetch a profile change triggers must not overwrite
+the beverage the user just chose), the `<select>` separates the two families with custom slots
+**first**, and a catalog beverage says in one line why it has no checkboxes. The saved list was a
+table dumping every parameter into one cell, technical ones included ("Programmable 1 · Visible 1
+· Index de calibre 1") and without the drawing one recognises a beverage by elsewhere; it is now
+the same `cards dense` grid as `/` and `/beans` — same object in all three places, something set
+aside to be picked up again — with the user settings as `kv` rows and the technical ones
+**counted**, the same split as the editor's advanced fold. `VignetteBoisson` and `useImageLabel`
+moved to `src/app/BeverageImage.tsx` for it: two id→file tables would be two chances to diverge.
+
+One deliberate difference survives: **`/recipes` shows no "Préparer"** — that page saves recipes,
+it does not command the appliance, and `onDispense` being absent says so with no display variant
+to maintain. Two of its buttons disappeared without losing anything: "Reprendre du profil" *is*
+the editor's "↺ réinitialiser", and the out-of-bounds refusal is unreachable now that every field
+is clamped as you type. The `misalignedWarning` moved into the editor (`editor.boundsMisaligned`)
+because it judges the **reading** of the bounds, not the page showing them — so `/` gained it.
+
 **Beverage display order** — `/` lists beverages in the **machine's own order** for the active
 profile, taken from `d{260+p}_{p}_rec_priority` and exposed as `order` by `/api/beverages`. The
 category grouping (Cafés, Boissons lactées…) is our own invention and is only the fallback when
@@ -914,6 +975,33 @@ travels in the same 21-byte entry as the name, so the form asks for both and the
 rather than defaulting to 0. The Striker 22-byte stride is deliberately not ported — writing a block
 at the wrong stride shifts every following name. Favourites are a **fixed** 19-byte frame, hence
 exactly 12 slots, padded with zeros; every id is checked against the model's catalog first.
+
+**That icon byte is an INDEX 0-19 into a list frozen in the app** — not a resource id, not a
+beverage id. Established without writing anything to the appliance, which is the point: `J()`
+marks the picker cell whose **position** equals `gVar.n()`; `Q6.g.n()` returns `f6459b`, which the
+class's own `toString` names `recipeImageIndex`; `m0()`'s `SET_NAME_ICON` case calls
+`f0(beverageId, name, gVar2.n())`; `DeLonghiWifiConnectService.f0` logs it as `iconIndex:` and
+hands it to `p097j6.d.f0`, which sets `bArr[2] = 0xAB` and drops it at offset 20 of the entry. The
+note that stood here for a while — "plausible, unverified, confirm by renaming a recipe on the
+machine" — planned a persistent write for something a read settles. Same rule as the `0x37`
+constant: **when the signal hypothesis is refutable by reading, read before you write to an
+appliance.** The list is in `beverage-images.json` (`choixRecettePerso`) and `doc/commandes-cafe.md`
+§ 8.1; its **order is the data**, and entries 12 and 18 are deliberately the same image
+(`hot_water`) because de-duplicating would shift every index after them.
+
+**Choosing that image lives on `/`, inside the opened card — not in the recipe editor.** The
+editor is titled "for profile N" and its write targets a profile; the image belongs to the
+**slot** and all five profiles share it, so putting the picker under that heading would have
+asserted something false. ⚠️ **Name and icon travel in the same 21-byte entry**, so an icon write
+necessarily rewrites the name: the confirmation says so and sends back the name exactly as read.
+Renaming stays `/profils`' gesture — it has the form for it, and duplicating it here would make
+two places for one act. The picker is a `radiogroup` and every cell carries the **name** of its
+drawing: twenty unlabelled thumbnails would leave the selection itself unannounced. Those names
+live in their own `beverageImage` namespace, keyed by the app's resource names, which are **not**
+our catalog slugs (`due_x_espresso_coffee` here is `2x_espresso` there) — serving them from
+`beverage` would fold two identifier spaces into one. The slot number comes from the server
+(`customSlot` on `/api/beverages`); the 229 that ties it to the beverage id is a protocol constant
+and has exactly one home.
 
 **`0x60` / `0x70` are probes, not features.** `getByteMonitorMode` builds three frames; the app's
 Wi-Fi service only ever sends `0x75`. `POST /api/monitormode` sends the other two and logs the raw

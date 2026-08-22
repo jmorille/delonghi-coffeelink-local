@@ -2,6 +2,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
+import IMAGES from "@/lib/beverage-images.json";
+import { IMAGES_PERSO, VignetteBoisson, useImageLabel } from "./BeverageImage";
+import RecipeEditor from "./RecipeEditor";
+import {
+  beverageParams,
+  isSet,
+  valeurSure,
+  type Beverage,
+  type Param,
+  type RecipeParam,
+} from "./beverage";
 import { mfetch } from "./machine";
 import { useMachinePush } from "./events";
 import Icone from "./icons";
@@ -11,47 +22,7 @@ import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
 
-interface Param {
-  id: number;
-  name: string;
-  label: string;
-  unit: string;
-  kind: "user" | "meta" | "maint";
-  min?: number;
-  def?: number;
-  max?: number;
-  value?: number;
-}
-interface Decoded {
-  at: number;
-  kind: "bounds" | "values";
-  exact: boolean;
-  params: Param[];
-  hex: string;
-}
-interface Beverage {
-  id: number;
-  label: string;
-  factoryName: string;
-  slug: string;
-  category: string;
-  ingredients: number[];
-  milk: boolean;
-  boundsProp: string | null;
-  valuesProp: string | null;
-  bounds: Decoded | null;
-  values: Decoded | null;
-  /**
-   * Compteur d'usage de la CATEGORIE de cette boisson. La machine ne compte pas tasse par tasse :
-   * `scope` vaut « category », et l'interface doit le dire.
-   */
-  counter: { id: number; value: number; category: string; scope: string } | null;
-  /**
-   * Configuration de grains active, pour la boisson Bean System uniquement. C'est un ATTRIBUT de
-   * la boisson — le nom du grain n'est pas le nom de la tasse.
-   */
-  beanSystem: { index: number; name: string | null; grinder: number; temperature: number; aroma: number } | null;
-}
+// Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
   /** Configuration du serveur. `lanKeySet` faux = aucun pilotage possible, il faut le dire. */
   config: { lanKeySet: boolean; serverIpProblem: string | null };
@@ -85,12 +56,7 @@ interface Status {
     auRepos?: boolean | null;
   } | null;
 }
-/** Couple (paramètre, valeur) tel qu'envoyé à la machine — distinct de `Param`, qui décrit un
- *  paramètre décodé avec ses bornes. */
-interface RecipeParam {
-  id: number;
-  value: number;
-}
+// affiche exactement la même réponse et éditait sa propre version de ces types.
 interface ProfileInfo {
   id: number;
   name: string | null;
@@ -629,22 +595,42 @@ export default function Boissons() {
    * Écrit la recette dans le profil sur la machine (0x83, mode DONTCARE, action SAVE_BEVERAGE).
    * Modification persistante de l'appareil : elle remplace la recette enregistrée de ce profil.
    */
-  const writeToProfile = (bev: Beverage, params: RecipeParam[]) => {
-    setAsk({
-      question: tEditor("confirmWrite", { beverage: bevLabel(bev), profile }),
-      detail: resumeReglages(bev, params, paramLabel, unitLabel, (c) => t("confirmPrepareMore", { count: c })) || undefined,
-      warn: tEditor("confirmWriteWarning"),
-      onConfirm: () =>
-        commande(
-          bevScope(bev.id),
-          "/api/command",
-          { action: "saveToProfile", beverageId: bev.id, profileId: profile, params },
-          // Au moment où l'utilisateur veut savoir si sa recette est passée, on le lui dit. La somme
-          // de contrôle d'avant écriture est une donnée de diagnostic, pas une réponse à sa question.
-          () => tEditor("writeSent"),
-        ),
-    });
-  };
+  /**
+   * **Part au clic, sans dialogue** — demandé explicitement. L'avertissement n'a pas disparu
+   * pour autant : il vit dans l'infobulle du bouton (`editor.writeTitle`, « Remplace durablement
+   * la recette de ce profil… La valeur précédente est perdue »), qui la portait déjà avant. Ce
+   * qu'on retire est l'interruption, pas le fait — un geste sans garde-fou ET sans énoncé serait
+   * un autre changement, qui n'a pas été demandé.
+   */
+  const writeToProfile = (bev: Beverage, params: RecipeParam[]) =>
+    commande(
+      bevScope(bev.id),
+      "/api/command",
+      { action: "saveToProfile", beverageId: bev.id, profileId: profile, params },
+      // Au moment où l'utilisateur veut savoir si sa recette est passée, on le lui dit. La somme
+      // de contrôle d'avant écriture est une donnée de diagnostic, pas une réponse à sa question.
+      () => tEditor("writeSent"),
+    );
+
+  /**
+   * Donne son image à une recette perso — `0xAB`, **persistant sur l'appareil**.
+   *
+   * L'emplacement vient du serveur (`customSlot`) et n'est pas redérivé de l'identifiant : le
+   * 229 qui les relie est une constante de protocole, elle n'a qu'une place.
+   *
+   * Le nom repart tel qu'il a été lu parce que la trame le porte dans la même entrée.
+   *
+   * **Part au clic, sans dialogue** — demandé explicitement. Le fait reste vrai qu'une écriture
+   * d'icône réécrit le nom, alors il passe dans l'infobulle du bouton plutôt que de disparaître
+   * avec le dialogue qui le portait.
+   */
+  const setBeverageIcon = (bev: Beverage, icon: number) =>
+    commande(
+      bevScope(bev.id),
+      "/api/profiles/name",
+      { kind: "custom", index: bev.customSlot, name: bev.machineName ?? "", icon },
+      () => t("imageSent"),
+    );
 
   const imported = data ? data.beverages.filter((b) => b.bounds || b.values).length : 0;
 
@@ -751,6 +737,7 @@ export default function Boissons() {
                 onDispense={(params) => dispense(b, params)}
                 onWrite={(params) => writeToProfile(b, params)}
                 onImport={() => startImport("all", [b.id])}
+                onSetIcon={(icon) => setBeverageIcon(b, icon)}
               />
             ))}
           </div>
@@ -1074,6 +1061,138 @@ function profileLabel(profiles: ProfileInfo[], id: number): string {
   return p?.name ? `${id} — ${p.name}` : `#${id}`;
 }
 
+/**
+ * **Le visuel d'une boisson — ou rien du tout, et c'est le point.**
+ *
+ * Les images viennent de l'APK et sont la propriété de De'Longhi : `public/boissons/` est
+ * **gitignoré** (voir `scripts/extract-images.mjs`). Une installation qui n'a pas lancé
+ * l'extraction n'en a donc aucune — c'est le cas d'un clone neuf, de l'image Docker et de
+ * l'archive de release, c'est-à-dire du cas NORMAL. Une carte qui afficherait alors l'icône de
+ * lien brisé du navigateur, vingt-huit fois, serait une régression pour tout le monde sauf pour
+ * celui qui possède l'application.
+ *
+ * D'où `onError` : la vignette se retire, la carte reprend exactement l'allure qu'elle avait
+ * avant. L'absence d'image n'est pas une erreur à signaler, c'est l'état par défaut.
+ *
+ * `alt=""` et `aria-hidden` parce que le titre est **à côté** et nomme déjà la boisson : une
+ * alternative textuelle y ajouterait un doublon à chacune des vingt-huit cartes. L'image est
+ * décorative au sens strict — elle n'apporte aucune information que le texte ne porte pas.
+ *
+ * `parId` ne couvre ni les grains ni les recettes personnalisées : leur icône ne vient pas de
+ * cette table (voir l'en-tête du script d'extraction). Elles n'ont donc pas de vignette, ce qui
+ * est correct et non un manque.
+ */
+/**
+ * **Les 20 images que l'application propose pour une recette perso, dans SON ordre.**
+ *
+ * L'ordre est la donnée : la machine ne retient qu'un index 0-19, pas un nom de dessin. Deux
+ * entrées portent la même image (12 et 18, `hot_water`) — c'est ainsi dans la liste de l'app,
+ * et dédoublonner décalerait tous les index suivants.
+ */
+// La vignette et le nom d'une image vivent dans `./BeverageImage` : `/recipes` montre les mêmes
+// dessins pour les mêmes boissons, et deux tables d'images seraient deux occasions de diverger.
+
+/**
+ * **Choisir l'image d'une recette perso.**
+ *
+ * Elle vit dans la CARTE et non dans l'éditeur de recette, parce que ce ne sont pas les mêmes
+ * données : l'éditeur est titré « pour le profil N » et son écriture vise un profil, alors que
+ * l'image appartient à l'emplacement et que les cinq profils la partagent. La poser sous ce
+ * titre-là aurait affirmé quelque chose de faux.
+ *
+ * ⚠️ **La trame `0xAB` porte le nom ET l'icône dans la même entrée de 21 octets** : on ne peut
+ * pas écrire l'un sans réécrire l'autre. Le nom est donc renvoyé tel qu'il a été lu, et la
+ * confirmation le dit — le taire ferait d'une écriture double une écriture simple aux yeux du
+ * lecteur. Renommer reste le geste de `/profils`, qui a le formulaire pour ça ; le dupliquer ici
+ * ferait deux endroits pour un seul geste.
+ *
+ * Replié par défaut : vingt images, c'est plus haut que l'éditeur qu'on est venu ouvrir.
+ */
+function ChoixImage({
+  actuel,
+  nom,
+  busy,
+  working,
+  onChoose,
+}: {
+  /**
+   * L'index que porte la machine. Reçu **non nul** : le composant n'est monté que si la boisson
+   * a une entrée dans le bloc de noms, et une entrée en a toujours un. L'écrire dans le type
+   * évite d'avoir à inventer un code de repli pour un cas qui ne se produit pas.
+   */
+  actuel: number;
+  /** Le nom saisi sur la machine : l'écriture le réécrit, l'infobulle du bouton le dit. */
+  nom: string;
+  busy: boolean;
+  working: boolean;
+  onChoose: (icon: number) => void;
+}) {
+  const t = useTranslations("beverages");
+  const imageLabel = useImageLabel();
+  const [ouvert, setOuvert] = useState(false);
+  const [choix, setChoix] = useState<number>(actuel);
+  // Rien ne borne cet octet dans le protocole : la machine peut en principe en porter un que la
+  // liste de vingt ne couvre pas. On le dit alors, plutôt que d'afficher une image au hasard.
+  const courant = IMAGES_PERSO[actuel] ?? null;
+
+  return (
+    <div className="blocSuite">
+      <div className="row">
+        {/* Ce que la machine porte AUJOURD'HUI. Un octet hors des vingt n'est pas impossible —
+            rien dans le protocole ne le borne — et le dire vaut mieux que de n'afficher rien. */}
+        <span className="sub">
+          {courant ? t("imageOf", { image: imageLabel(courant) }) : t("imageUnknown", { code: actuel })}
+        </span>
+        <button
+          className={"iconBtn" + (ouvert ? " ouvert" : "")}
+          onClick={() => setOuvert(!ouvert)}
+          aria-expanded={ouvert}
+        >
+          <Icone nom="chevron" />
+          <span className="lbl">{ouvert ? t("imageHide") : t("imageChoose")}</span>
+        </button>
+      </div>
+
+      {ouvert && (
+        <>
+          <p className="chapeau">{t("imageNote")}</p>
+          {/* Un groupe de radios, pas vingt boutons : le choix est unique et exclusif, et c'est
+              ce que `radiogroup` fait entendre. Chaque option porte le NOM de son dessin —
+              sans quoi ce sont vingt cases sans étiquette, la sélection comprise. */}
+          <div className="grilleImages" role="radiogroup" aria-label={t("imageChoose")}>
+            {IMAGES_PERSO.map((fichier, i) => (
+              <button
+                key={i}
+                type="button"
+                role="radio"
+                aria-checked={choix === i}
+                className={"choixImage" + (choix === i ? " actif" : "")}
+                onClick={() => setChoix(i)}
+                aria-label={t("imagePick", { image: imageLabel(fichier) })}
+              >
+                <VignetteBoisson icon={i} />
+                <span className="lbl">{imageLabel(fichier)}</span>
+              </button>
+            ))}
+          </div>
+          <div className="row note">
+            <button
+              className="primary iconBtn"
+              disabled={busy || choix === actuel}
+              aria-busy={working || undefined}
+              onClick={() => onChoose(choix)}
+              title={t("imageConfirmWarning", { name: nom })}
+            >
+              <Icone nom="machine" />
+              <span className="lbl">{t("imageSave")}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BeverageCard({
   bev,
   profile,
@@ -1086,6 +1205,7 @@ function BeverageCard({
   onDispense,
   onWrite,
   onImport,
+  onSetIcon,
 }: {
   bev: Beverage;
   profile: number;
@@ -1099,6 +1219,8 @@ function BeverageCard({
   onDispense: (params?: RecipeParam[]) => void;
   onWrite: (params: RecipeParam[]) => void;
   onImport: () => void;
+  /** Écrit l'image de l'emplacement perso (`0xAB`). Absente des boissons du catalogue. */
+  onSetIcon: (icon: number) => void;
 }) {
   const t = useTranslations("beverages");
   const tc = useTranslations("common");
@@ -1131,6 +1253,9 @@ function BeverageCard({
               quatre `marginLeft: 8` posés pastille par pastille. La gouttière gère aussi le repli —
               une pastille qui passe à la ligne garde son écart, une marge gauche non. */}
           <div className="titreLigne">
+          {/* La vignette d'abord : `.titreLigne` est déjà une rangée souple avec gouttière, elle
+              gère donc l'alignement et le repli sans qu'on ait rien à ajouter. */}
+          <VignetteBoisson id={bev.id} icon={bev.icon} />
           {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
               au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
           <h3 className="cardTitle">{nom}</h3>
@@ -1233,6 +1358,14 @@ function BeverageCard({
               restent ici — c'est la carte qui les possede, et le panneau s'ouvre bien sous la
               barre puisqu'il est rendu juste apres l'editeur. Le libelle passe en `.lbl` comme
               les trois autres, sans quoi il ne se replierait pas avec eux en etroit. */}
+          {/* Avant l'éditeur, et seulement pour un emplacement perso NOMMÉ : `customSlot` n'est
+              rempli que là (la trame de noms ne couvre pas les boissons du catalogue, et une
+              écriture a besoin d'un nom à réécrire). L'identité de la recette — son dessin — se
+              lit avant ses valeurs pour un profil. */}
+          {bev.customSlot !== null && bev.icon !== null && (
+            <ChoixImage actuel={bev.icon} nom={bev.machineName ?? ""} busy={busy} working={working} onChoose={onSetIcon} />
+          )}
+
           <RecipeEditor
             bev={bev}
             profile={profile}
@@ -1241,12 +1374,14 @@ function BeverageCard({
             working={working}
             onDispense={onDispense}
             onWrite={onWrite}
-            actions={
+            // Le nœud est rendu par une fonction qui reçoit la charge utile : ce bouton-ci ne
+            // s'en sert pas, celui de `/recipes` en a besoin pour enregistrer.
+            actions={() => (
               <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
                 <Icone nom="info" />
                 <span className="lbl">{tech ? t("hideTechnicalInfo") : t("technicalInfo")}</span>
               </button>
-            }
+            )}
           />
 
           {tech && (
@@ -1279,315 +1414,9 @@ function BeverageCard({
   );
 }
 
-/**
- * Édition de la recette du profil pour une boisson, sous les bornes du modèle.
- *
- * Les valeurs partent de ce que la machine a enregistré pour CE profil ; à défaut, des défauts
- * du modèle. Les bornes min/max sont communes aux profils — un profil ne peut que choisir une
- * valeur à l'intérieur — donc les champs les imposent.
- */
-/**
- * Édition de la recette du profil pour une boisson, sous les bornes du modèle.
- *
- * Règle d'affichage : **on n'écarte rien**. Est réglable tout paramètre dont `max > min` ; les
- * paramètres à valeur unique sont montrés en lecture seule mais restent dans la trame (l'ordre
- * lait/café d'un flat white vaut toujours 1 et c'est lui qui déclenche l'action d'inversion).
- * Le regroupement « recette » / « avancé » est cosmétique : une première version filtrait sur
- * notre propre classification et masquait de vraies options (« 2 tasses », « accessoire »).
- */
-function RecipeEditor({
-  bev,
-  profile,
-  profileName,
-  busy,
-  working,
-  onDispense,
-  onWrite,
-  actions,
-}: {
-  bev: Beverage;
-  profile: number;
-  profileName: string | null;
-  busy: boolean;
-  working: boolean;
-  onDispense: (params?: RecipeParam[]) => void;
-  onWrite: (params: RecipeParam[]) => void;
-  /**
-   * Boutons de la carte à poser dans la barre d'actions de l'éditeur — aujourd'hui « Infos
-   * techniques ». Il vit dans la carte (c'est elle qui tient l'état et le panneau), mais il
-   * s'affiche ici : les quatre boutons de la carte ouverte étaient sur trois lignes différentes,
-   * dont deux ne contenaient qu'un bouton. Passer un nœud plutôt que de remonter l'état évite de
-   * déplacer le panneau technique et ses traductions.
-   */
-  actions?: React.ReactNode;
-}) {
-  const t = useTranslations("editor");
-  const tc = useTranslations("common");
-  const paramLabel = useParamLabel();
-  const unitLabel = useUnitLabel();
-  const all = beverageParams(bev);
-  const adjustable = all.filter((b) => (b.max as number) > (b.min as number));
-  const fixed = all.filter((b) => (b.max as number) === (b.min as number));
-  const basic = adjustable.filter((b) => b.kind === "user");
-  const advanced = adjustable.filter((b) => b.kind !== "user");
+// `RecipeEditor` a déménagé dans `./RecipeEditor` : `/recipes` en avait un second, en tableau,
 
-  /**
-   * Les deux règles de valeur vivent au niveau du module (`valeurDepart`, `defautModele`) : elles
-   * étaient écrites ici, et le bouton « Préparer » de la carte en avait sa propre version, plus
-   * simple et fausse. Deux implémentations de « quelle valeur pour ce paramètre ? » dans le même
-   * fichier, c'était deux cafés différents sous une seule et même confirmation.
-   */
-  const seedFor = (b: Param) => valeurDepart(bev, b);
-  const seed = () => Object.fromEntries(all.map((b) => [b.id, seedFor(b)]));
-  const defOf = (b: Param) => defautModele(b);
-  const [vals, setVals] = useState<Record<number, number>>(seed);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  if (!bev.bounds) {
-    return <Alerte>{t("boundsNotRead")}</Alerte>;
-  }
-  if (!all.length) {
-    return (
-      <p className="sub">
-        {t("noParams")}
-      </p>
-    );
-  }
-
-  const params: RecipeParam[] = all.map((b) => ({ id: b.id, value: vals[b.id] ?? seedFor(b) }));
-  const set = (b: Param, raw: number) =>
-    setVals((v) => ({
-      ...v,
-      [b.id]: Math.min(b.max as number, Math.max(b.min as number, Number.isFinite(raw) ? raw : (b.min as number))),
-    }));
-  const dirty = adjustable.some((b) => vals[b.id] !== seedFor(b));
-
-  /**
-   * Retour aux défauts du modèle — distinct de « réinitialiser », qui revient à ce que le profil a
-   * enregistré. Purement local : rien ne part vers la machine avant « Préparer » ou « Écrire ».
-   */
-  const applyDefaults = () =>
-    setVals((v) => Object.fromEntries(all.map((b) => [b.id, defOf(b) ?? v[b.id] ?? seedFor(b)])));
-  const atDefaults = adjustable.every((b) => {
-    const d = defOf(b);
-    return d === null || (vals[b.id] ?? seedFor(b)) === d;
-  });
-  const noDefault = adjustable.filter((b) => defOf(b) === null).length;
-
-  /**
-   * Une ligne de réglage. Elle était une suite de largeurs fixes — libellé 150, curseur 150, champ
-   * 80, puce 78 : 558 px incompressibles pour un paramètre, dans une carte qui peut en faire 300.
-   * `.paramRow` laisse le libellé prendre sa ligne quand il faut et le curseur absorber le reste.
-   */
-  /**
-   * **Un paramètre qui ne vaut que 0 ou 1 est un interrupteur, pas un curseur.**
-   *
-   * `VISIBLE` et `VISIBLE_IN_PROGRAMMING` sont des booléens : un curseur de deux crans, doublé d'un
-   * champ numérique et bordé de « 0 » et « 1 », demande au lecteur de traduire lui-même deux
-   * nombres en oui/non — et l'invite à taper une valeur qui n'existe pas. L'interrupteur dit l'état
-   * et n'en propose aucun autre.
-   *
-   * Le critère est **intrinsèque au paramètre** (`min === 0 && max === 1`), pas une liste de noms :
-   * ces deux-là ne sont pas des cas particuliers, ce sont les seuls booléens que ce modèle expose
-   * aujourd'hui. Il ne dépend pas non plus de `kind` — c'est notre propre regroupement, pas le
-   * protocole, et le contrôle d'un paramètre ne doit pas changer selon le bloc où on l'a rangé.
-   *
-   * `INVERSION` ne passe jamais par là : `min === max`, donc il est déjà écarté par `adjustable` et
-   * reste envoyé tel quel dans la charge utile, ce qui est le comportement à préserver.
-   */
-  const bascule = (b: Param) => {
-    const v = vals[b.id] ?? seedFor(b);
-    return (
-      <div className="paramRow" key={b.id}>
-        <span className="nom">
-          {paramLabel(b)}
-          {b.unit ? ` (${unitLabel(b.unit)})` : ""}
-        </span>
-        <div className="ctl">
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={v === 1}
-              aria-label={paramLabel(b)}
-              onChange={(e) => set(b, e.target.checked ? 1 : 0)}
-            />
-            <span className="track" aria-hidden="true">
-              <span className="knob" />
-            </span>
-          </label>
-          {defOf(b) !== null ? (
-            <button
-              className="mini"
-              disabled={v === defOf(b)}
-              onClick={() => set(b, defOf(b) as number)}
-              title={t("paramDefaultHint")}
-            >
-              {t("paramDefaultBool", { on: defOf(b) === 1 ? 1 : 0 })}
-            </button>
-          ) : (
-            <span className="sub" title={t("noParamDefaultHint")}>
-              {t("noParamDefault")}
-            </span>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const slider = (b: Param) => (
-    <div className="paramRow" key={b.id}>
-      <span className="nom">
-        {paramLabel(b)}
-        {b.unit ? ` (${unitLabel(b.unit)})` : ""}
-      </span>
-      <div className="ctl">
-        <span className="sub mono">
-          {b.min}
-        </span>
-        <input
-          type="range"
-          min={b.min}
-          max={b.max}
-          value={vals[b.id] ?? seedFor(b)}
-          aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
-          onChange={(e) => set(b, Number(e.target.value))}
-        />
-        <span className="sub mono">
-          {b.max}
-        </span>
-        <input
-          className="numField"
-          type="number"
-          min={b.min}
-          max={b.max}
-          value={vals[b.id] ?? seedFor(b)}
-          onChange={(e) => set(b, Number(e.target.value))}
-        />
-        {defOf(b) !== null ? (
-          /* **Cette puce reste sans icone.** C'est le seul emploi de `.mini` conforme a sa
-             definition — une puce qui AFFICHE une valeur, « defaut 40 », dans une ligne de reglage
-             — et le bouton global juste au-dessus porte deja le rembobinage pour la meme action.
-             Le glyphe serait repete jusqu'a sept fois par carte, sur vingt-huit cartes, en
-             elargissant chaque fois une ligne qui contient deja un curseur et un champ. */
-          <button
-            className="mini"
-            disabled={(vals[b.id] ?? seedFor(b)) === defOf(b)}
-            onClick={() => set(b, defOf(b) as number)}
-            title={t("paramDefaultHint")}
-          >
-            {t("paramDefault", { value: defOf(b) as number })}
-          </button>
-        ) : (
-          <span className="sub" title={t("noParamDefaultHint")}>
-            {t("noParamDefault")}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-
-  /** Aiguillage : deux états ⇒ interrupteur, sinon curseur. */
-  const reglage = (b: Param) => (b.min === 0 && b.max === 1 ? bascule(b) : slider(b));
-
-  return (
-    <div className="blocEditeur">
-      <div className="cardHead chapeau">
-        {/* Un titre, pas un `strong` : les 28 cartes ont gagné leur `h3`, et le bloc qui s'ouvre
-            dedans restait le seul repère de la page inaccessible à une navigation par titres. */}
-        <h4 className="cardTitle">{t("heading", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</h4>
-        <div className="row">
-          {!bev.values && (
-            <span className="pill off" title={t("valuesNotReadHint")}>
-              {t("valuesNotRead")}
-            </span>
-          )}
-          {dirty && (
-            <button className="iconBtn" onClick={() => setVals(seed)} title={t("resetTitle")}>
-              <Icone nom="reinitialiser" />
-              <span className="lbl">{tc("reset")}</span>
-            </button>
-          )}
-          <button
-            className="mini iconBtn"
-            disabled={atDefaults}
-            onClick={applyDefaults}
-            title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}
-          >
-            <Icone nom="defauts" taille={15} />
-            <span className="lbl">{t("defaults")}</span>
-          </button>
-        </div>
-      </div>
-
-      {basic.map(reglage)}
-
-      {fixed.map((b) => (
-        <div className="paramRow" key={b.id}>
-          <span className="nom">
-            {paramLabel(b)}
-            {b.unit ? ` (${unitLabel(b.unit)})` : ""}
-          </span>
-          <span className="sub mono" title={t("imposedHint")}>
-            {t("imposed", { value: b.min ?? 0 })}
-          </span>
-        </div>
-      ))}
-
-      {/* **Une seule barre d'actions pour la carte ouverte.** Les quatre boutons — deux depliants
-          a gauche, deux actions a droite — occupaient trois lignes, dont deux ne portaient qu'un
-          bouton chacune. Les depliants restent des depliants : leur contenu s'ouvre SOUS la barre,
-          jamais au-dessus, sinon cliquer en bas ferait apparaitre du texte plus haut.
-
-          Les deux actions gardent les memes glyphes que sur /recipes pour les memes gestes : la
-          tasse coule la boisson avec ces valeurs, la machine nomme la destination de l'ecriture.
-          Cette derniere est PERSISTANTE sur l'appareil — c'est la seule chose de cette carte qui
-          survive a la fermeture de l'onglet. */}
-      <div className="row note">
-        {advanced.length > 0 && (
-          /* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
-             de changer de dessin. */
-          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
-            <Icone nom="chevron" />
-            <span className="lbl">{showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})</span>
-          </button>
-        )}
-        {actions}
-        <button className="good iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
-          <Icone nom="preparer" />
-          <span className="lbl">{t("prepareWith")}</span>
-        </button>
-        <button
-          className="primary iconBtn"
-          disabled={busy}
-          aria-busy={working || undefined}
-          onClick={() => onWrite(params)}
-          title={t("writeTitle")}
-        >
-          <Icone nom="machine" />
-          <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
-        </button>
-      </div>
-
-      {advanced.length > 0 && showAdvanced && (
-        <div className="blocSuite">
-          <p className="chapeau">{t("advancedNote")}</p>
-          {advanced.map(reglage)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Tous les paramètres que le modèle déclare pour cette boisson, avec leurs bornes — **sans
- * filtrer sur `kind`**. C'est l'appelant qui décide de regrouper ; filtrer ici masquait des
- * options réellement réglables.
- */
-function beverageParams(bev: Beverage): Param[] {
-  const src = bev.bounds?.params ?? bev.values?.params ?? [];
-  return bev.ingredients.map((id) => src.find((p) => p.id === id)).filter((p): p is Param => !!p);
-}
-
+// pour le même geste et la même trame.
 function summary(
   users: Param[],
   paramLabel: (p: Param) => string,
@@ -1599,51 +1428,7 @@ function summary(
     .join(" · ");
 }
 
-/**
- * Un défaut n'est exploitable que s'il tombe dans ses propres bornes. La machine renvoie 0 ou
- * 255 (0xFF) pour un paramètre non configuré — constaté sur les 6 recettes perso vides et sur
- * le mug de voyage lors de l'import réel.
- */
-function isSet(p: Param): boolean {
-  return p.def !== undefined && p.min !== undefined && p.max !== undefined && p.def >= p.min && p.def <= p.max;
-}
 
-/**
- * Le défaut du **modèle**, ou `null` s'il ne tombe pas dans ses propres bornes — auquel cas il n'y
- * a pas de valeur d'usine à proposer, et on n'en invente pas.
- */
-function defautModele(b: Param): number | null {
-  const d = b.def;
-  if (d === undefined || d === null) return null;
-  return d >= (b.min as number) && d <= (b.max as number) ? d : null;
-}
-
-/** Ce que le **profil** a enregistré sur la machine, si c'est utilisable. */
-function valeurProfil(bev: Beverage, b: Param): number | undefined {
-  const v = bev.values?.params.find((p) => p.id === b.id)?.value;
-  if (v === undefined) return undefined;
-  return v >= (b.min as number) && v <= (b.max as number) ? v : undefined;
-}
-
-/** Valeur de départ d'un réglage : celle du profil, sinon celle du modèle, sinon le minimum. */
-function valeurDepart(bev: Beverage, b: Param): number {
-  return valeurProfil(bev, b) ?? defautModele(b) ?? (b.min as number);
-}
-
-/**
- * Ce qu'on peut **honnêtement** envoyer pour un paramètre, et d'où ça vient.
- *
- * `null` = ni valeur de profil ni défaut utilisable : on n'envoie rien pour ce paramètre, et la
- * machine applique le sien. C'est ce qui évite d'envoyer « Café = 0 ml » sur un mug de voyage
- * jamais configuré, tout en cessant d'ignorer la recette du profil quand elle existe.
- */
-function valeurSure(bev: Beverage, b: Param): { value: number; from: "profil" | "modele" } | null {
-  const p = valeurProfil(bev, b);
-  if (p !== undefined) return { value: p, from: "profil" };
-  const d = defautModele(b);
-  if (d !== null) return { value: d, from: "modele" };
-  return null;
-}
 
 /**
  * Les réglages d'une commande, en français, avec leurs unités.

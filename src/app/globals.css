@@ -1015,6 +1015,50 @@ dialog.drawer .pied select { width: 100%; }
    « lecture différée ». Sans cette marge, chaque bouton se pose là où le texte le laisse, et deux
    lignes voisines décalent leur croix d'une soixantaine de pixels. */
 .titreLigne > .aDroite { margin-left: auto; }
+/* **La vignette d'une boisson.** `flex-shrink: 0` parce que `.titreLigne` est une rangée
+   souple : sans lui, une image se comprime en fuseau quand le nom est long, au lieu de passer
+   à la ligne comme les pastilles. `object-fit: contain` conserve les proportions des visuels
+   (600 × 680, plus hauts que larges) ; sans lui ils seraient étirés dans un carré. Fond
+   transparent conservé : ces WebP ont un canal alpha, et leur poser une couleur ferait
+   apparaître un rectangle autour de la tasse. */
+.bevVignette {
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  object-fit: contain;
+}
+
+/* **La grille du sélecteur d'image.** `auto-fill` avec un minimum de 5.5 rem : les vingt vignettes
+   tiennent en quatre à six colonnes selon la largeur de la carte, sans jamais imposer de défilement
+   horizontal. Chaque case porte son NOM sous l'image — une planche de vingt dessins muets obligerait
+   à reconnaître un flat white d'un caffelatte à 44 px. */
+.grilleImages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+}
+/* Le contour marque la case choisie. Il est doublé par `aria-checked`, jamais remplacé par lui :
+   la couleur seule ne dit rien à qui ne la distingue pas, et l'épaisseur du trait reste visible. */
+.choixImage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-2);
+  background: none;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: center;
+  font: inherit;
+  color: inherit;
+  line-height: 1.2;
+}
+.choixImage .lbl { font-size: 0.75rem; }
+.choixImage:hover { border-color: var(--accent); }
+.choixImage.actif { border-color: var(--accent); border-width: 3px; padding: calc(var(--s-2) - 1px); }
+.choixImage .bevVignette { width: 3rem; height: 3rem; }
 /* Le chevron des panneaux dépliants tourne au lieu de changer de dessin. */
 .iconBtn.ouvert > svg:first-child { transform: rotate(180deg); }
 /* **Le seuil était au-dessus de la largeur réelle des libellés : ils tenaient et disparaissaient
@@ -1353,3 +1397,11 @@ button.danger.discret { color: var(--danger-text); border-color: var(--danger-ed
    l'aire et faisait passer la cible sous les 44 px sur un axe. Le mauvais échange : ce qui rend ce
    groupe bruyant n'est pas sa taille, c'est le remplissage du segment actif — donc un poids de
    couleur, et ça appartient à la passe couleur, pas à celle-ci. Les 44 px sont rétablis. */
+
+/* **Un ingrédient d'une recette perso : sa case, puis ses réglages en retrait.**
+   Le filet à gauche relie visuellement les réglages à la case qui les a ouverts — sans lui, cocher
+   « Lait » fait apparaître trois lignes qui flottent au même niveau que celles du café. Le retrait
+   seul ne suffit pas : les lignes de réglage ont déjà leur propre gouttière. */
+.blocIngredient { margin: var(--s-3) 0; }
+.blocIngredient > .caseLibelle { font-weight: 600; }
+.blocIngredient > .paramRow { margin-left: var(--s-4); border-left: 2px solid var(--border); padding-left: var(--s-3); }
