@@ -107,6 +107,16 @@ interface ProfileInfo {
  */
 type Scope = "power" | `bev:${number}`;
 const bevScope = (id: number): Scope => `bev:${id}`;
+
+/**
+ * Report avant d'imposer un profil à la machine, en millisecondes.
+ *
+ * Assez long pour absorber un parcours de la liste déroulante aux flèches — un `select` fermé émet
+ * un `change` par valeur traversée — et assez court pour qu'un choix délibéré ne paraisse pas
+ * ignoré. Ce n'est pas un anti-rebond de confort : chaque `change` non absorbé serait une trame
+ * 0xA9 de plus vers un appareil réel.
+ */
+const DELAI_PROFIL = 400;
 interface Report {
   scope: Scope;
   text: string;
@@ -144,6 +154,30 @@ export default function Boissons() {
   const [pending, setPending] = useState<Scope | null>(null);
   const busy = pending !== null;
   const [open, setOpen] = useState<number | null>(null);
+  /**
+   * **`/#b230` ouvre la carte de cette boisson.** Les emplacements perso sont modifiables ici et
+   * nulle part ailleurs — leur recette est une recette comme une autre, avec les mêmes bornes du
+   * modèle et les mêmes valeurs du profil — mais on les CONSULTE depuis `/profils`, qui n'en
+   * montrait que le nom. Plutôt qu'un second éditeur là-bas (l'erreur que la carte boissons de
+   * `/pilotage` a déjà coûtée), la page d'accueil se laisse adresser.
+   *
+   * Une seule fois : `data` est rafraîchi à chaque événement de la machine, et rouvrir la carte à
+   * chaque fois rouvrirait celle que l'utilisateur vient de fermer. Le profil, lui, n'est PAS
+   * imposé par le lien — le sélectionner enverrait un `0xA9` à la machine, et une navigation ne
+   * doit rien envoyer.
+   */
+  const ancreFaite = useRef(false);
+  useEffect(() => {
+    if (ancreFaite.current || !data) return;
+    const m = /^#b(\d+)$/.exec(window.location.hash);
+    if (!m) { ancreFaite.current = true; return; }
+    const id = Number(m[1]);
+    if (!data.beverages.some((b) => b.id === id)) { ancreFaite.current = true; return; }
+    ancreFaite.current = true;
+    setOpen(id);
+    // Après la peinture : la carte n'existe pas encore quand cet effet part.
+    requestAnimationFrame(() => document.getElementById(`b${id}`)?.scrollIntoView({ block: "center" }));
+  }, [data]);
   const [report, setReport] = useState<Report | null>(null);
   // Le dialogue est partagé (`confirm.tsx`) : cinq autres pages en avaient besoin.
   const { demander: setAsk, dialogue } = useConfirm();
@@ -151,6 +185,10 @@ export default function Boissons() {
   const [lastDispensed, setLastDispensed] = useState<Beverage | null>(null);
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const profileInitialised = useRef(false);
+  /** Le report d'activation du profil ; voir `selectProfileAndActivate`. */
+  const profilDiffere = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Un report en vol au démontage enverrait une commande depuis une page qu'on a quittée.
+  useEffect(() => () => { if (profilDiffere.current) clearTimeout(profilDiffere.current); }, []);
   /**
    * **Un chargement qui échoue est un état, pas un silence.**
    *
@@ -440,21 +478,31 @@ export default function Boissons() {
   };
 
   /**
-   * Un clic sur un profil fait les deux : il bascule l'affichage sur ce profil et l'active sur
-   * la machine (trame 0xA9). Pas de confirmation : la commande est inoffensive — c'est la même
-   * trame que le serveur envoie déjà comme « présence » pendant un réveil — et le clic sur un
-   * profil nommé est un geste sans ambiguïté. C'est aussi pourquoi une liste déroulante ne
-   * convenait pas : la parcourir aurait envoyé une commande à chaque valeur survolée.
+   * Choisir un profil fait les deux : l'affichage bascule dessus, et la machine y bascule aussi
+   * (trame 0xA9). Pas de confirmation : la commande est inoffensive — c'est la même trame que le
+   * serveur envoie déjà comme « présence » pendant un réveil — et désigner un profil nommé est un
+   * geste sans ambiguïté.
+   *
+   * **L'affichage change tout de suite, l'ordre part en différé, et c'est ce délai qui rend la
+   * liste déroulante utilisable.** Une rangée de boutons ne pouvait produire qu'une valeur par
+   * geste ; un `select` fermé, parcouru aux flèches, émet un `change` par valeur traversée — donc
+   * un 0xA9 par valeur, sur un vrai appareil. Le report ramène le parcours à une seule commande,
+   * celle sur laquelle on s'arrête. C'était l'objection qui avait fait écarter la liste déroulante,
+   * et c'est elle qu'il fallait lever, pas contourner.
    */
   const selectProfileAndActivate = (id: number) => {
     setProfile(id);
-    return commande(
-      "power",
-      "/api/command",
-      { action: "selectProfile", profileId: id },
-      () => tPower("profileActivated", { name: profileLabel(profiles, id) }),
-      refreshStatus,
-    );
+    if (profilDiffere.current) clearTimeout(profilDiffere.current);
+    profilDiffere.current = setTimeout(() => {
+      profilDiffere.current = null;
+      void commande(
+        "power",
+        "/api/command",
+        { action: "selectProfile", profileId: id },
+        () => tPower("profileActivated", { name: profileLabel(profiles, id) }),
+        refreshStatus,
+      );
+    }, DELAI_PROFIL);
   };
 
   const dispense = async (bev: Beverage, override?: RecipeParam[]) => {
@@ -969,31 +1017,36 @@ function PowerCard({
       </div>
 
       <div className="blocSuite">
-        <label>{confirmed ? t("profileLabel") : t("profileUnknown")}</label>
-        {/* **Cette rangee reste sans icone, et c'est un choix.** Les cinq boutons font le meme
-            geste qu'« Activer » sur /profils, mais ce sont cinq positions d'un selecteur, pas cinq
-            commandes : une coche sur les cinq dirait que les cinq sont retenus. Et la mettre sur le
-            seul actif ferait grandir ce bouton de 25 px au moment ou on le choisit — la rangee
-            entiere se decalerait a chaque selection, sur la page la plus parcourue du produit.
-            L'etat est deja porte par `aria-pressed` et par le remplissage ambre, donc il n'est ni
-            invisible ni porte par la couleur seule. */}
-        <div className="row" role="group" aria-label={t("profileGroupLabel")}>
-          {shownProfiles.map((p) => {
-            const active = p.id === profile && confirmed;
-            return (
-              <button
-                key={p.id}
-                className={active ? "primary" : ""}
-                aria-pressed={active}
-                disabled={busy}
-                onClick={() => onSelectProfile(p.id)}
-                title={t("activateTitle", { id: p.id })}
-              >
-                {p.name ?? tc("profileNumbered", { id: p.id })}
-              </button>
-            );
-          })}
-        </div>
+        <label htmlFor="profil-actif">{confirmed ? t("profileLabel") : t("profileUnknown")}</label>
+        {/* **Une liste deroulante, comme le selecteur de la machine.** Cinq positions d'un meme
+            selecteur, pas cinq commandes : c'est ce que la rangee de boutons peinait a dire, et ce
+            qu'un `select` dit par construction. Il porte aussi l'etat sans le mettre en couleur et
+            sans changer de taille quand on choisit — la rangee grandissait de 25 px sur le bouton
+            actif, donc se decalait entiere a chaque selection, sur la page la plus parcourue.
+
+            L'ordre part en differe (`DELAI_PROFIL`) : parcourir la liste aux fleches emet un
+            `change` par valeur traversee, et sans report chacune serait une trame 0xA9 vers
+            l'appareil. */}
+        <select
+          id="profil-actif"
+          value={profile}
+          disabled={busy}
+          onChange={(e) => onSelectProfile(Number(e.target.value))}
+          title={t("profileSelectHint")}
+        >
+          {/* Le profil en cours d'affichage peut ne pas figurer dans la liste : elle ne montre que
+              les profils renommes, et la machine peut tres bien etre sur un autre. L'omettre ferait
+              afficher au `select` une valeur qui n'est pas celle utilisee — on l'ajoute plutot que
+              de mentir sur le profil courant. */}
+          {(shownProfiles.some((p) => p.id === profile)
+            ? shownProfiles
+            : [{ id: profile, name: null, renamed: false }, ...shownProfiles]
+          ).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name ?? tc("profileNumbered", { id: p.id })}
+            </option>
+          ))}
+        </select>
         {fallbackReason && <p className="legende">{fallbackReason}</p>}
       </div>
 
@@ -1071,7 +1124,7 @@ function BeverageCard({
     /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
        l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
        fait de la grille la cause d'un formulaire illisible. */
-    <div className={"card" + (open ? " open" : "")} role="listitem">
+    <div id={`b${bev.id}`} className={"card" + (open ? " open" : "")} role="listitem">
       <div className="cardHead">
         <div>
           {/* Le nom et ses pastilles sont UN objet : une rangée avec une gouttière, au lieu de

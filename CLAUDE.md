@@ -1095,9 +1095,30 @@ only shows a raw identifier, and only when that sensor happens to fire. A **name
 (`machineName`: "Lacteso", "Malongo") is user data and is **never** translated.
 
 The French labels still in `beverages.mjs` / `profiles.mjs` are for the **terminal log only**; UI
-text comes from the catalog. Server-side `label` fields returned by `/api/command` are echoed as-is
-in a few status messages — the remaining non-catalog strings, and the only thing left to key if a
-second language is added.
+text comes from the catalog.
+
+**Task labels now travel as a key, not a sentence.** They were the last thing the server sent in
+French *for display*, and `/pilotage`'s "Activité" panel rendered all three of its blocks raw. A task
+carries `i18n: { k, p, refs }` — `k` in the `task` namespace, `p` plain parameters — while `label`
+stays as the terminal-log text and the client's fallback. **`refs` is the part worth understanding**:
+a task label sometimes embeds an identifier that already has a translation elsewhere (a beverage
+slug, a setting key, the family an import read), so it is passed as a reference and dereferenced
+client-side by `taskLabel(tache, t, deref)` in `machineState.ts`. It is a separate field rather than
+a prefix inside the value on purpose: a name **typed on the machine** ("Lacteso") is a plain
+parameter, and nothing may mistake it for an identifier to translate. A task queued without a key
+renders exactly as before — the fallback is the point, not an oversight. `verif-tasks.mjs` asserts
+the key survives `vue()`; without that, a dropped field would degrade silently back to server French.
+
+**`/api/profiles` order entries carry `slug` + `machineName`, not just a French `label`.** That one
+was not only a translation gap: emitting the catalog label meant those entries **bypassed
+`machineBeverageNames`**, so a custom slot renamed on the machine showed under its factory name —
+the exact divergence `/api/beverages` had already fixed ("Recette perso 1" on one page, "Lacteso" on
+the other), reproduced on `/profils`, which was also the only page not using `useBeverageLabel`.
+
+What is still French from the server, deliberately: the **journal** lines (`e.msg`) and the
+cancellation motives, which are stored rather than rendered. If a motive ever reaches the UI it
+joins the rule above. The 22 `iced`/`mug` slugs with no `beverage` key are all `unaddressable` on
+STRIKER_BEST only — a documented limit, not a gap.
 
 ## Secrets and data hygiene
 

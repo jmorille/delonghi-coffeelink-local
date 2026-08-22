@@ -727,6 +727,20 @@ function vueReglages(m, brut) {
 // machines de modèles différents n'ont pas la même liste, et un libellé pris dans la mauvaise
 // nommerait une boisson que la machine ne sait pas faire.
 const bevLabel = (m, id) => m.catalog.byId(id)?.label ?? id;
+/**
+ * De quoi laisser le client nommer une boisson lui-même dans un libellé de tâche.
+ *
+ * Renvoie soit un paramètre simple (`{ p }`) quand la machine porte un nom SAISI par l'utilisateur
+ * — donnée personnelle, jamais traduite — soit une référence (`{ refs }`) vers l'espace `beverage`
+ * du catalogue, que le client résout avec le même helper que ses pages. Le repli reste le `label`
+ * français de la tâche : catalogue incomplet ⇒ texte serveur, jamais de clé brute à l'écran.
+ */
+function bevRef(m, id, nom = "boisson") {
+  const perso = machineBeverageNames(m.store.machineView())[id]?.name;
+  if (perso) return { p: { [nom]: perso } };
+  const slug = m.catalog.byId(id)?.slug;
+  return slug ? { refs: { [nom]: { ns: "beverage", cle: slug } } } : { p: { [nom]: String(bevLabel(m, id)) } };
+}
 
 // --- service des commandes : une visite, un pas ---
 const prop = (m, name, value, id = false) => { const p = { base_type: "string", dsn: m.dsn ?? "", name, value, metadata: {} }; if (id) p.id = crypto.randomBytes(4).toString("hex"); return { property: p }; };
@@ -928,18 +942,21 @@ function describeFrame(ecamB64) {
  * La nature se déduit de la table `ECAM_OPS` que `describeFrame` exploite déjà : aucun site d'appel
  * n'a à trancher, et il n'y a pas de deuxième table à tenir à jour.
  */
-function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null } = {}) {
+function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
   const lecture = natureTrame(ecamB64) === "lecture";
   const pas = [pasTrame(label, ecamB64, lecture
     ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain }
     : { attente: "fenetre", ms: durationMs, sustain })];
-  return enfilerTache(m, tache({ label, rang, pas, cle, meta, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
+  return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
 }
 
 /** Met une LECTURE de propriétés Ayla en file : une tâche, un pas par propriété. */
-function startImport(m, queue, durationMs = 120000, { label = null, rang = RANG.LECTURE, cle = null, meta = null } = {}) {
+function startImport(m, queue, durationMs = 120000, { label = null, rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
   const nom = label ?? (queue.length === 1 ? `Lecture ${queue[0]}` : `Lecture de ${queue.length} propriétés`);
-  const t = tache({ label: nom, rang, pas: queue.map((n) => pasLecture(n)), cle: cle ?? `lecture:${[...queue].sort().join(",")}`, meta });
+  // Sans libellé explicite, la clé décrit la forme du repli, pas le contenu : une propriété nommée
+  // ou un décompte. C'est exactement ce que dit le texte français juste au-dessus.
+  const cleI18n = i18n ?? (label ? null : (queue.length === 1 ? { k: "readOne", p: { prop: queue[0] } } : { k: "readMany", p: { count: queue.length } }));
+  const t = tache({ label: nom, rang, pas: queue.map((n) => pasLecture(n)), cle: cle ?? `lecture:${[...queue].sort().join(",")}`, meta, i18n: cleI18n });
   return enfilerTache(m, t, `${nom} — ${queue.length} propriété(s)`);
 }
 
@@ -2135,7 +2152,7 @@ async function maybeInitialRead(m) {
   }
   if (!queue.length) return null;
   L("sys", `adresse et clé LAN réunies : première lecture (${queue.length} propriétés — modèle et noms)`, m);
-  startImport(m, queue, 0, { label: "Première lecture (modèle et noms)", cle: "initiale" });
+  startImport(m, queue, 0, { label: "Première lecture (modèle et noms)", cle: "initiale", i18n: { k: "initialRead" } });
   await postLocalReg(m);
   return queue;
 }
@@ -2247,6 +2264,7 @@ function scanBeans(m, from, to) {
   for (let i = from; i <= to; i++) pas.push(pasTrame(`Bean System ${i}`, datapointValue(frameBeanSystem(i)), { attente: "reponse", sustain: "monitor" }));
   return enfilerTache(m, tache({
     label: `Balayage des grains ${from}–${to}`,
+    i18n: { k: "beanScan", p: { from, to } },
     rang: RANG.LECTURE,
     pas,
     cle: `beans:${from}-${to}`,
@@ -2877,7 +2895,10 @@ async function handleApi(req, res) {
       L("sys", annulees.length ? `${annulees.length} tâche(s) annulée(s) : ${annulees.map((t) => t.label).join(", ")}` : "rien à annuler", m);
       return raw(res, JSON.stringify({ cleared: annulees.length, tasks: annulees.map((t) => t.id) }));
     }
-    let frame, label, dur = 75000, refreshOrderFor = null, sustain = "monitor", checksumBefore;
+    // `cleLibelle` suit `label` pas à pas : le libellé français reste (journal du terminal, repli
+    // du client), la clé le double pour l'affichage. Les deux se posent dans la même branche, ce
+    // qui est la seule façon qu'ils ne divergent pas.
+    let frame, label, dur = 75000, refreshOrderFor = null, sustain = "monitor", checksumBefore, cleLibelle = null;
     // DONTCARE (0) est le mode utilisé pour enregistrer/supprimer une recette (voir
     // DeLonghiWifiConnectService:2959) ; START pour préparer.
     const MODE = { DONTCARE: 0, START: 1, STOPV2: 2 };
@@ -2886,8 +2907,8 @@ async function handleApi(req, res) {
     // vaut 1 — c'est le cas du flat white, du cappuccino inversé, du cortado, du long black.
     const inverted = (params) => (params ?? []).some((x) => Number(x.id) === 12 && Number(x.value) === 1);
     try {
-      if (b.action === "on") { frame = frameTurnOn(); label = "Allumer"; sustain = "profile"; }
-      else if (b.action === "off") { frame = frameTurnOff(); label = "Éteindre"; dur = 20000; }
+      if (b.action === "on") { frame = frameTurnOn(); label = "Allumer"; cleLibelle = { k: "on" }; sustain = "profile"; }
+      else if (b.action === "off") { frame = frameTurnOff(); label = "Éteindre"; cleLibelle = { k: "off" }; dur = 20000; }
       else if (b.action === "saveToProfile") {
         // Écriture PERSISTANTE dans la machine : remplace la recette enregistrée de ce profil.
         // Port de DeLonghiWifiConnectService:2959 — mode DONTCARE, action SAVE_BEVERAGE, et le
@@ -2900,6 +2921,7 @@ async function handleApi(req, res) {
         if (!params.length) return raw(res, JSON.stringify({ error: "aucun paramètre à enregistrer" }), 400);
         frame = frameDispense(bev, prof, MODE.DONTCARE, ACT.SAVE, params);
         label = `Enregistrer ${bevLabel(m, bev)} dans le profil ${prof}`;
+        cleLibelle = { k: "saveToProfile", p: { profil: prof }, ...bevRef(m, bev) };
         dur = 20000;
         // On renvoie la somme de contrôle du profil AVANT écriture : la redemander ensuite
         // (POST /api/checksums) permet de vérifier que la machine a bien enregistré, au lieu de
@@ -2913,13 +2935,14 @@ async function handleApi(req, res) {
         sustain = "profile";
         frame = frameSendProfile(m.activeProfile);
         label = `Profil ${m.activeProfile}`;
+        cleLibelle = { k: "selectProfile", p: { profil: m.activeProfile } };
         // Fenêtre courte : juste après, on relit l'ordre d'affichage de ce profil pour que
         // l'UI ne montre pas un ordre périmé (une seule propriété, c'est rapide).
         dur = 10000;
         refreshOrderFor = m.activeProfile;
       }
-      else if (b.action === "selectBean") { frame = frameSelectBean(Number(b.beanId ?? 1)); label = `Bean ${b.beanId}`; dur = 20000; }
-      else if (b.action === "stop") { frame = frameDispense(Number(b.beverageId ?? 1), Number(b.profileId ?? 1), MODE.STOPV2, ACT.PREPARE, []); label = "Arrêt"; dur = 15000; }
+      else if (b.action === "selectBean") { frame = frameSelectBean(Number(b.beanId ?? 1)); label = `Bean ${b.beanId}`; cleLibelle = { k: "selectBean", p: { index: Number(b.beanId ?? 1) } }; dur = 20000; }
+      else if (b.action === "stop") { frame = frameDispense(Number(b.beverageId ?? 1), Number(b.profileId ?? 1), MODE.STOPV2, ACT.PREPARE, []); label = "Arrêt"; cleLibelle = { k: "stop" }; dur = 15000; }
       else if (b.action === "dispense") {
         let bev, prof, params;
         if (b.recipeId) { const r = m.store.listRecipes().find((x) => x.id === b.recipeId); if (!r) return raw(res, JSON.stringify({ error: "recette inconnue" }), 404); ({ beverageId: bev, profileId: prof, params } = r); }
@@ -2930,6 +2953,8 @@ async function handleApi(req, res) {
         const act = inverted(params) ? ACT.PREPARE_INVERSION : ACT.PREPARE;
         frame = frameDispense(bev, prof, MODE.START, act, params);
         label = `Préparer ${bevLabel(m, bev)}${act === ACT.PREPARE_INVERSION ? " (lait d'abord)" : ""}`;
+        const r = bevRef(m, bev);
+        cleLibelle = { k: "dispense", p: { inversion: act === ACT.PREPARE_INVERSION ? 1 : 0, ...(r.p ?? {}) }, refs: r.refs };
       } else return raw(res, JSON.stringify({ error: "action inconnue" }), 400);
     } catch (e) { return raw(res, JSON.stringify({ error: e.message }), 400); }
     const ecamB64 = datapointValue(frame);
@@ -2946,12 +2971,12 @@ async function handleApi(req, res) {
      * de boisson. Le drapeau ne connaît que ce que CE serveur a mis en file : une boisson lancée au
      * panneau de la machine reste invisible, comme avant la file.
      */
-    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, meta: b.action === "dispense" ? { dispense: true } : null });
+    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, i18n: cleLibelle, meta: b.action === "dispense" ? { dispense: true } : null });
     // La file de lecture est écoulée quand aucun programme n'est actif : elle s'enchaîne donc
     // naturellement après la fenêtre du programme ci-dessus.
     if (refreshOrderFor) {
       const p = refreshOrderFor;
-      startImport(m, [`d${String(260 + p).padStart(3, "0")}_${p}_rec_priority`], 0, { label: `Ordre d'affichage du profil ${p}` });
+      startImport(m, [`d${String(260 + p).padStart(3, "0")}_${p}_rec_priority`], 0, { label: `Ordre d'affichage du profil ${p}`, i18n: { k: "displayOrder", p: { profil: p } } });
     }
 
     const reg = await postLocalReg(m);
@@ -3022,14 +3047,14 @@ async function handleApi(req, res) {
     const taches = [];
     const ajouter = (r) => { if (r?.ok) taches.push({ id: r.taskId, position: r.position }); };
 
-    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence" }));
-    ajouter(startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)" }));
-    ajouter(startProgram(m, datapointValue(frameChecksums()), "Sommes de contrôle", 15000, "monitor", { cle: "checksums" }));
+    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } }));
+    ajouter(startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)", i18n: { k: "model" } }));
+    ajouter(startProgram(m, datapointValue(frameChecksums()), "Sommes de contrôle", 15000, "monitor", { cle: "checksums", i18n: { k: "checksums" } }));
 
     // Profils : les deux familles de noms plus l'ordre des favoris. `force` implicite — on relit
     // tout, c'est la demande ; les sommes de contrôle ne court-circuitent rien ici.
     const profs = [...PROFILE_NAME_PROPS, ...CUSTOM_NAME_PROPS, ...PRIORITY_PROPS].map((x) => x.prop);
-    ajouter(startImport(m, profs, 0, { label: "Profils · noms et ordre" }));
+    ajouter(startImport(m, profs, 0, { label: "Profils · noms et ordre", i18n: { k: "profilesNamesOrder" } }));
 
     // Boissons : bornes (caractéristiques du modèle) ET valeurs du profil actif.
     const bev = [];
@@ -3038,7 +3063,7 @@ async function handleApi(req, res) {
       const vp = m.catalog.profileProp(x, p);
       if (vp) bev.push(vp);
     }
-    if (bev.length) ajouter(startImport(m, bev, 0, { label: `Boissons · profil ${p}` }));
+    if (bev.length) ajouter(startImport(m, bev, 0, { label: `Boissons · profil ${p}`, i18n: { k: "beverages", p: { profil: p } } }));
 
     ajouter(scanBeans(m, 0, 5));
     ajouter(scanStats(m, STAT_RANGES.all.map(([id, qty]) => ({ id, qty }))));
@@ -3067,8 +3092,15 @@ async function handleApi(req, res) {
     // 0xBA. Si la lecture concerne la boisson 200, on l'enchaîne : programme court d'abord, puis
     // la file de lecture s'écoule.
     const beanIndex = ids.includes(200) ? 1 : null;
-    const t = startImport(m, queue, 0, { label: `Boissons · profil ${profileId}` });
-    if (beanIndex !== null) startProgram(m, datapointValue(frameBeanSystem(beanIndex)), `Bean System ${beanIndex}`, 12000, "monitor");
+    const t = startImport(m, queue, 0, { label: `Boissons · profil ${profileId}`, i18n: { k: "beverages", p: { profil: profileId } } });
+    // Même `cle` que la lecture de Bean System de `/api/beanadapt` : c'est LA MÊME demande, la
+    // même trame 0xBA sur le même index. Sans elle, ouvrir `/` pendant une lecture de grains en
+    // relançait une seconde, et les deux verdicts s'empilaient dans « Activité » au lieu de se
+    // replier. Deux chemins vers une demande doivent produire la même clé, sinon la fusion ne
+    // protège que celui qui y a pensé.
+    if (beanIndex !== null) {
+      startProgram(m, datapointValue(frameBeanSystem(beanIndex)), `Bean System ${beanIndex}`, 12000, "monitor", { cle: `bean:${beanIndex}`, i18n: { k: "beanSystem", p: { index: beanIndex } } });
+    }
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ queued: queue.length, profileId, what, beanSystem: beanIndex, register: reg, ...tacheRendue(t) }));
   }
@@ -3082,6 +3114,9 @@ async function handleApi(req, res) {
     // ce nom par défaut d'un vrai nom choisi par l'utilisateur : la page / n'affiche que
     // les profils réellement renommés.
     const isDefaultName = (n) => n == null || /^profil(e)?\s*\d+$/i.test(n.trim());
+    // Une seule fois pour les cinq profils : la table des noms SAISIS sur la machine, celle qui
+    // doit primer sur le catalogue partout où une boisson est nommée.
+    const persoNames = machineBeverageNames(store);
     const profiles = Array.from({ length: m.catalog.model.nProfiles }, (_, i) => {
       const id = i + 1;
       const prio = PRIORITY_PROPS.filter((x) => x.profileId === id)
@@ -3094,8 +3129,26 @@ async function handleApi(req, res) {
         renamed: name != null && !isDefaultName(name),
         icon: names[id]?.icon ?? null,
         source: names[id]?.prop ?? null,
+        /**
+         * **L'ordre des favoris porte de quoi nommer la boisson SANS recopier notre français.**
+         *
+         * Il n'émettait qu'un `label` — le libellé français du catalogue — que `/profils` rendait
+         * brut. Deux défauts pour le prix d'un : la chaîne n'était pas traduisible, et surtout
+         * elle **contournait `machineBeverageNames`**, donc un emplacement perso renommé sur la
+         * machine s'affichait ici sous son nom d'usine. C'est exactement la divergence que
+         * `/api/beverages` avait déjà corrigée — « Recette perso 1 » d'un côté, « Lacteso » de
+         * l'autre — reproduite sur l'autre page.
+         *
+         * On envoie donc le `slug` (identifiant, traduit côté client) et le `machineName` quand il
+         * existe (saisi par l'utilisateur, jamais traduit). `label` reste, en repli.
+         */
         order: prio
-          ? prio.beverageIds.map((bid) => ({ id: bid, label: m.catalog.byId(bid)?.label ?? null }))
+          ? prio.beverageIds.map((bid) => ({
+              id: bid,
+              slug: m.catalog.byId(bid)?.slug ?? null,
+              label: m.catalog.byId(bid)?.label ?? null,
+              machineName: persoNames[bid]?.name ?? null,
+            }))
           : null,
       };
     });
@@ -3165,7 +3218,7 @@ async function handleApi(req, res) {
     // ne marque désormais rien du tout.
     const covered = queue.filter((p) => NAME_PROPS.has(p));
     const meta = store.checksums && covered.length ? { checksumMark: { names: store.checksums.names } } : null;
-    const t = startImport(m, queue, 0, { label: `Profils · ${what}`, meta });
+    const t = startImport(m, queue, 0, { label: `Profils · ${what}`, meta, i18n: { k: "profilesWhat", refs: { quoi: { ns: "profilesWhat", cle: String(what) } } } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ queued: queue.length, what, skipped, register: reg, ...tacheRendue(t) }));
   }
@@ -3173,7 +3226,7 @@ async function handleApi(req, res) {
   // Sommes de contrôle : demande la trame 0xA3 à la machine.
   if (url === "/api/checksums" && req.method === "POST") {
     const frame = frameChecksums();
-    const t = startProgram(m, datapointValue(frame), "Sommes de contrôle", 15000, "monitor", { cle: "checksums" });
+    const t = startProgram(m, datapointValue(frame), "Sommes de contrôle", 15000, "monitor", { cle: "checksums", i18n: { k: "checksums" } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ sent: true, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...tacheRendue(t) }));
   }
@@ -3254,7 +3307,7 @@ async function handleApi(req, res) {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const index = Number(b.index ?? 1);
     const frame = frameBeanSystem(index);
-    const t = startProgram(m, datapointValue(frame), `Bean System ${index}`, 15000, "monitor", { cle: `bean:${index}` });
+    const t = startProgram(m, datapointValue(frame), `Bean System ${index}`, 15000, "monitor", { cle: `bean:${index}`, i18n: { k: "beanSystem", p: { index } } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ sent: true, index, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...tacheRendue(t) }));
   }
@@ -3270,7 +3323,7 @@ async function handleApi(req, res) {
     return raw(res, JSON.stringify(modelState(m)));
   }
   if (url === "/api/model" && req.method === "POST") {
-    const t = startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)" });
+    const t = startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)", i18n: { k: "model" } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ queued: true, prop: SERIAL_PROP, register: reg, ...tacheRendue(t) }));
   }
@@ -3321,7 +3374,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ skipped: true, reason: "présence déjà demandée récemment", lastMonitor: m.lastMonitor }));
     }
     m.lastPresenceAt = now;
-    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence" });
+    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ started: true, register: reg, ...tacheRendue(t) }));
   }
@@ -3454,7 +3507,10 @@ async function handleApi(req, res) {
     }
     const frame = frameSetNames(perso ? 0xab : 0xa5, index, index, [{ name: nom, icon: icone }]);
     const label = perso ? `Renommer la recette perso ${index} en « ${nom} »` : `Renommer le profil ${index} en « ${nom} »`;
-    const t = startProgram(m, datapointValue(frame), label, 20000, "monitor", { rang: RANG.COMMANDE });
+    const t = startProgram(m, datapointValue(frame), label, 20000, "monitor", {
+      rang: RANG.COMMANDE,
+      i18n: { k: perso ? "renameCustom" : "renameProfile", p: { index, nom } },
+    });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true, kind: perso ? "custom" : "profile", index, name: nom, icon: icone,
@@ -3486,10 +3542,10 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ error: `boisson ${inconnue} inconnue sur ${m.catalog.model.type}` }), 400);
     }
     const frame = frameSetFavorites(profil, ordre);
-    const t = startProgram(m, datapointValue(frame), `Ordre des favoris du profil ${profil}`, 20000, "monitor", { rang: RANG.COMMANDE });
+    const t = startProgram(m, datapointValue(frame), `Ordre des favoris du profil ${profil}`, 20000, "monitor", { rang: RANG.COMMANDE, i18n: { k: "favouritesOrder", p: { profil } } });
     // Puis on relit : c'est la seule confirmation disponible, la machine n'accuse pas l'écriture.
     const prop = `d${String(260 + profil).padStart(3, "0")}_${profil}_rec_priority`;
-    startImport(m, [prop], 0, { label: `Ordre d'affichage du profil ${profil}` });
+    startImport(m, [prop], 0, { label: `Ordre d'affichage du profil ${profil}`, i18n: { k: "displayOrder", p: { profil } } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true, profileId: profil, beverageIds: ordre,
@@ -3511,7 +3567,7 @@ async function handleApi(req, res) {
     const mode = Number(b.mode);
     if (![0, 1, 2].includes(mode)) return raw(res, JSON.stringify({ error: "mode attendu : 0, 1 ou 2" }), 400);
     const frame = frameMonitorMode(mode);
-    const t = startProgram(m, datapointValue(frame), `Monitor mode ${mode} (0x${MONITOR_MODES[mode].toString(16)})`, 15000, "monitor", { cle: `monitormode:${mode}` });
+    const t = startProgram(m, datapointValue(frame), `Monitor mode ${mode} (0x${MONITOR_MODES[mode].toString(16)})`, 15000, "monitor", { cle: `monitormode:${mode}`, i18n: { k: "monitorMode", p: { mode, hex: MONITOR_MODES[mode].toString(16) } } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true, mode, cmd: MONITOR_MODES[mode],
@@ -3545,7 +3601,7 @@ async function handleApi(req, res) {
     }
     const taches = [];
     if (props.length) {
-      const t = startImport(m, props, 0, { label: "Réglages machine", cle: "reglages" });
+      const t = startImport(m, props, 0, { label: "Réglages machine", cle: "reglages", i18n: { k: "settings" } });
       if (t?.ok) taches.push({ id: t.taskId, position: t.position });
     }
     // Les adresses sans propriété connue : une seule trame les couvre toutes, la machine rendant
@@ -3554,7 +3610,7 @@ async function handleApi(req, res) {
     if (sansProp.length) {
       const premier = Math.min(...sansProp);
       const qty = Math.max(...sansProp) - premier + 1;
-      const t = startProgram(m, datapointValue(frameParamRead95(premier, qty)), `Réglages ${premier}+${qty - 1}`, 15000, "monitor", { cle: `reglages95:${premier}+${qty}` });
+      const t = startProgram(m, datapointValue(frameParamRead95(premier, qty)), `Réglages ${premier}+${qty - 1}`, 15000, "monitor", { cle: `reglages95:${premier}+${qty}`, i18n: { k: "settings95", p: { premier, suite: qty - 1 } } });
       if (t?.ok) taches.push({ id: t.taskId, position: t.position });
     }
     const reg = await postLocalReg(m);
@@ -3581,6 +3637,7 @@ async function handleApi(req, res) {
     let r = REGLAGE_PAR_CLE.get(String(b.cle));
     let valeur;
     let libelle;
+    let cleLibelle = null;
     if (r) {
       if (!dispo(r.supporte)) return raw(res, JSON.stringify({ error: `réglage « ${r.cle} » non supporté par ce modèle` }), 400);
       valeur = Number(b.value);
@@ -3588,6 +3645,7 @@ async function handleApi(req, res) {
         return raw(res, JSON.stringify({ error: `valeur hors bornes (${r.min}–${r.max})` }), 400);
       }
       libelle = `Réglage ${r.cle} = ${valeur}`;
+      cleLibelle = { k: "settingWrite", p: { valeur }, refs: { reglage: { ns: "setting", cle: r.cle } } };
     } else {
       // Un interrupteur du champ de bits.
       const porteur = REGLAGES.find((x) => x.bits?.some((y) => y.cle === String(b.cle)));
@@ -3604,9 +3662,10 @@ async function handleApi(req, res) {
       valeur = poser ? (courant | (1 << bit.bit)) & 0xff : courant & ~(1 << bit.bit) & 0xff;
       r = porteur;
       libelle = `Réglage ${bit.cle} ${on ? "activé" : "désactivé"}`;
+      cleLibelle = { k: "settingToggle", p: { actif: on ? 1 : 0 }, refs: { reglage: { ns: "setting", cle: bit.cle } } };
     }
     const frame = frameParamWrite(r.addr, valeur);
-    const t = startProgram(m, datapointValue(frame), libelle, 20000, "monitor", { rang: RANG.COMMANDE });
+    const t = startProgram(m, datapointValue(frame), libelle, 20000, "monitor", { rang: RANG.COMMANDE, i18n: cleLibelle });
     // On note tout de suite la valeur envoyée, marquée comme telle : la machine ne confirme pas une
     // écriture de réglage, donc « lu » et « envoyé » ne doivent pas se ressembler dans l'interface.
     noteReglages(m, [{ addr: r.addr, value: valeur }], "écrit (non relu)");
@@ -3631,7 +3690,7 @@ async function handleApi(req, res) {
     const name = typeof b.name === "string" ? b.name : "";
     const visible = b.visible !== false;
     const frame = frameBeanSystemSave(index, name, grinder, temperature, aroma, visible);
-    const t = startProgram(m, datapointValue(frame), `Bean System ${index} → mouture ${grinder}, temp ${temperature}, arôme ${aroma}`, 20000, "monitor", { rang: RANG.COMMANDE });
+    const t = startProgram(m, datapointValue(frame), `Bean System ${index} → mouture ${grinder}, temp ${temperature}, arôme ${aroma}`, 20000, "monitor", { rang: RANG.COMMANDE, i18n: { k: "beanWrite", p: { index, mouture: grinder, temperature, arome: aroma } } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true,
