@@ -70,11 +70,11 @@ implémentées.
 | Rôles inversés, la machine est le client HTTP | mesuré, en production depuis des mois | **établi** |
 | `lanip_key` utilisée comme octets ASCII de la chaîne base64 | mesuré | **établi** |
 | Le flux AES-256-CBC est persistant par session | mesuré | **établi** |
-| L'app annonce en POST puis PUT, et sait supprimer la session | APK décompilé | **lu, non observé** |
+| L'app annonce en POST puis PUT, et sait supprimer la session | APK décompilé | **lu**, et le POST + `?dsn=` sur port 80 est **observé** (2026-08-22) |
 | Le créneau `local_reg` est **unique** | **mesuré le 2026-08-22** (voir §7.1) | **établi** |
 | L'app interroge `<DSN>.local` en mDNS, ports 5353 **et 10276** | APK décompilé (`NetThread`) | **lu, non observé** |
-| Ce chemin mDNS n'est emprunté qu'après un échec réseau/timeout | APK décompilé (`handleKeyExchangeError`) | **lu, non observé** |
-| L'app accepterait une réponse mDNS venue d'un autre hôte | — | ⚠️ **inféré** |
+| Ce chemin mDNS n'est emprunté qu'après un échec réseau/timeout | APK décompilé (`handleKeyExchangeError`) | **établi, et plus restrictif** : il faut EN PLUS que le téléphone soit coupé du cloud (§7quater) |
+| L'app accepterait une réponse mDNS venue d'un autre hôte | — | **sans objet** : le mDNS ne part jamais en usage normal (2026-08-22) |
 | Une app se contenterait d'un pair qui n'est pas la machine | — | ⚠️ **inféré** |
 
 **Quatre lignes de ce tableau restent des inférences**, et elles portent le chemin mDNS et la
@@ -83,6 +83,26 @@ crédulité de l'app — plus la prémisse. D'où la section 9.
 ## 5. Décisions prises
 
 ### 5.1 Redirection par répondeur mDNS
+> ### ⚠️ Mesuré le 2026-08-22 — cette décision est CADUQUE
+>
+> Le mDNS n'est armé que si `isCachedSession()` est vrai, c'est-à-dire **uniquement quand le
+> téléphone n'a pas pu joindre le cloud Ayla** (l'unique appelant qui pose ce drapeau est la
+> branche d'erreur du rafraîchissement de jeton dans `CachedAuthProvider`, qui journalise
+> « Starting LAN login »). Vérifié en direct : cafetière retirée du réseau, application ouverte,
+> `local_reg` en échec toutes les 10 s pendant plus de 100 s — **aucune requête mDNS**, jamais.
+> L'application bascule silencieusement sur le cloud et continue d'afficher la machine « en ligne ».
+>
+> S'y ajoute un second obstacle, indépendant : la requête est du multicast lien-local, donc elle ne
+> quitte pas le segment du téléphone. Notre serveur est ailleurs.
+>
+> Détail complet et extraits de code dans `doc/analyse-connexion-wifi.md` §7quater.
+>
+> **La voie qui reste** est de répondre à l'adresse que l'application interroge déjà — prendre la
+> place de la machine au niveau réseau. Et pas par une règle de pare-feu : téléphone et cafetière
+> partagent le même /24, le trafic est commuté et ne traverse jamais la passerelle. Concrètement :
+> donner au serveur une patte sur ce segment et **lui attribuer l'adresse de la cafetière**, celle-ci
+> étant déplacée ailleurs. C'est plus invasif que le mDNS, et c'est la seule chose qui marche.
+
 
 lan-server répond lui-même à la question que l'app pose déjà.
 

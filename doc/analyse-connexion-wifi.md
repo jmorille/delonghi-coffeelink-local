@@ -582,6 +582,101 @@ C'est la prémisse du multiplexeur décrit dans `doc/spec-proxy-multi-app.md` : 
 est unique, faire cohabiter plusieurs applications suppose que quelqu'un le tienne pour tout le
 monde.
 
+## 7quater. Test réel du 2026-08-22 : le mDNS est un repli HORS LIGNE, pas une voie de découverte
+
+**Manipulation.** La cafetière est retirée du Wi-Fi (injoignable : 100 % de perte au ping, depuis le
+téléphone comme depuis le serveur). Le téléphone (IP_TELEPHONE) est branché en USB, débogage actif, et
+l'application officielle est ouverte. `adb logcat` tourne pendant toute la fenêtre.
+
+### Ce que l'application fait, littéralement
+
+```
+E/AylaAPI: com.android.volley.NoConnectionError: java.net.ConnectException:
+           Failed to connect to /IP_MACHINE:80
+           for http://IP_MACHINE/local_reg.json?dsn=AC000W0XXXXXXXX
+```
+
+Répété **toutes les 10 secondes**, sans dégressivité et sans abandon (observé sur plus de 100 s).
+
+Trois points du protocole, jusqu'ici seulement *lus* dans l'APK, sont maintenant **mesurés** :
+
+| Fait | Statut avant | Preuve |
+|---|---|---|
+| L'application vise le **port 80**, jamais un autre | inféré de `lanURL()` | `/IP_MACHINE:80` dans la trace |
+| Le premier enregistrement porte **`?dsn=`** | lu dans `sendLocalRegistration` | `?dsn=AC000W0XXXXXXXX` dans l'URL |
+| L'annonce est un **POST** vers `local_reg.json` | lu | idem |
+
+C'est le gabarit exact qu'un serveur qui se fait passer pour la machine doit servir.
+
+### Et surtout : le mDNS ne s'est JAMAIS déclenché
+
+Aucune requête multicast, aucune interrogation de `AC000W0XXXXXXXX.local`, aucun `NetThread` — sur toute
+la fenêtre. L'explication est dans le code, et elle est plus restrictive qu'on ne le croyait.
+
+`handleKeyExchangeError()` est bien appelé (la branche d'erreur de `sendLocalRegistration` y mène,
+vérifié), mais il arme le `NetThread` sous **deux** conditions cumulées :
+
+```java
+if (… && aylaDevice.getSessionManager().isCachedSession()) {
+    if ((error is NetworkError || error is TimeoutError) && _netThread == null) {
+        new NetThread(_mdnsListener, dsn + ".local").start();
+    }
+}
+```
+
+- **La classe d'erreur** est satisfaite : `AylaError.java` convertit un `NoConnectionError` de Volley
+  en `NetworkError` exactement (`if (volleyError instanceof NoConnectionError) return new
+  NetworkError(...)`), et le test est une égalité de classe, donc c'est bien le bon type.
+- **`isCachedSession()` ne l'est pas**, et c'est là que tout se joue. Ce drapeau vient de
+  `signInSuccessful(..., z9)`, et l'unique appelant qui passe `true` est
+  `CachedAuthProvider` — dans la **branche d'erreur** du rafraîchissement de jeton :
+
+```java
+// échec de POST users/refresh_token.json
+if (erreur != NetworkError && erreur != Timeout)      → didFailAuthentication
+else if (!allowOfflineUse || sessionName == null)     → didFailAuthentication
+else { AylaLog.d(LOG_TAG, "Starting LAN login");
+       didAuthenticate(_cachedCredentials, true); }   → isCachedSession() = true
+```
+
+**Conclusion : `isCachedSession()` signifie « le téléphone n'a pas pu joindre le cloud Ayla ».**
+C'est un mode hors ligne, pas un mode normal — et il est en plus effacé (`setCachedSession(false)`)
+dès que la première requête cloud aboutit.
+
+Donc **la découverte mDNS n'existe que lorsque le téléphone est coupé d'Internet.** Tant qu'il a le
+cloud, l'application ne cherchera jamais l'appareil ailleurs qu'à l'adresse que le cloud lui a
+donnée. C'était l'inverse de ce que la spécification du proxy supposait.
+
+### Ce que l'application fait à la place : elle bascule sur le cloud, sans le dire
+
+Pendant que les `local_reg` échouent, l'application affiche la machine comme **en ligne** :
+
+```
+D/YOLO: machinePos connection status: Online
+D/GoogleAnalyticsHelper: setMachineConnectionStatus Online ready
+D/DSS_LOGS: Create subscription url https://mdss-field-eu.aylanetworks.com/api/v1/subscriptions
+E/…DeLonghiWifiConnectService: onSingleChangeProperty data_request sameLan: false
+```
+
+`sameLan: false` est le marqueur : ces propriétés arrivent par le **flux cloud** (DSS), pas par le
+LAN. L'utilisateur ne voit aucune dégradation — ce qui explique qu'un conflit de créneau soit si
+difficile à diagnostiquer côté application aussi.
+
+### Conséquence pour le multiplexeur
+
+Le répondeur mDNS était l'étape 1 du découpage de `doc/spec-proxy-multi-app.md`. **Il ne sert à
+rien dans un usage normal**, et deux obstacles s'ajoutent au premier :
+
+1. le mDNS n'est armé que hors ligne (ci-dessus) ;
+2. la requête est du multicast lien-local : le téléphone est sur le segment de la machine, notre
+   serveur est ailleurs — elle ne nous atteindrait pas sans répéteur mDNS sur la passerelle.
+
+La seule voie qui fonctionne dans un usage normal est donc de **répondre à l'adresse que
+l'application interroge déjà**, c'est-à-dire de prendre la place de la machine au niveau réseau.
+Et ce n'est pas faisable par une règle de pare-feu : le téléphone et la machine étant sur le même
+/24, le trafic est commuté et ne traverse jamais la passerelle (vérifié : `ip route get
+IP_MACHINE` ne montre aucun `via`, et l'entrée ARP porte le MAC du module ESP32).
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02
