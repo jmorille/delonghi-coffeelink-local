@@ -183,7 +183,18 @@ export const hexCmd = (c) => `0x${Number(c ?? 0).toString(16).padStart(2, "0")}`
  * divergerait au premier ajout.
  */
 export function octetsEcam(valeur) {
-  const v = String(valeur ?? "");
+  // ⚠️ **Les blancs sont retirés AVANT tout contrôle, et c'est indispensable.** Android encode avec
+  // `Base64.encodeToString(…, Base64.DEFAULT)`, qui **replie les lignes à 76 caractères et ajoute
+  // un saut de ligne final**. Une trame parfaitement valide arrive donc avec un saut de
+  // ligne au bout — et,
+  // au-delà de 76 caractères, avec des sauts au milieu.
+  //
+  // Mesuré en direct après avoir posé ce filtre : `0d 06 a9 f0 01 …`, une sélection de profil sans
+  // le moindre défaut, journalisée « valeur non-trame ». `Buffer.from` ignore les blancs de son
+  // côté, si bien que tout fonctionnait AVANT ce garde-fou : la longueur et le motif, eux, ne les
+  // ignorent pas. Le dégât ne s'arrêtait pas au libellé — `cleFusion` rend `null` sur un non-trame,
+  // donc la fusion des sélections de profil répétées cessait d'opérer par la même occasion.
+  const v = String(valeur ?? "").replace(/\s+/g, "");
   if (!v || v.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v)) return null;
   const buf = Buffer.from(v, "base64");
   if (buf.length < 4 || (buf[0] !== 0x0d && buf[0] !== 0xd0)) return null;

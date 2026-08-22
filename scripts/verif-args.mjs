@@ -317,5 +317,29 @@ test("la constante d'ouverture classic est reconnue, et n'est PAS une commande",
   eq(constanteConnue(Buffer.from("0d07840f02015512", "hex")), null,
      "une vraie trame n'est pas prise pour la constante");
 });
+test("une trame reste une trame malgré les blancs qu'Android y met", () => {
+  // ⚠️ **Régression vécue, en production, quelques minutes après avoir posé le garde-fou.**
+  // Android encode avec `Base64.encodeToString(…, Base64.DEFAULT)`, qui replie les lignes à
+  // 76 caractères ET ajoute un saut de ligne final. Une sélection de profil parfaitement
+  // valide — `0d 06 a9 f0 01 d7 c0` — est donc arrivée avec un saut de ligne au bout, et le
+  // contrôle de longueur (`% 4`) l'a refusée : journalisée « valeur non-trame ».
+  //
+  // `Buffer.from` ignore les blancs, c'est pourquoi tout fonctionnait AVANT le filtre : le
+  // filtre, lui, ne les ignorait pas. Et le dégât dépassait le libellé — `cleFusion` rend
+  // `null` sur un non-trame, donc les sélections de profil répétées cessaient de fusionner.
+  // Un garde-fou plus strict que ce qu'il garde est un défaut, pas une précaution.
+  const nl = String.fromCharCode(10);
+  const nu = "DQap8AHXwGqJ1u0=";
+  vrai(octetsEcam(nu) !== null, "la valeur nue passe");
+  vrai(octetsEcam(nu + nl) !== null, "avec le saut de ligne final d'Android aussi");
+  vrai(octetsEcam("DQap8AHXwGqJ" + nl + "1u0=" + nl) !== null, "et repliée au milieu");
+  eq(describeFrame(nu + nl).includes("(0xa9)"), true, "elle est nommée, pas dite non-trame");
+  // Le point qui a rendu la régression coûteuse : la clé de fusion en dépend.
+  eq(cleFusion(nu + nl), cleFusion(nu), "la clé de fusion survit aux blancs");
+  eq(cleFusion(nu + nl), "profil:1", "et vaut bien le profil visé");
+  // Tolérer les blancs ne doit RIEN tolérer d'autre : le motif garde son rôle.
+  eq(octetsEcam("1787407876"), null, "un horodatage reste refusé");
+  eq(octetsEcam("pas du base64 !"), null, "un texte quelconque aussi");
+});
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);
