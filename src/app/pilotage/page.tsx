@@ -6,7 +6,7 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import ConfirmSettings from "../ConfirmSettings";
 import { cleAnnonce, echecAnnonce } from "../register";
-import { AGE_PERIME, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel, taskLabel } from "../machineState";
+import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel, taskLabel } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
 
@@ -346,6 +346,21 @@ export default function Dashboard() {
   const ageSec = mon ? Math.round((Date.now() - mon.at) / 1000) : null;
   const perime = ageSec != null && ageSec > AGE_PERIME;
   /**
+   * **La progression a son PROPRE seuil de fraîcheur, bien plus court que `AGE_PERIME`.**
+   *
+   * Pendant une préparation la machine pousse une trame toutes les 1 à 3 secondes ; une lecture de
+   * vingt secondes ne veut donc pas dire « ça avance lentement », elle veut dire qu'on a perdu le
+   * contact. Sans ce seuil la ligne affirmait « Préparation en cours · 100 % » à partir d'une trame
+   * vieille de 94 secondes, alors que le café était bu — constaté sur la page. L'accueil corrigeait
+   * déjà ce défaut avec `AGE_PROGRESSION` ; cette page ne l'avait jamais reçu, et deux pages qui
+   * datent différemment la même lecture est exactement la divergence que ce projet traque.
+   *
+   * Ici on ne cache pas la ligne comme le fait l'accueil : c'est la page de diagnostic, les trois
+   * octets bruts sont ce qu'on vient y lire. On cesse seulement de les présenter comme un état
+   * actuel.
+   */
+  const progFraiche = ageSec != null && ageSec <= AGE_PROGRESSION;
+  /**
    * Âge du dernier ÉCHANGE, tous datapaquets confondus — pas seulement du monitor. C'est ce que
    * regarde le coupe-circuit, et c'est ce qui distingue « la session existe » de « la machine
    * répond ». Le même battement de 15 s le rafraîchit.
@@ -365,6 +380,33 @@ export default function Dashboard() {
   const encours = file?.encours ?? null;
   const attente: any[] = file?.attente ?? [];
   const finies: any[] = file?.finies ?? [];
+  /**
+   * **La derniere boisson preparee, tiree de la file.**
+   *
+   * Une tache de preparation est reconnue par sa cle de traduction (`i18n.k === "dispense"`), posee
+   * dans la seule branche `dispense` de `/api/command` — c'est un identifiant du protocole, pas un
+   * libelle a analyser : lire le francais de `label` pour en extraire un nom de boisson serait la
+   * meme faute que traduire une chaine du serveur.
+   *
+   * L'ordre compte : la tache EN COURS d'abord (si c'est une preparation, c'est celle-la qui
+   * coule), puis les terminees, que la file range de la plus recente a la plus ancienne. Les
+   * taches EN ATTENTE sont exclues : elles n'ont rien prepare.
+   *
+   * Le nom vient de la meme source que le libelle de la tache : un nom SAISI sur la machine est un
+   * parametre simple et ne se traduit pas ; sinon c'est un slug du catalogue, que le client nomme
+   * lui-meme. Deux limites assumees : la file ne garde que cinq taches terminees, et une boisson
+   * lancee au panneau de la machine n'est jamais passee par nous.
+   */
+  const derniereBoisson: string | null = (() => {
+    const t = [encours, ...finies].find((x: any) => x?.i18n?.k === "dispense");
+    if (!t) return null;
+    const brut = (t as any).i18n;
+    const perso = brut.p?.boisson;
+    if (typeof perso === "string" && perso) return perso;
+    const ref = brut.refs?.boisson;
+    if (ref?.cle) return tbev.has(ref.cle) ? tbev(ref.cle as any) : ref.cle;
+    return null;
+  })();
   const rienEnFile = !encours && attente.length === 0 && finies.length === 0;
   /**
    * **Arrêter est possible dès que la machine signale un programme en cours** — plus « dès que cet
@@ -526,16 +568,45 @@ export default function Dashboard() {
                 `f=7 e=0` n'apprend rien à personne. */}
             {mon && mon.auRepos === false && (
               <div className="kv">
-                <dt className="k">{t("monitorProgress")}</dt>
+                {/* **L'etiquette suit la fraicheur, sinon elle ment.** « Preparation en cours »
+                    au-dessus d'une lecture vieille de 94 secondes est exactement le defaut
+                    signale : la boisson etait bue. Fraiche, la ligne decrit ce qui coule ;
+                    datee, elle decrit la derniere preparation connue — et le contenu le dit
+                    deja (pastille d'age, nom de la boisson). */}
+                <dt className="k">{progFraiche ? t("monitorProgress") : t("monitorProgressLast")}</dt>
                 <dd className="titreLigne">
-                  <span>{stepLabel(mon.etapeCle ?? null, tp)}</span>
-                  <span className="sub mono">
-                    {t("monitorProgressRaw", {
-                      percent: mon.pourcent ?? -1,
-                      f: mon.fonction ?? -1,
-                      e: mon.etape ?? -1,
-                    })}
-                  </span>
+                  {/* **Ne pas répéter le libellé de la ligne dans sa valeur.** `stepLabel(null)`
+                      rend « Préparation en cours », mot pour mot ce que dit déjà le `dt` : sur une
+                      étape sans nom — il y en a cinq d'observées — la ligne s'affichait deux fois
+                      d'affilée. On ne nomme donc l'étape que lorsqu'elle A un nom. */}
+                  {progFraiche ? (
+                    mon.etapeCle ? <span>{stepLabel(mon.etapeCle, tp)}</span> : null
+                  ) : (
+                    <span className="pill off" title={t("monitorProgressStaleHint")}>
+                      {t("monitorProgressStale", { age: fmtAge(ageSec as number, tp) })}
+                    </span>
+                  )}
+                  {/* **Le nom de la boisson plutot que les trois octets.** « 100 % · fonction 0,
+                      etape 2 » ne dit rien a personne a cote d'un libelle qui annonce une
+                      preparation ; le nom de ce qui vient de couler, si. Les octets ne sont pas
+                      perdus pour autant — ils restent en infobulle, parce que c'est encore la page
+                      du protocole et qu'ils sont ce qu'on vient y lire quand une preparation se
+                      comporte mal. Sans boisson connue (file ecoulee, ou boisson lancee au panneau
+                      de la machine), on retombe sur les octets en clair : mieux vaut une valeur
+                      brute qu'une ligne vide. */}
+                  {derniereBoisson ? (
+                    <span title={t("monitorProgressRaw", { percent: mon.pourcent ?? -1, f: mon.fonction ?? -1, e: mon.etape ?? -1 })}>
+                      {derniereBoisson}
+                    </span>
+                  ) : (
+                    <span className="sub mono">
+                      {t("monitorProgressRaw", {
+                        percent: mon.pourcent ?? -1,
+                        f: mon.fonction ?? -1,
+                        e: mon.etape ?? -1,
+                      })}
+                    </span>
+                  )}
                 </dd>
               </div>
             )}

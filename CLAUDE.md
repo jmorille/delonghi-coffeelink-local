@@ -79,6 +79,7 @@ prompt by allowing them.
 **lan-server has no test suite.** Protocol changes are validated live against the real machine, not unit tests.
 CI (`.github/workflows/ci.yml`) therefore checks what can be checked without a machine: `tsc`,
 `node --check` on every `.mjs`, the message catalogue (invalid JSON or an angle bracket in a string),
+**every literal translation key against its namespace** (`scripts/verif-messages.mjs`),
 `pnpm build`, the SQLite store's init/migration, and that the Docker image builds and answers
 `/api/status`. On a green push to `master`/`main` it then **publishes `ghcr.io/<repo>:edge`** — so a
 bad merge becomes a pullable image, not just a red check. `release.yml` fires on a `v*` tag: multi-arch image to GHCR + a GitHub release with a
@@ -1026,6 +1027,17 @@ twenty-second-old percentage does not mean "it is going slowly", it means "we lo
 `verif-monitor.mjs` asserts the constant stays **above** the captures' worst gap and **below**
 `AGE_PERIME` — tightening it under the real cadence would make the bar flicker.
 
+**`/pilotage` uses that same threshold, and it did not for a long time.** Its raw progression row
+was gated on `auRepos === false` alone, so it announced "Préparation en cours · 100 %" from a frame
+**94 seconds old**, long after the cup was drunk — reported from real use. `/` had the fix,
+`/pilotage` never received it, and two pages dating the same reading differently is exactly the
+divergence this file warns about elsewhere. The treatment differs by page on purpose: `/` **hides**
+the bar, because someone waiting for coffee is served by nothing rather than by a lie; `/pilotage`
+**keeps the three raw bytes** — they are what one comes to that page to read — and stops presenting
+them as current, replacing the step name with a dated-reading pill. Related: `stepLabel(null)`
+returns "Préparation en cours", word for word the row's own `dt` label, so an unnamed step printed
+the same sentence twice. The step is named only when it *has* a name.
+
 **A preparation can run entirely under state byte `0x04`, the one documented as "standby."**
 Measured: a complete espresso — grind, infusion, pour to 100 % — across **49 frames all reporting
 `0x04`**, with no power-on command ever sent through us; the same drink had been recorded at `0x02`
@@ -1099,6 +1111,17 @@ layout wraps the (client) pages in `NextIntlClientProvider`.
 before Next, and a `[locale]` segment would move every page for no benefit while there is one
 language. The extension point for a second language is `src/i18n/request.ts` (cookie or
 `Accept-Language`), which leaves the pages untouched.
+
+**A missing translation key is invisible to `tsc` and to the build**, because every next-intl
+translator has the same type and the key is only resolved at render — it surfaces as
+`MISSING_MESSAGE` in the browser console, i.e. only if someone opens that page *and* looks. It
+happened: `fmtAge` was handed the `dashboard` translator when `ageSeconds`/`ageMinutes`/`ageHours`
+live in `power`. `scripts/verif-messages.mjs` now runs in CI over every literal `t("key")` — 741 of
+them. Two things to know about its reach, because a check trusted beyond its scope is worse than no
+check: it accepts a key found in **any** namespace the name is bound to in that file (`page.tsx`
+binds `t` to both `power` and `editor`, and without scope analysis nothing says which applies), and
+it **cannot see the failure that motivated it** — a key requested inside a helper the translator was
+passed to. For that class, the guard is the comment on `fmtAge` naming the namespace it needs.
 
 **Never put `<...>` in a message string.** next-intl reads angle brackets as rich-text tags, so a
 message like `0D 08 A2 0F <id> <qty>` fails to parse and the UI prints the raw key

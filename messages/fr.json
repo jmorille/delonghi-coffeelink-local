@@ -465,7 +465,10 @@
     "readAllSent": "Lecture complète en file : {count} tâches, {steps} pas. Le suivi est dans le panneau Activité.",
     "commandsRead": "Lectures",
     "monitorProgress": "Préparation en cours",
-    "monitorProgressRaw": "{percent} % · fonction {f}, étape {e}"
+    "monitorProgressLast": "Dernière préparation",
+    "monitorProgressRaw": "{percent} % · fonction {f}, étape {e}",
+    "monitorProgressStale": "lecture datée — {age}",
+    "monitorProgressStaleHint": "Pendant une préparation la machine pousse une trame toutes les 1 à 3 secondes. Une lecture aussi ancienne ne veut pas dire que la préparation avance lentement : elle veut dire que le contact a été perdu, et la boisson est probablement terminée."
   },
   "beverage": {
     "espresso": "Espresso",
