@@ -167,7 +167,7 @@ test("0x83 change de nature selon son octet de mode, et c'est tout ce qui sépar
 test("describeFrame : la forme courte perd les octets, jamais l'opération", () => {
   const t = sortante(frameTurnOn());
   eq(describeFrame(t, { octets: false }), "action · marche / arrêt (0x84)", "forme courte");
-  eq(describeFrame(t).startsWith("action · marche / arrêt (0x84) · trame 0d 07 84 0f 02 01"), true, "forme longue");
+  vrai(describeFrame(t).startsWith("action · marche / arrêt (0x84) · trame 0d 07 84 0f 02 01"), "forme longue");
   // Les 4 octets d'horodatage ne sont PAS des octets de commande : les afficher tromperait qui
   // compare la ligne aux tables de `doc/commandes-cafe.md`.
   eq(describeFrame(t).includes("01 02 03 04"), false, "horodatage retiré");
@@ -179,7 +179,7 @@ test("une commande hors table est CRIÉE et garde ses octets, même en forme cou
   // ligne discrète les perdrait.
   const t = sortante([0x0d, 0x06, 0xc7, 0xf0, 0x01, 0, 0]);
   eq(describeFrame(t, { octets: false }), "commande NON IDENTIFIÉE (0xc7) · trame 0d 06 c7 f0 01 00 00", "courte");
-  eq(describeFrame(t).includes("NON IDENTIFIÉE"), true, "longue");
+  vrai(describeFrame(t).includes("NON IDENTIFIÉE"), "longue");
 });
 
 test("profilVise lit les DEUX dispositions, et rien d'autre", () => {
@@ -239,9 +239,9 @@ test("une valeur qui n'est pas une trame ne se voit PAS attribuer une commande",
   // SORTANT — où il compte davantage : c'est une valeur qu'on relaie à une VRAIE cafetière.
   const brute = "Rdo3iDTrr///+pOB";
   eq(octetsEcam(brute), null, "l'en-tête n'est ni 0x0D ni 0xD0");
-  eq(describeFrame(brute).startsWith("valeur non-trame"), true, "elle est nommée pour ce qu'elle est");
-  eq(describeFrame(brute).includes("45 da 37 88"), true, "les octets sont conservés");
-  eq(describeFrame(brute).includes(brute), true, "le base64 aussi — il se recolle dans un test");
+  vrai(describeFrame(brute).startsWith("valeur non-trame"), "elle est nommée pour ce qu'elle est");
+  vrai(describeFrame(brute).includes("45 da 37 88"), "les octets sont conservés");
+  vrai(describeFrame(brute).includes(brute), "le base64 aussi — il se recolle dans un test");
   eq(profilVise(brute), null, "aucun profil n'en est tiré");
   // `Buffer.from(x, "base64")` ne lève jamais : un horodatage unix ressortait en « commande ».
   eq(octetsEcam("1787407876"), null, "un entier n'est pas une trame");
@@ -253,13 +253,13 @@ test("une vraie trame traverse le garde-fou sans être touchée", () => {
   // Le filtre ne doit rien coûter au cas normal : un faux positif ici effacerait du journal la
   // commande la plus importante qui y passe.
   const allumer = Buffer.from([0x0d, 0x07, 0x84, 0x0f, 0x02, 0x01, 0x55, 0x12, 0, 0, 0, 0]).toString("base64");
-  eq(octetsEcam(allumer) !== null, true, "en-tête 0x0D accepté");
-  eq(describeFrame(allumer).includes("(0x84)"), true, "la commande est nommée");
+  vrai(octetsEcam(allumer) !== null, "en-tête 0x0D accepté");
+  vrai(describeFrame(allumer).includes("(0x84)"), "la commande est nommée");
   // Les 4 octets d'horodatage sont retirés d'une VRAIE trame, et seulement d'elle : sur un
   // non-trame on ne sait pas ce que sont les 4 derniers octets, donc on les garde.
-  eq(!describeFrame(allumer).includes("55 12 00"), true, "l'horodatage est retiré d'une trame");
+  vrai(!describeFrame(allumer).includes("55 12 00"), "l'horodatage est retiré d'une trame");
   const reponse = Buffer.from([0xd0, 0x08, 0xa2, 0x0f, 0, 0, 0, 0]).toString("base64");
-  eq(octetsEcam(reponse) !== null, true, "en-tête 0xD0 accepté aussi — c'est le sens entrant");
+  vrai(octetsEcam(reponse) !== null, "en-tête 0xD0 accepté aussi — c'est le sens entrant");
 });
 test("la fusion ne prend que ce dont la répétition est sans effet", () => {
   // ⚠️ Défaut constaté en usage réel : six « sélection de profil (0xa9) · profil 1 » identiques

@@ -1405,6 +1405,15 @@ Trois choix dans cette ligne, chacun pour une raison :
 L'enjeu n'est pas cosmétique. Ce marqueur existe pour faire ressortir ce que le référentiel ne
 connaît pas encore ; une valeur mal nommée y **fabrique une découverte qui n'existe pas**, et
 masque du même coup la seule information vraie — que cette valeur n'est pas une trame. Reste, elle,
-une vraie question ouverte : douze octets non-ECAM écrits par l'application officielle dans
-`data_request`. Ils sont désormais conservés en entier.
+une vraie question ouverte — et la ligne ci-dessus n'en montre qu'une partie. `describeFrame()`
+retirait **quatre octets d'office** (l'horodatage d'une trame) : les douze affichés sont les douze
+survivants, **la valeur en faisait seize**, et les quatre derniers sont perdus pour cette capture.
+C'est ce rognage que la correction supprime, mais elle lui est postérieure.
+
+> ⚠️ **Seize octets, c'est exactement un bloc AES**, et le § 7sexies de
+> `analyse-connexion-wifi.md` décrit précisément cette signature : en CBC, un message sauté ne
+> salit que les **16 premiers octets** du message suivant. L'hypothèse à écarter AVANT de chercher
+> une commande inconnue est donc que ce ne soit pas de l'applicatif du tout, mais un bloc de tête
+> sali — auquel cas l'information n'est pas dans ces octets, elle est **en amont** : un message qui
+> a disparu juste avant.
 

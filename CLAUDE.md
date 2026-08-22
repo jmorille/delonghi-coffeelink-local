@@ -1329,6 +1329,24 @@ makes N independent applications possible where the machine allows one.
   It is the one moment the protocol says out loud which appliance the app believes it is talking
   to, hence the only chance to refuse a request that is not ours. A `PUT` carries none, but always
   follows a `POST`.
+- ⚠️ **A relayed command carried NO merge key, so an app piled up.** Reported from real use: six
+  identical `sélection de profil (0xa9) · profil 1` tasks waiting in the queue, each one about to
+  tell the machine what the one before it had just told it — the official app asserts its current
+  profile at every session open, and it opens several. `cleFusion()` in `ecam-args.mjs` now
+  supplies the key, and it lives there because **idempotence is a property of the protocol, not a
+  policy of the caller**: `0xA9` (re-asserting a profile) and any frame whose `ECAM_OPS` nature is
+  `lecture` (asking twice is asking once) get one; `0x75` deliberately returns the `"presence"`
+  key the queue already uses everywhere, so an app's state request and `/pilotage`'s "Lire l'état"
+  are one task. **Everything else returns `null`, and that is a decision rather than an omission** —
+  asking for two coffees is not asking for one, so a dispense, a stop and an on/off each keep their
+  own line, and so does a command absent from the table (a frame we cannot name is a frame whose
+  effect we do not know; merging it would delete a command on a guess). Both emitters read the same
+  rule — the relay and `/api/command` — or the same frame would merge on one path and not the other.
+  Two limits worth knowing: the other *named* read keys (`checksums`, `bean:n`, `reglages95:…`) are
+  unchanged, so the same read asked by an app and by a page still makes two tasks; and merging never
+  takes the **running** task, only waiting ones, so the worst case is two copies, not N. The merge
+  is on the TASK and never on the ack — `accuserSiDemande` still fires once per request, which is
+  correct: the ack carries transport, not execution.
 - **App commands go through the same queue as everything else**, rank `COMMANDE`. An app request
   is worth a UI request, no more; and the scheduler guarantees they do not collide — which the
   machine's single slot emphatically does not. ⚠️ **A relayed write reaches a real appliance**: it
@@ -1445,8 +1463,13 @@ fixed months earlier on the incoming side and never carried across. The filter n
 `octetsEcam()`, and both directions read it; `describeFrame()` answers `valeur non-trame` with the
 bytes **unstripped** (the 4 trailing bytes are timestamps only inside a frame) plus the original
 base64. The stake is the discovery signal itself: a mislabelled value **manufactures a finding that
-does not exist** and hides the one true fact, that this is not a frame. What remains genuinely open
-is the value itself — twelve non-ECAM bytes the official app writes into `data_request`.
+does not exist** and hides the one true fact, that this is not a frame. And the captured line shows
+only PART of the value: the same `describeFrame()` stripped four bytes as a timestamp, so the twelve
+printed are the survivors of **sixteen** — exactly one AES block, which is this file's own signature
+for a dirtied leading block in CBC. So the first hypothesis to rule out is not "an unknown De'Longhi
+command" but "not application bytes at all", in which case the information is **upstream**, in a
+message that vanished just before. Only once that is excluded does the value itself — sixteen
+non-ECAM bytes the official app wrote into `data_request` — become the open question.
 **A property whose value is not a frame no longer gets one invented — and that was misrouting, not
 just a bad label.** `handleProperty` read its command byte with `Buffer.from(value, "base64")[2]`,
 and that call **never throws**: it ignores what is not base64 and returns bytes that look like
