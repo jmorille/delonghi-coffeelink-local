@@ -40,7 +40,7 @@ jobs:
           echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
           echo "tag=${ref}" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version: 26
@@ -64,7 +64,7 @@ jobs:
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           ls -lh dist/*.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: tarball
           path: dist/*.tar.gz
@@ -81,10 +81,10 @@ jobs:
 
       # arm64 est construit sous émulation QEMU : c'est lent (le build Next domine), mais ça évite
       # d'avoir à maintenir un runner ARM. Le cache GHA rattrape le coût d'une release à l'autre.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -99,7 +99,7 @@ jobs:
           echo "list=${{ env.IMAGE }}:${v},${{ env.IMAGE }}:${minor},${{ env.IMAGE }}:${major},${{ env.IMAGE }}:latest" >> "$GITHUB_OUTPUT"
 
       - name: Construire et pousser
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -124,7 +124,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: tarball
           path: dist
@@ -158,7 +158,7 @@ jobs:
           } > notes.md
           cat notes.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: v${{ needs.build.outputs.version }}

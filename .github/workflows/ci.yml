@@ -26,8 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # La version de pnpm vient du champ `packageManager` de package.json.
-      - uses: pnpm/action-setup@v4
+      # La version de pnpm vient du champ `packageManager` de package.json — pnpm 11, d'où le
+      # majeur v6 de l'action, le premier à le connaître.
+      #
+      # ⚠️ Le `node24` que ces actions annoncent N'EST PAS la version de Node qui exécute le
+      # projet : c'est le runtime dans lequel GitHub fait tourner l'ACTION elle-même, et il n'en
+      # propose que deux — node20, qu'il déprécie, et node24. Il n'existe pas de runtime node26.
+      # Notre cible Node 26 est celle de `setup-node` juste en dessous, et c'est elle qui décide
+      # sur quoi le build et les vérifications tournent réellement.
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v5
         with:
@@ -162,12 +169,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Construite pour l'architecture du runner seulement : la CI vérifie que l'image se
       # construit et démarre. Le multi-architecture est l'affaire du workflow de release.
       - name: Construire l'image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -217,7 +224,7 @@ jobs:
       # Sans cette étape, aucune image n'existerait sur GHCR avant la première étiquette `v*`.
       - name: Se connecter à GHCR
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -225,7 +232,7 @@ jobs:
 
       - name: Publier l'image edge
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
