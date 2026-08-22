@@ -1527,3 +1527,17 @@ répondait une valeur plausible.
 IDENTIFIÉE` s'est allumé sur des noms que la **machine** nous envoyait et que notre propre
 constructeur ne savait pas reproduire. C'est exactement ce pour quoi il existe.
 
+
+**Valeurs observées mais non expliquées** — consignées telles quelles, pour qu'une prochaine
+capture puisse les recouper :
+
+| paramètre | valeur | contexte |
+|---|---|---|
+| `ACCESSORIO(28)` | **2** | recette perso lactée écrite depuis l'application officielle, 2026-08-22 |
+| `TASTE(2)`, `BLEND(4)` | **255** | même trame, sur une recette **sans café** |
+
+⚠️ Le nom du paramètre est établi, **pas le sens de ces valeurs**. Pour `255`, le protocole emploie
+bien `NOT_SET(255)` ailleurs (`mugSize`, § plus haut), ce qui rend « sans objet » plausible et ne le
+démontre pas. Pour `ACCESSORIO = 2`, rien. Ne pas gloser : c'est ainsi qu'une lecture devient un
+fait sans que personne ne l'ait vérifiée.
+
