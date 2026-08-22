@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
+import IMAGES from "@/lib/beverage-images.json";
 import { mfetch } from "./machine";
 import { useMachinePush } from "./events";
 import Icone from "./icons";
@@ -1074,6 +1075,47 @@ function profileLabel(profiles: ProfileInfo[], id: number): string {
   return p?.name ? `${id} — ${p.name}` : `#${id}`;
 }
 
+/**
+ * **Le visuel d'une boisson — ou rien du tout, et c'est le point.**
+ *
+ * Les images viennent de l'APK et sont la propriété de De'Longhi : `public/boissons/` est
+ * **gitignoré** (voir `scripts/extract-images.mjs`). Une installation qui n'a pas lancé
+ * l'extraction n'en a donc aucune — c'est le cas d'un clone neuf, de l'image Docker et de
+ * l'archive de release, c'est-à-dire du cas NORMAL. Une carte qui afficherait alors l'icône de
+ * lien brisé du navigateur, vingt-huit fois, serait une régression pour tout le monde sauf pour
+ * celui qui possède l'application.
+ *
+ * D'où `onError` : la vignette se retire, la carte reprend exactement l'allure qu'elle avait
+ * avant. L'absence d'image n'est pas une erreur à signaler, c'est l'état par défaut.
+ *
+ * `alt=""` et `aria-hidden` parce que le titre est **à côté** et nomme déjà la boisson : une
+ * alternative textuelle y ajouterait un doublon à chacune des vingt-huit cartes. L'image est
+ * décorative au sens strict — elle n'apporte aucune information que le texte ne porte pas.
+ *
+ * `parId` ne couvre ni les grains ni les recettes personnalisées : leur icône ne vient pas de
+ * cette table (voir l'en-tête du script d'extraction). Elles n'ont donc pas de vignette, ce qui
+ * est correct et non un manque.
+ */
+function VignetteBoisson({ id }: { id: number }) {
+  const [absente, setAbsente] = useState(false);
+  const fichier = (IMAGES.parId as Record<string, string>)[String(id)];
+  if (!fichier || absente) return null;
+  return (
+    // `<img>` et non `next/image` : le fichier est statique, de taille connue, servi depuis
+    // `public/` — l'optimiseur n'aurait rien à optimiser, et il refuse de servir ce qui manque,
+    // ce qui remplacerait le repli silencieux ci-dessous par une erreur de rendu.
+    <img
+      className="bevVignette"
+      src={`${IMAGES.chemin}/${fichier}.webp`}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      decoding="async"
+      onError={() => setAbsente(true)}
+    />
+  );
+}
+
 function BeverageCard({
   bev,
   profile,
@@ -1131,6 +1173,9 @@ function BeverageCard({
               quatre `marginLeft: 8` posés pastille par pastille. La gouttière gère aussi le repli —
               une pastille qui passe à la ligne garde son écart, une marge gauche non. */}
           <div className="titreLigne">
+          {/* La vignette d'abord : `.titreLigne` est déjà une rangée souple avec gouttière, elle
+              gère donc l'alignement et le repli sans qu'on ait rien à ajouter. */}
+          <VignetteBoisson id={bev.id} />
           {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
               au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
           <h3 className="cardTitle">{nom}</h3>

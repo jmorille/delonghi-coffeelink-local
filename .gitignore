@@ -18,3 +18,8 @@ next-env.d.ts
 # images : elles appartiennent à De'Longhi, et lan-server est publié — image GHCR, archive de
 # release, dépôt public. Même règle que apk/ et decompiled/, dont elles sortent.
 public/boissons/
+
+
+# Conversions SVG de ces mêmes visuels (scripts de test). Une œuvre dérivée reste l'œuvre : les
+# vectoriser ne les rend pas redistribuables. Elles suivent donc public/boissons/ ci-dessus.
+public/boissons-svg/

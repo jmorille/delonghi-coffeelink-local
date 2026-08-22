@@ -1015,6 +1015,18 @@ dialog.drawer .pied select { width: 100%; }
    « lecture différée ». Sans cette marge, chaque bouton se pose là où le texte le laisse, et deux
    lignes voisines décalent leur croix d'une soixantaine de pixels. */
 .titreLigne > .aDroite { margin-left: auto; }
+/* **La vignette d'une boisson.** `flex-shrink: 0` parce que `.titreLigne` est une rangée
+   souple : sans lui, une image se comprime en fuseau quand le nom est long, au lieu de passer
+   à la ligne comme les pastilles. `object-fit: contain` conserve les proportions des visuels
+   (600 × 680, plus hauts que larges) ; sans lui ils seraient étirés dans un carré. Fond
+   transparent conservé : ces WebP ont un canal alpha, et leur poser une couleur ferait
+   apparaître un rectangle autour de la tasse. */
+.bevVignette {
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  object-fit: contain;
+}
 /* Le chevron des panneaux dépliants tourne au lieu de changer de dessin. */
 .iconBtn.ouvert > svg:first-child { transform: rotate(180deg); }
 /* **Le seuil était au-dessus de la largeur réelle des libellés : ils tenaient et disparaissaient
