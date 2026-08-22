@@ -6,7 +6,7 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import ConfirmSettings from "../ConfirmSettings";
 import { cleAnnonce, echecAnnonce } from "../register";
-import { splitSensors, stateLabel, stateTone } from "../machineState";
+import { AGE_PERIME, fmtAge, splitSensors, stateLabel, stateTone, stepLabel } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
 
@@ -17,28 +17,24 @@ interface Monitor {
   switches: { name: string; label: string }[];
   alarmBits: number;
   alarms: { bit: number; name: string | null; ignored: boolean }[];
-}
-
-interface Recipe {
-  id: string;
-  name: string;
-  beverageId: number;
-  profileId: number;
+  /** Progression — octets 9, 10, 11. Voir `MONITOR_ETAPES` dans `server.mjs`. */
+  fonction?: number | null;
+  etape?: number | null;
+  pourcent?: number | null;
+  etapeCle?: string | null;
+  auRepos?: boolean | null;
 }
 
 /** Le panneau qui a envoyé la commande : c'est là que son compte rendu s'affiche, pas en haut. */
-type Scope = "liaison" | "power" | "boissons";
+type Scope = "liaison" | "power" | "activite";
 
 export default function Dashboard() {
   const t = useTranslations("dashboard");
   const tp = useTranslations("power");
   const tc = useTranslations("common");
   const ta = useTranslations("alarm");
-  // La question de préparation est celle de l'accueil : même geste, même phrase, un seul endroit.
-  const tb = useTranslations("beverages");
   const tconf = useTranslations("confirmations");
   const [status, setStatus] = useState<any>(null);
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [busy, setBusy] = useState(false);
   /**
    * Retour de la dernière action. Sans lui, un refus du serveur (409 clé LAN absente) passait
@@ -51,15 +47,6 @@ export default function Dashboard() {
    * l'avait déjà corrigé exactement de cette façon.
    */
   const [report, setReport] = useState<{ scope: Scope; text: string; kind: "ok" | "err" } | null>(null);
-  /**
-   * La boisson que **cet onglet** a lancée, s'il en a lancé une.
-   *
-   * La trame d'arrêt porte un identifiant de boisson. Le code envoyait `beverageId: 1, profileId: 1`
-   * en dur — un espresso du profil 1, quelle que soit la boisson qui coule — et le bouton n'était
-   * jamais désactivé. Arrêter une boisson devinée alors que rien ne coule n'est pas un arrêt, c'est
-   * une commande au hasard : l'accueil le disait déjà, et refusait de deviner.
-   */
-  const [lance, setLance] = useState<Recipe | null>(null);
   const { demander, dialogue } = useConfirm();
 
   const refresh = useCallback(async () => {
@@ -69,9 +56,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     refresh();
-    mfetch("/api/recipes")
-      .then((r) => r.json())
-      .then((d) => setRecipes(d.recipes));
   }, [refresh]);
 
   /**
@@ -140,30 +124,110 @@ export default function Dashboard() {
     });
   };
 
-  /** Préparer coule la boisson. Même question que sur l'accueil, mot pour mot : c'est le même geste. */
-  const dispense = (r: Recipe) => {
-    demander({
-      question: tb("confirmPrepare", { beverage: r.name, profile: tc("profileFallback", { id: r.profileId }) }),
-      warn: tb("confirmPrepareWarning"),
-      geste: "dispense",
-      onConfirm: async () => {
-        setLance(r);
-        await send("boissons", { action: "dispense", recipeId: r.id });
-      },
-    });
-  };
-
+  /**
+   * **L'arrêt ne dépend plus d'une boisson lancée depuis cette page** — il n'y en a plus. C'est la
+   * règle que l'accueil applique déjà : le bouton est actif dès que la machine signale un programme
+   * en cours, et quand nous ignorons quelle boisson coule, la confirmation le DIT au lieu de
+   * laisser croire qu'on arrête ce qu'on voit.
+   *
+   * Le repli sur l'espresso reste nécessaire — la trame d'arrêt porte un identifiant de boisson —
+   * mais il n'est plus tacite, et c'était tout le défaut : arrêter une boisson devinée alors que
+   * rien ne coule n'est pas un arrêt, c'est une commande au hasard.
+   */
   const stop = () => {
-    if (!lance) return;
+    if (!arretPossible) return;
     demander({
-      question: tp("confirmStop", { beverage: ` (${lance.name})` }),
+      question: tp("confirmStop", { beverage: "" }),
+      detail: tp("stopUnknownBeverage"),
+      // Le compte rendu suit le bouton : il est maintenant dans « Commandes machine ». Un refus
+      // affiché à 400 px du geste qui l'a provoqué est un refus que personne ne lit.
       onConfirm: () =>
         send(
-          "boissons",
-          { action: "stop", beverageId: lance.beverageId, profileId: lance.profileId },
+          "power",
+          { action: "stop", beverageId: 1, profileId: status?.activeProfile ?? 1 },
           () => tp("stopSent"),
         ),
     });
+  };
+
+  /**
+   * Lecture complète : six familles de données, six tâches. Rien n'est préparé ni écrit.
+   *
+   * La question posée ne porte pas sur un danger — il n'y en a aucun — mais sur la DURÉE, qui est
+   * la seule vraie surprise : quelques minutes pendant lesquelles la machine sera occupée à nous
+   * répondre. Elle dit aussi qu'une commande passera devant, sans quoi on pourrait croire la
+   * cafetière confisquée le temps du balayage.
+   */
+  /**
+   * **Sans confirmation, et c'est la file qui le permet.** La question posée avant servait à
+   * prévenir d'un engorgement : sept tâches d'un coup, dans un serveur où chaque nouvelle demande
+   * écrasait la précédente. Ce risque n'existe plus — les tâches s'empilent au rang `LECTURE`, une
+   * commande passe devant, le panneau « Activité » les montre une par une et chacune a son
+   * « Annuler ». Confirmer ne protège plus de rien ; il ne reste qu'un clic de plus.
+   *
+   * Les confirmations gardées ailleurs le sont pour la raison inverse : elles précèdent un geste
+   * qui agit sur l'appareil — rinçage à l'eau chaude, écriture persistante — et qu'aucune file ne
+   * rattrape après coup. Ici rien n'est préparé et rien n'est écrit : on ne fait que demander.
+   */
+  /**
+   * **Interroger l'état : la commande `0x75`, forcée.**
+   *
+   * C'est la seule trame qui demande à la machine de dire où elle en est — état (veille / chauffe /
+   * prête), capteurs, alarmes. `/api/presence` l'envoie déjà, mais **étranglé** : monitor de moins
+   * de 30 s, file non vide, ou appel il y a moins de 8 s, et il refuse. C'est la bonne règle pour
+   * l'appel automatique fait à l'ouverture d'une page — quatre onglets ne doivent pas ouvrir quatre
+   * sessions. C'est la mauvaise pour un clic : on clique justement parce que la ligne « État de la
+   * machine » est vide ou datée, et s'entendre répondre « monitor récent, ignoré » serait la
+   * réponse inverse de la question. D'où `force: true`.
+   *
+   * Rang `LECTURE` comme toute lecture, et c'est voulu : une demande d'état ne doit pas doubler une
+   * commande en cours. Elle double en revanche un balayage de compteurs (`LECTURE_BASSE`), qui est
+   * le long travail derrière lequel on risquait vraiment d'attendre.
+   */
+  const readState = async () => {
+    setBusy(true);
+    setReport(null);
+    try {
+      const r = await mfetch("/api/presence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      }).then((x) => x.json());
+      const annonce = echecAnnonce(r);
+      setReport(
+        r.error
+          ? { scope: "power", text: tc("error", { message: r.error }), kind: "err" }
+          : annonce
+            ? { scope: "power", text: tc(cleAnnonce(annonce)), kind: "err" }
+            : { scope: "power", text: t("readStateSent"), kind: "ok" },
+      );
+      await refresh();
+    } catch (e) {
+      setReport({ scope: "power", text: tc("error", { message: String(e) }), kind: "err" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const readAll = async () => {
+    setBusy(true);
+    setReport(null);
+    try {
+      const r = await mfetch("/api/readall", { method: "POST" }).then((x) => x.json());
+      const annonce = echecAnnonce(r);
+      setReport(
+        r.error
+          ? { scope: "power", text: tc("error", { message: r.error }), kind: "err" }
+          : annonce
+            ? { scope: "power", text: tc(cleAnnonce(annonce)), kind: "err" }
+            : { scope: "power", text: t("readAllSent", { count: r.count, steps: r.steps }), kind: "ok" },
+      );
+      await refresh();
+    } catch (e) {
+      setReport({ scope: "power", text: tc("error", { message: String(e) }), kind: "err" });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const register = async () => {
@@ -185,6 +249,14 @@ export default function Dashboard() {
   };
 
   /**
+   * Le rang d'une tâche : c'est lui qui explique l'ordre affiché. Sans lui, voir « Arrêt » passer
+   * devant un balayage lancé bien avant ressemble à un défaut plutôt qu'à une règle.
+   */
+  const Rang = ({ n }: { n: number }) => (
+    <span className={"pill" + (n === 0 ? " off" : "")}>{t(("rank" + n) as any)}</span>
+  );
+
+  /**
    * `role="status"` permanent, jamais monté à la demande : un conteneur inséré en même temps que
    * son texte n'est pas annoncé par les lecteurs d'écran. Vide, `.status:empty` le masque, donc la
    * carte ne porte pas une boîte creuse en attendant.
@@ -195,9 +267,126 @@ export default function Dashboard() {
     </p>
   );
 
+  /**
+   * **Le compte rendu de la liaison se lit sur la ligne qu'il décrit, pas dans un pavé sous le
+   * bouton.** « Annonce envoyée à la machine (HTTP 202) » EST un état de la machine : le mettre
+   * dans un encadré à part obligeait à faire l'aller-retour entre le bouton, le pavé, et la ligne
+   * « État de la machine » qu'il commente — trois endroits pour une seule information, dans une
+   * carte de quatre lignes.
+   *
+   * L'élément est monté en permanence, vide quand il n'y a rien : un `role="status"` créé en même
+   * temps que son contenu n'est pas annoncé par les lecteurs d'écran, seul un changement DANS une
+   * région déjà présente l'est. `.enLigne:empty` le fait disparaître visuellement sans le démonter.
+   * L'échec garde le pictogramme d'alerte de la ligne « Serveur » juste au-dessus : même carte,
+   * même avertissement, même dessin.
+   */
+  const StatutEnLigne = ({ scope }: { scope: Scope }) => {
+    const r = report?.scope === scope ? report : null;
+    return (
+      <span className={"enLigne" + (r?.kind === "err" ? " alerte" : "")} role="status">
+        {r && (
+          <>
+            {r.kind === "err" && <Icone nom="alerte" taille={15} />}
+            <span>{r.text}</span>
+          </>
+        )}
+      </span>
+    );
+  };
+
   const cfg = status?.config;
   const sess = status?.session;
   const mon: Monitor | null = status?.lastMonitor ?? null;
+
+  /**
+   * **L'âge de la dernière réponse, parce que « Session LAN : établie » ne le dit pas.**
+   *
+   * `session.active` vaut `!!m.session` côté serveur, et cette session n'est abandonnée que sur un
+   * changement de configuration — clé LAN, adresse, réinitialisation. Jamais sur une inactivité,
+   * jamais sur un délai. Elle affiche donc « établie » des heures après que la machine a cessé de
+   * répondre, et c'est précisément la situation où l'on vient sur cette page. La seule preuve
+   * datée qu'on possède est l'horodatage du monitor affiché juste à côté : la montrer transforme
+   * une pastille qui affirme en une pastille qui se situe dans le temps.
+   *
+   * Battement local de 15 s, pour la même raison que sur l'accueil : personne ne pousse un
+   * événement parce qu'une minute est passée. Sans lui, « il y a 12 s » resterait figé à 12 s et
+   * le basculement vers « périmé » n'arriverait jamais. Aucune requête ne part, et il ne tourne
+   * que s'il y a un monitor à dater.
+   */
+  const [, battement] = useState(0);
+  useEffect(() => {
+    if (!mon) return;
+    const id = setInterval(() => battement((n) => n + 1), 15000);
+    return () => clearInterval(id);
+  }, [mon]);
+  const ageSec = mon ? Math.round((Date.now() - mon.at) / 1000) : null;
+  const perime = ageSec != null && ageSec > AGE_PERIME;
+  /**
+   * Âge du dernier ÉCHANGE, tous datapaquets confondus — pas seulement du monitor. C'est ce que
+   * regarde le coupe-circuit, et c'est ce qui distingue « la session existe » de « la machine
+   * répond ». Le même battement de 15 s le rafraîchit.
+   */
+  const contactSec = sess?.lastContactAt ? Math.round((Date.now() - sess.lastContactAt) / 1000) : null;
+  const contactVieux = contactSec == null || contactSec > AGE_PERIME;
+
+  /**
+   * **La file de tâches, telle que le serveur la publie** (`machineActivity` → `vueFile`).
+   *
+   * Il n'y a plus « quatre états d'activité » à recoller : il y a UNE file, et tout ce que la
+   * machine fait pour nous y est. Auparavant la page lisait `program` seul — une synchro des
+   * profils, qui n'est pas un programme, n'y laissait aucune trace — et par ailleurs un
+   * `status.queue` qui n'a jamais existé côté serveur.
+   */
+  const file = status?.queue ?? null;
+  const encours = file?.encours ?? null;
+  const attente: any[] = file?.attente ?? [];
+  const finies: any[] = file?.finies ?? [];
+  const rienEnFile = !encours && attente.length === 0 && finies.length === 0;
+  /**
+   * **Arrêter est possible dès que la machine signale un programme en cours** — plus « dès que cet
+   * onglet a lancé une boisson », puisque cette page n'en lance plus. Même critère que l'accueil
+   * (`stopAvailable`), qui a réglé cette question le premier : sans lui le bouton serait
+   * définitivement inerte, ce qui est pire que de demander confirmation d'un arrêt imprécis.
+   */
+  /**
+   * **Arrêtable = une préparation, pas « une tâche tourne ».** Depuis la file, `program.active`
+   * est vrai dès qu'une lecture est en cours ; s'y fier allumait « Arrêter » pendant un balayage
+   * de compteurs, en proposant de l'interrompre avec une trame d'arrêt de boisson. Le serveur
+   * marque désormais la seule tâche qui se coupe (`dispense`). Limite assumée et inchangée depuis
+   * toujours : une boisson lancée au panneau de la machine ne passe pas par nous, donc ne
+   * s'affiche pas ici.
+   */
+  const arretPossible = status?.program?.dispense === true;
+
+  /** La première tâche « muette » de la liste : la seule qui porte l'explication. Voir plus bas. */
+  const premiereMuette = finies.find((t2: any) => t2.motif === "muette")?.id ?? null;
+
+  /** Annule une tâche, ou toute la file. Rien ne part vers la machine : on retire du travail. */
+  const annulerTaches = async (taskId?: string) => {
+    const suite = async () => {
+      setBusy(true);
+      try {
+        const r = await mfetch("/api/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "clear", ...(taskId ? { taskId } : {}) }),
+        }).then((x) => x.json());
+        setReport({ scope: "activite", text: t("taskCancelled", { count: r.cleared ?? 0 }), kind: "ok" });
+        await refresh();
+      } catch (e) {
+        setReport({ scope: "activite", text: tc("error", { message: String(e) }), kind: "err" });
+      } finally {
+        setBusy(false);
+      }
+    };
+    // Une tâche seule part sans question — c'est du travail qu'on retire, rien n'atteint la
+    // machine. Vider la file entière en demande une : elle emporte aussi ce qui est en cours.
+    if (taskId) return suite();
+    demander({
+      question: t("taskCancelAllConfirm", { count: attente.length + (encours ? 1 : 0) }),
+      onConfirm: suite,
+    });
+  };
 
   return (
     <>
@@ -226,38 +415,61 @@ export default function Dashboard() {
           l'avoir lu, et sur téléphone aussi ce voisinage est le bon. Le journal, seul bloc dense,
           prend la rangée entière. */}
       <div className="panneaux">
-      <section>
+      <section aria-labelledby="titre-liaison">
       {/* Six sections sur sept portaient un titre ; celle-ci n'en avait pas, et les deux colonnes
           démarraient donc à des hauteurs différentes. Un panneau se nomme. */}
-      <h2>{t("connection")}</h2>
+      <h2 id="titre-liaison">{t("connection")}</h2>
       <div className="card">
         {/* Le bouton était à droite d'un `space-between`, donc à 700 px des lignes qu'il concerne
             dans une carte pleine largeur. On lit l'état, puis on agit : il passe dessous. */}
-        <div>
+        {/* **`<dl>`, et pas un `<div>` de `<span>`.** Ces lignes SONT des paires nom/valeur, et
+            l'appariement n'existait qu'à l'œil : la grille à deux colonnes. Lu en linéaire — lecteur
+            d'écran, ou agent qui lit l'arbre d'accessibilité — on recevait « Session LAN », « en
+            attente », « Adresse et numéro de série », « 192.168.30.42 »… huit textes de suite dont
+            rien ne disait lesquels vont ensemble. `<dt>`/`<dd>` le disent. Le `<div className="kv">`
+            reste : il porte la grille, et il est permis comme groupe dans un `<dl>`. */}
+        <dl className="kvListe">
             <div className="kv">
-              <span className="k">{t("lanSession")}</span>
-              <span className={"pill " + (sess?.active ? "on" : "off")}>
-                {sess?.active ? t("sessionEstablished") : t("sessionWaiting")}
-              </span>
+              <dt className="k">{t("lanSession")}</dt>
+              {/* **« Établie » ne suffit pas, parce que c'est un verrou.** Côté serveur `active`
+                  vaut `!!m.session` et n'est abandonné que sur un changement de configuration :
+                  jamais sur une inactivité, jamais sur un délai. Il affirmait donc une liaison
+                  vivante sur la foi d'un échange de clés qui pouvait dater de plusieurs heures —
+                  précisément le cas où l'on vient ici parce que « la session est établie mais elle
+                  ne répond pas ». `lastContactAt` est daté par chaque datapaquet reçu : au-delà de
+                  `AGE_PERIME`, la pastille cesse d'être verte et la ligne dit depuis quand. */}
+              <dd className="titreLigne">
+                <span className={"pill " + (sess?.active ? (contactVieux ? "" : "on") : "off")}>
+                  {sess?.active ? t("sessionEstablished") : t("sessionWaiting")}
+                </span>
+                {sess?.active && contactSec != null && (
+                  <span className="sub">
+                    {contactVieux
+                      ? t("sessionStale", { age: fmtAge(contactSec, tp) })
+                      : t("sessionFresh", { age: fmtAge(contactSec, tp) })}
+                  </span>
+                )}
+                {sess?.active && contactSec == null && <span className="sub">{t("sessionNoContact")}</span>}
+              </dd>
             </div>
             <div className="kv">
-              <span className="k">{t("machineAddress")}</span>
-              <span className="mono">{cfg?.machineIp} · {cfg?.dsn}</span>
+              <dt className="k">{t("machineAddress")}</dt>
+              <dd className="mono">{cfg?.machineIp} · {cfg?.dsn}</dd>
             </div>
             <div className="kv">
-              <span className="k">{t("server")}</span>
+              <dt className="k">{t("server")}</dt>
               {/* La ligne fautive porte le pictogramme du bandeau, pas un émoji : c'est le même
                   avertissement, et il doit se reconnaître au même dessin. */}
-              <span className={cfg?.serverIpProblem ? "mono alerte" : "mono"}>
+              <dd className={cfg?.serverIpProblem ? "mono alerte" : "mono"}>
                 {cfg?.serverIpProblem && <Icone nom="alerte" taille={15} />}
                 <span>
                   {cfg?.serverIp ?? tc("none")}:{cfg?.serverPort}
                 </span>
-              </span>
+              </dd>
             </div>
             <div className="kv">
-              <span className="k">{t("machineStateMonitor")}</span>
-              <span>
+              <dt className="k">{t("machineStateMonitor")}</dt>
+              <dd className="titreLigne">
                 {/* Même pastille que la ligne « Session LAN » quatre lignes plus haut, et même
                     fonction de libellé que l'accueil (`machineState.ts`). Avant : trois émojis
                     (⚪ 🟢 🟠) et une cascade de ternaires recopiée — le même état de la même
@@ -267,18 +479,47 @@ export default function Dashboard() {
                 ) : (
                   tc("dash")
                 )}
-              </span>
+                {/* Au-delà de `AGE_PERIME`, la mention dit en toutes lettres que l'état affiché
+                    peut avoir changé — même seuil et même formule que l'accueil (`fmtAge`), sinon
+                    les deux pages daterait la même lecture différemment. */}
+                {ageSec != null && (
+                  <span className="sub">
+                    {perime
+                      ? t("monitorAgeStale", { age: fmtAge(ageSec, tp) })
+                      : t("monitorAge", { age: fmtAge(ageSec, tp) })}
+                  </span>
+                )}
+                {/* Le retour de « Rappeler la machine » : voir `StatutEnLigne`. La pastille dit ce
+                    que la machine rapporte, ce texte dit ce que NOUS venons de tenter — les deux
+                    répondent à « où en est la liaison », donc ils tiennent sur la même ligne. */}
+                <StatutEnLigne scope="liaison" />
+              </dd>
             </div>
-            <div className="kv">
-              <span className="k">{t("runningProgram")}</span>
-              <span>
-                {/* Le libellé interne du programme (« Paramètres 100+9 ») est du diagnostic, et il
-                    vit dans le journal, en bas de cette page. La ligne s'appelle déjà « Programme en
-                    cours » : y répondre par une phrase qui la répète ne dirait rien de plus. */}
-                {status?.program?.active ? tc("yes") : tc("dash")}
-              </span>
-            </div>
-        </div>
+            {/* **La progression, en valeurs BRUTES — c'est la page du protocole.** L'accueil en
+                fait une barre pour qui attend son café ; ici on montre les trois octets tels
+                qu'ils arrivent, parce que c'est ce qu'on vient lire quand une préparation se
+                comporte mal. La ligne disparaît au repos plutôt que d'afficher trois tirets :
+                `f=7 e=0` n'apprend rien à personne. */}
+            {mon && mon.auRepos === false && (
+              <div className="kv">
+                <dt className="k">{t("monitorProgress")}</dt>
+                <dd className="titreLigne">
+                  <span>{stepLabel(mon.etapeCle ?? null, tp)}</span>
+                  <span className="sub mono">
+                    {t("monitorProgressRaw", {
+                      percent: mon.pourcent ?? -1,
+                      f: mon.fonction ?? -1,
+                      e: mon.etape ?? -1,
+                    })}
+                  </span>
+                </dd>
+              </div>
+            )}
+            {/* La ligne « Programme en cours » vivait ici et répondait « oui » ou « — ». Elle est
+                partie dans le panneau « Activité » juste dessous, qui la remplace en nommant ce qui
+                tourne : « oui » ne distinguait pas un café qui coule d'une lecture de compteurs, et
+                surtout il ne connaissait qu'un des quatre états d'activité du serveur. */}
+        </dl>
         <div className="row note">
           {/* **Le libellé reste visible sur cette page, donc pas d'`aria-label`.** /machines en pose
               un partout parce que ses libellés PEUVENT disparaitre : le repli a l'icone est une
@@ -290,12 +531,11 @@ export default function Dashboard() {
             <span className="lbl">{t("announce")}</span>
           </button>
         </div>
-        <Statut scope="liaison" />
       </div>
       </section>
 
-      <section>
-      <h2>{t("machineCommands")}</h2>
+      <section aria-labelledby="titre-commandes">
+      <h2 id="titre-commandes">{t("machineCommands")}</h2>
       <div className="card">
         <div className="row">
           <button className="good iconBtn" disabled={busy} onClick={() => power(true)}>
@@ -306,15 +546,188 @@ export default function Dashboard() {
             <Icone nom="marche" />
             <span className="lbl">{tp("turnOff")}</span>
           </button>
+          {/* **Le troisième ordre donné à l'appareil, à côté des deux autres.** Il reste désactivé
+              tant que le serveur ne signale aucune préparation (`program.dispense`) : sans boisson
+              en cours, la trame d'arrêt partirait avec un espresso deviné. Rouge en contour, le
+              traitement que le produit réserve à ce qui interrompt. */}
+          <button
+            className="danger discret iconBtn"
+            disabled={busy || !arretPossible}
+            onClick={stop}
+            title={arretPossible ? tp("stopTitle") : t("stopUnavailable")}
+          >
+            <Icone nom="arreter" />
+            <span className="lbl">{t("stopPreparation")}</span>
+          </button>
+        </div>
+
+        {/* **Séparé des trois au-dessus, et c'est le point.** Ces trois-là agissent sur l'appareil ;
+            celui-ci ne fait que demander. Les mettre dans la même rangée aurait donné le même poids
+            à « couper l'eau chaude » et à « relire des compteurs ». */}
+        <h3 className="titreBloc">{t("commandsRead")}</h3>
+        <div className="row">
+          {/* **L'état d'abord, le reste ensuite — mais au même gabarit.** Une trame contre
+              quatre-vingt-dix : « Lire l'état » est la question qu'on pose le plus souvent (« elle
+              est allumée ? elle répond ? ») et la moins chère, d'où sa place en tête. La différence
+              d'étendue s'arrête là : les deux boutons sont de même nature (ils ne font que
+              demander), donc de même taille. Le `.mini` essayé ici venait de /statistiques, où il
+              oppose deux balayages de la MÊME action ; entre deux lectures distinctes il ne disait
+              plus « moins large », il disait « moins important », à côté d'une rangée de commandes
+              pleine hauteur. Ne pas le réintroduire. */}
+          <button className="iconBtn" disabled={busy} onClick={readState} title={t("readStateTitle")}>
+            <Icone nom="oeil" />
+            <span className="lbl">{t("readState")}</span>
+          </button>
+          <button className="iconBtn" disabled={busy} onClick={readAll} title={t("readAllTitle")}>
+            <Icone nom="lire" />
+            <span className="lbl">{t("readAll")}</span>
+          </button>
         </div>
         <Statut scope="power" />
       </div>
       </section>
 
+      {/* **Le panneau qui manquait, à la place d'une table qui ne pouvait rien afficher.**
+          Ici se trouvait « File de commandes », qui lisait `status.queue` — un champ que
+          `/api/status` n'a jamais renvoyé. Cette forme (`label` / `needsAck` / `queuedAt`) vient de
+          `src/lib/session.ts`, une des copies fantômes qui ne tournent pas : `server.mjs` n'a pas de
+          file de commandes ECAM, il tient UNE trame en vol (`m.program`) et une file de LECTURES
+          (`m.import`). La table annonçait donc « Aucune commande en attente » cent pour cent du
+          temps, balayage des grains compris.
+
+          Ce qu'on venait y chercher est réel, mais vivait ailleurs : sur quatre états d'activité,
+          `/api/status` n'en publiait qu'un. Une synchro des profils — un `startImport` pur, sans
+          aucun programme — ne laissait aucune trace sur cette page, et un balayage des grains n'y
+          disait ni quel grain ni où il en était.
+
+          **Sa place est sous les commandes, et c'est la lecture naturelle de la page** : la liaison
+          dit si la machine nous entend, les commandes sont ce qu'on vient faire, l'activité est ce
+          qui en découle. Au-dessus, le panneau demandait de suivre une file avant d'avoir vu ce qui
+          la remplit — et le geste le plus fréquent, allumer, se trouvait repoussé sous un bloc qui
+          dit « rien en file » la plupart du temps. */}
+      <section aria-labelledby="titre-activite">
+      <h2 id="titre-activite">{t("activity")}</h2>
+      {/* **La seule carte de la page qui change toute seule, donc la seule qui doit s'annoncer.**
+          Elle se remet à jour toutes les deux secondes pendant qu'un programme tourne, et rien n'en
+          avertissait un lecteur d'écran : `role="status"` le fait.
+          `aria-atomic="false"` est délibéré et n'est pas un détail : `role="status"` implique
+          `atomic=true`, donc la carte ENTIÈRE serait relue à chaque fois — et comme `étape n`
+          s'incrémente toutes les deux secondes, ce serait quatre lignes relues en boucle. À `false`,
+          seul le fragment qui a bougé est annoncé : « étape 5 », ou la ligne qui vient d'apparaître. */}
+      <div className="card" role="status" aria-atomic="false">
+        {rienEnFile ? (
+          <p className="sub">{t("activityIdle")}</p>
+        ) : (
+          <>
+            {encours && (
+              <>
+                <h3 className="titreBloc">{t("taskRunning")}</h3>
+                <dl className="kvListe">
+                  <div className="kv">
+                    {/* Le rang vit dans la colonne des VALEURS, pas dans celle du libellé : la
+                        colonne de gauche est bornée à 13 rem, donc « Balayage des grains 0–5 »
+                        suivi d'une pastille repliait et la pastille retombait sous le nom, où elle
+                        ressemblait à un deuxième libellé. */}
+                    <dt className="k">{encours.label}</dt>
+                    <dd className="titreLigne">
+                      <Rang n={encours.rang} />
+                      <span className="pill on">{t("taskProgress", { faits: encours.faits, total: encours.total })}</span>
+                      {/* Le pas courant est un nom de propriété Ayla ou un libellé de trame :
+                          chasse fixe, comme partout où cette page montre du protocole. */}
+                      {encours.pasCourant && <span className="mono sub">{t("taskStep", { pas: encours.pasCourant })}</span>}
+                      {encours.repris > 0 && <span className="sub">{t("taskRetried", { count: encours.repris })}</span>}
+                    </dd>
+                  </div>
+                </dl>
+              </>
+            )}
+
+            {/* **La file d'attente, et c'est le cœur de ce que cette page ne pouvait pas montrer.**
+                Ce qui arrivait pendant qu'une tâche tournait écrasait la précédente sans un mot :
+                il n'y avait rien à afficher parce qu'il n'y avait rien qui attendait. */}
+            {attente.length > 0 && (
+              <>
+                <h3 className="titreBloc">{t("taskWaiting")}</h3>
+                <dl className="kvListe">
+                  {attente.map((tache) => (
+                    <div className="kv" key={tache.id}>
+                      <dt className="k">{tache.label}</dt>
+                      <dd className="titreLigne etire">
+                        <Rang n={tache.rang} />
+                        <span className="sub">{t("taskSteps", { count: tache.total })}</span>
+                        {/* **Icône seule, et le nom accessible reste.** Une ligne de file, c'est un
+                            libellé de tâche, un rang, un nombre de pas — le mot « Annuler » répété à
+                            chaque ligne pesait plus lourd que ce qu'il annule, et poussait le rang
+                            et le compte de pas vers la gauche. Le geste, lui, ne change pas de
+                            nature : `aria-label` le nomme pour un lecteur d'écran, `title` pour la
+                            souris. Ne pas retirer l'un des deux — une icône ne nomme rien.
+                            « Vider la file », en dessous, garde son libellé : il est unique sur la
+                            carte et n'annule pas la même chose. */}
+                        <button
+                          className="danger discret iconBtn iconSeul aDroite"
+                          disabled={busy}
+                          onClick={() => annulerTaches(tache.id)}
+                          aria-label={t("taskCancel")}
+                          title={t("taskCancelTitle")}
+                        >
+                          <Icone nom="fermer" />
+                        </button>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </>
+            )}
+
+            {/* **Le verdict des tâches terminées, qui disparaissait avec elles.** Une lecture qui
+                n'a rien lu est indiscernable d'une lecture qui n'a pas encore répondu si on ne
+                montre que ce qui tourne. */}
+            {finies.length > 0 && (
+              <>
+                <h3 className="titreBloc">{t("taskDone")}</h3>
+                <dl className="kvListe">
+                  {finies.map((tache) => (
+                    <div className="kv" key={tache.id}>
+                      <dt className="k">{tache.label}</dt>
+                      <dd className="titreLigne">
+                        <span className={"pill " + (tache.etat === "faite" ? "on" : "off")}>
+                          {t(("state_" + tache.etat) as any)}
+                        </span>
+                        <span className="sub">{t("taskProgress", { faits: tache.faits, total: tache.total })}</span>
+                        {tache.nonLus > 0 && <span className="sub">{t("taskUnread", { count: tache.nonLus })}</span>}
+                        {/* Le motif « muette » a une cause précise et une réparation précise : la
+                            dire ici évite d'aller la chercher dans le journal. Mais **une seule
+                            fois** : un coupe-circuit annule toute la file d'un coup, et la même
+                            explication de trois lignes répétée cinq fois chassait de l'écran les
+                            verdicts qu'elle est censée expliquer. */}
+                        {tache.motif === "muette" && tache.id === premiereMuette && (
+                          <span className="sub">{t("taskMuteHint")}</span>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </>
+            )}
+
+            {(encours || attente.length > 0) && (
+              <div className="row note">
+                <button className="danger discret iconBtn" disabled={busy} onClick={() => annulerTaches()}>
+                  <Icone nom="fermer" />
+                  <span className="lbl">{t("taskCancelAll")}</span>
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        <Statut scope="activite" />
+      </div>
+      </section>
+
       {/* `id` : la pastille « alarme signalée » de l'accueil mène ici. C'était la seule route vers
           « quelle alarme ? », et elle vivait dans un attribut `title` — donc nulle part au doigt. */}
-      <section id="alarmes">
-      <h2>{t("alarms")}</h2>
+      <section id="alarmes" aria-labelledby="titre-alarmes">
+      <h2 id="titre-alarmes">{t("alarms")}</h2>
       <div className="card">
         {!mon ? (
           <p className="sub">
@@ -347,8 +760,8 @@ export default function Dashboard() {
       </div>
       </section>
 
-      <section>
-      <h2>{t("sensors")}</h2>
+      <section aria-labelledby="titre-capteurs">
+      <h2 id="titre-capteurs">{t("sensors")}</h2>
       <div className="card">
         {!mon?.switches?.length ? (
           <p className="sub">
@@ -376,88 +789,21 @@ export default function Dashboard() {
       </div>
       </section>
 
-      <section>
-      <h2>{t("beverages")}</h2>
-      <div className="card">
-        {recipes.length === 0 && <p className="sub">{t("noRecipes")}</p>}
-        <div className="grid">
-          {recipes.map((r) => (
-            <button
-              key={r.id}
-              /* `multi` : le libellé est un NOM tapé sur la machine, pas un verbe du catalogue.
-                 `.iconBtn` interdit le retour a la ligne — juste, pour une commande — mais ici
-                 la grille fait des cellules de 150 px et « Recette perso 1 » plus la tasse
-                 demandent 168 px : sans cette exception le bouton deborderait sa cellule. */
-              className="primary iconBtn multi"
-              disabled={busy}
-              onClick={() => dispense(r)}
-              // L'identifiant de boisson et le profil étaient écrits ici en français, en dur, hors
-              // du catalogue — et affichés à tout le monde alors que c'est du détail protocolaire.
-              title={t("dispenseTitle")}
-            >
-              <Icone nom="preparer" />
-              <span className="lbl">{r.name}</span>
-            </button>
-          ))}
-        </div>
-        {/* **Arrêter est destructif et se voyait moins que préparer.** Deux boutons ambre pleins au
-            dessus, un bouton gris en dessous : l'action qui interrompt une préparation en cours
-            avait exactement le poids d'un lien secondaire. Le rouge en contour est le traitement
-            que le reste du produit donne à ce rôle.
-            Il est désactivé quand cet onglet n'a rien lancé : sans boisson connue, la trame partait
-            avec un espresso deviné. */}
-        <div className="row note">
-          <button
-            className="danger discret iconBtn"
-            disabled={busy || !lance}
-            onClick={stop}
-            title={!lance ? tp("stopUnavailable") : tp("stopTitle")}
-          >
-            <Icone nom="arreter" />
-            <span className="lbl">{t("stopPreparation")}</span>
-          </button>
-        </div>
-        <Statut scope="boissons" />
-      </div>
-      </section>
-
+      {/* **La carte « Boissons » a été retirée.** Elle rejouait la grille de l'accueil — une
+          deuxième liste de boutons qui font couler du café, sur une page dont le titre est
+          « Pilotage local » et dont le reste décrit un état. Deux endroits pour le même geste, et
+          celui-ci n'avait ni les noms lus sur la machine, ni les réglages du profil, ni l'éditeur
+          de recette : il proposait la même action, moins bien. L'arrêt, lui, est resté — il est
+          remonté dans « Commandes machine », voir plus haut. */}
       {/* Placé après les deux blocs qu'il gouverne — les commandes machine et les boissons — et non
           en tête de page : c'est un réglage de comportement, pas un état à surveiller. */}
-      <section>
-      <h2>{tconf("heading")}</h2>
+      <section aria-labelledby="titre-confirmations">
+      <h2 id="titre-confirmations">{tconf("heading")}</h2>
       <ConfirmSettings />
       </section>
 
-      <section>
-      <h2>{t("commandQueue")}</h2>
-      <div className="card">
-        {status?.queue?.length ? (
-          <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("queueCommand")}</th>
-                <th>{t("queueAck")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.queue.map((c: any) => (
-                <tr key={c.id || c.queuedAt}>
-                  <td>{c.label}</td>
-                  <td>{c.needsAck ? tc("yes") : tc("no")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        ) : (
-          <p className="sub">{t("queueEmpty")}</p>
-        )}
-      </div>
-      </section>
-
-      <section className="pleine">
-      <h2>{t("journal")}</h2>
+      <section className="pleine" aria-labelledby="titre-journal">
+      <h2 id="titre-journal">{t("journal")}</h2>
       <div className="card log">
         {status?.log?.map((e: any, i: number) => (
           <div key={e.n ?? i} className={e.dir}>
@@ -466,6 +812,9 @@ export default function Dashboard() {
                 cafetières produiraient une chronologie indéchiffrable. Elle n'apparaît qu'à partir
                 de deux machines, sinon elle se répéterait à chaque ligne pour rien. */}
             {(status?.machines?.length ?? 0) > 1 && e.m ? ` · ${e.m}` : ""} · {e.msg}
+            {/* Le serveur replie les répétitions consécutives (voir `L()`) : sans ce compte, une
+                ligne repliée ferait croire à un incident isolé là où il y en a eu vingt-quatre. */}
+            {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
           </div>
         ))}
       </div>

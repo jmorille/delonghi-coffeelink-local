@@ -50,6 +50,17 @@ jobs:
             node --check "$f"
           done
 
+      # Les deux seules choses de ce dépôt qui se prouvent SANS la machine. L'ordonnanceur est pur
+      # (l'instant est toujours un paramètre) et le décodage du monitor l'est aussi (des octets
+      # entrent, un objet sort) — d'où deux scripts sans dépendance, exécutables ici.
+      # `verif-monitor` rejoue des trames RÉELLES capturées pendant trois préparations : c'est le
+      # seul endroit du projet où du comportement d'appareil est figé et rejouable.
+      - name: Vérifier l'ordonnanceur de tâches
+        run: node scripts/verif-tasks.mjs
+
+      - name: Vérifier le décodage du monitor
+        run: node scripts/verif-monitor.mjs
+
       # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
       # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à
       # l'exécution sans casser le build.

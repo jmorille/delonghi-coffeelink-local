@@ -94,6 +94,49 @@ export default function Systeme() {
   const [d, setD] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [idMsg, setIdMsg] = useState<string | null>(null);
+  /**
+   * **Les deux modes de monitor restés hors Wi-Fi.** `getByteMonitorMode` de l'application
+   * décompilée construit trois trames — `0x60`, `0x70`, `0x75` — mais son service Wi-Fi n'envoie
+   * jamais que la dernière ; les deux autres n'apparaissent que du côté Bluetooth. On ne sait donc
+   * pas si le module y répond en LAN, ni ce que contiendrait la réponse.
+   *
+   * D'où une SONDE et non une fonctionnalité : on envoie, et on lit ce qui revient dans « Dernière
+   * réponse ECAM », juste au-dessus. Aucun décodeur : inventer une structure pour des octets
+   * jamais observés produirait des champs plausibles et faux. C'est aussi pourquoi ce bloc est
+   * ici, sur la page qui décrit le protocole, et pas dans une page de pilotage — ce n'est pas un
+   * geste courant, c'est une mesure.
+   */
+  const [sondeMsg, setSondeMsg] = useState<string | null>(null);
+  const sonder = useCallback(async (mode: number) => {
+    setBusy(true);
+    setSondeMsg(t("probeSending", { mode }));
+    try {
+      const avant = d?.machineState.lastDataResponse?.at ?? 0;
+      const r = await mfetch("/api/monitormode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      }).then((x) => x.json());
+      if (r.error) {
+        setSondeMsg(tc("error", { message: r.error }));
+        return;
+      }
+      // La réponse arrive de façon asynchrone : la machine se connecte, prend la commande, puis
+      // pousse sa réponse. On attend qu'un `data_response` PLUS RÉCENT que le nôtre apparaisse.
+      for (let i = 0; i < 12; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const j = await mfetch("/api/system").then((x) => x.json());
+        setD(j);
+        if ((j.machineState?.lastDataResponse?.at ?? 0) > avant) {
+          setSondeMsg(t("probeAnswered", { mode, hex: j.machineState.lastDataResponse.hex }));
+          return;
+        }
+      }
+      setSondeMsg(t("probeSilent", { mode }));
+    } finally {
+      setBusy(false);
+    }
+  }, [d, t, tc]);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -414,6 +457,22 @@ export default function Systeme() {
               <span className="k">{t("cachedProps")}</span>
               <span className="num">{d.machineState.propsRead}</span>
             </div>
+            {/* **Sondes de protocole.** Deux trames que l'application construit sans jamais les
+                envoyer par Wi-Fi : on les essaie, et le résultat est la ligne « Dernière réponse
+                ECAM » ci-dessus. Aucune écriture. */}
+            <h3 className="titreBloc">{t("probesHeading")}</h3>
+            <p className="legende">{t("probesNote")}</p>
+            <div className="row">
+              <button className="iconBtn" disabled={busy} onClick={() => sonder(0)} title={t("probeTitle", { cmd: "0x60" })}>
+                <Icone nom="oeil" />
+                <span className="lbl">{t("probe", { cmd: "0x60" })}</span>
+              </button>
+              <button className="iconBtn" disabled={busy} onClick={() => sonder(1)} title={t("probeTitle", { cmd: "0x70" })}>
+                <Icone nom="oeil" />
+                <span className="lbl">{t("probe", { cmd: "0x70" })}</span>
+              </button>
+            </div>
+            {sondeMsg && <p className="status ok" role="status">{sondeMsg}</p>}
             {d.machineState.checksums && (
               <>
                 <div className="kv">

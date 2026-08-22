@@ -9,7 +9,7 @@ import Alerte from "./Alerte";
 import { useConfirm } from "./confirm";
 import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
-import { splitSensors, stateLabel, type Translator } from "./machineState";
+import { AGE_PERIME, AGE_PROGRESSION, fmtAge, splitSensors, stateLabel, stepLabel, type Translator } from "./machineState";
 
 interface Param {
   id: number;
@@ -66,12 +66,23 @@ interface Status {
   activeProfile: number;
   /** Faux si le serveur n'a imposé aucun profil depuis son démarrage : l'état machine est inconnu. */
   activeProfileConfirmed: boolean;
-  program: { active: boolean; label: string; counter: number } | null;
+  /** `dispense` : la tâche en cours est une préparation — la seule qu'« Arrêter » puisse couper. */
+  program: { active: boolean; label: string; counter: number; dispense?: boolean } | null;
   lastMonitor: {
     at: number;
     stateByte: number;
     switches: { name: string; label: string }[];
     alarmBits: number;
+    /**
+     * Progression de la préparation — octets 9, 10, 11 de la trame monitor. `auRepos` (`f=7,e=0`)
+     * est le **seul** signal de fin fiable : relevé sur la machine, un lait chaud s'arrête à 90 %
+     * puis retombe au repos sans jamais publier 100.
+     */
+    fonction?: number | null;
+    etape?: number | null;
+    pourcent?: number | null;
+    etapeCle?: string | null;
+    auRepos?: boolean | null;
   } | null;
 }
 /** Couple (paramètre, valeur) tel qu'envoyé à la machine — distinct de `Param`, qui décrit un
@@ -344,12 +355,23 @@ export default function Boissons() {
        * envoyé » à une cafetière qui n'a rien entendu, relevé sur la machine réelle.
        */
       const annonce = echecAnnonce(r);
+      /**
+       * **Un compte rendu de succès VIDE est un choix, pas un oubli.** Depuis que la barre de
+       * progression existe, « Commande envoyée » ne dit rien de plus que ce que la machine montre
+       * elle-même une seconde plus tard, et en dit moins. `ok` peut donc rendre une chaîne vide :
+       * on n'affiche alors rien. Les deux cas d'ÉCHEC restent inconditionnels — en particulier
+       * l'annonce non reçue, sans quoi la page se tairait à propos d'une cafetière qui n'a rien
+       * entendu.
+       */
+      const texte = ok(r);
       setReport(
         r.error
           ? { scope: cible, text: tc("error", { message: r.error }), kind: "err" }
           : annonce
             ? { scope: cible, text: tc(cleAnnonce(annonce)), kind: "err" }
-            : { scope: cible, text: ok(r), kind: "ok" },
+            : texte
+              ? { scope: cible, text: texte, kind: "ok" }
+              : null,
       );
       await apres?.();
       return !r.error && !annonce;
@@ -488,7 +510,15 @@ export default function Boissons() {
           bevScope(bev.id),
           "/api/command",
           { action: "dispense", beverageId: bev.id, profileId: profile, params },
-          (r) => t("sent", { label: r.program }),
+          /**
+           * **Rien à dire : la barre de progression le dit mieux.** « Commande "Préparer
+           * Espresso" envoyée. Le détail technique est dans le journal » annonçait un envoi et
+           * renvoyait ailleurs ; une seconde plus tard la carte machine affiche « Mouture — 0 % »
+           * puis suit la préparation jusqu'à 100 %. Le message ne faisait plus que doubler,
+           * moins bien, ce que la machine raconte elle-même. Les échecs, eux, s'affichent
+           * toujours — voir `commande`.
+           */
+          () => "",
         );
         if (ok) setLastDispensed(bev);
       },
@@ -613,7 +643,7 @@ export default function Boissons() {
         onStop={stopDispense}
         /* On n'arrête que ce qu'on peut nommer, ou ce que la machine signale. Sans l'un des deux,
            le bouton reste inerte plutôt que d'envoyer un arrêt sur une boisson devinée. */
-        stopAvailable={!!lastDispensed || status?.program?.active === true}
+        stopAvailable={!!lastDispensed || status?.program?.dispense === true}
         shownProfiles={shownProfiles}
         fallbackReason={fallbackReason}
         confirmed={status?.activeProfileConfirmed ?? false}
@@ -743,8 +773,15 @@ function PowerCard({
    * sélection des boissons, prête. On raisonne donc « éveillée sauf 0x04 » plutôt que sur une
    * liste blanche : une version précédente n'acceptait que `0x00` et affichait « état inconnu »
    * alors que la machine était bel et bien allumée.
+   *
+   * **Mais une préparation en cours l'emporte sur l'octet d'état, et c'est un fait mesuré.** Un
+   * espresso complet a été enregistré le 2026-08-22 avec `état=0x04` sur ses 49 trames, sans
+   * qu'aucune commande « Allumer » ne soit passée (capture `espresso-veille.json`). L'octet 4 ne
+   * dit donc pas « la machine ne fait rien » : une machine qui moud, infuse et verse n'est pas en
+   * veille, quoi qu'annonce cet octet. Sans ce `||`, l'interrupteur affichait ÉTEINT juste
+   * au-dessus d'une barre annonçant « Écoulement du café — 84 % ».
    */
-  const isOn = mon != null && mon.stateByte !== 0x04;
+  const isOn = mon != null && (mon.stateByte !== 0x04 || mon.auRepos === false);
   /**
    * **Une horloge locale, et rien d'autre.** L'âge du monitor est la seule chose de cette page qui
    * change sans que le serveur ait quoi que ce soit à pousser : personne n'écrit une ligne de
@@ -760,17 +797,45 @@ function PowerCard({
   const [, battement] = useState(0);
   useEffect(() => {
     if (!mon) return;
-    const id = setInterval(() => battement((n) => n + 1), 15000);
+    // Une seconde pendant une préparation — c'est le temps écoulé qui l'exige, la machine ne
+    // pousse un monitor que toutes les 1 à 3 s. Quinze sinon, comme avant.
+    const id = setInterval(() => battement((n) => n + 1), mon.auRepos === false ? 1000 : 15000);
     return () => clearInterval(id);
   }, [mon]);
   const ageSec = mon ? Math.round((Date.now() - mon.at) / 1000) : null;
-  const stale = ageSec != null && ageSec > 90;
+  const stale = ageSec != null && ageSec > AGE_PERIME;
   const capteurs = splitSensors(mon?.switches ?? []);
+  /**
+   * **Une préparation est en cours, et on le tient de la machine.** Pas du drapeau de la file :
+   * `program.dispense` dit ce que NOUS avons envoyé, `auRepos === false` dit ce que la machine
+   * FAIT. Le monitor daté est exclu, sinon une progression figée survivrait à la préparation.
+   */
+  const prepa = mon && ageSec != null && ageSec <= AGE_PROGRESSION && mon.auRepos === false ? mon : null;
+  /**
+   * **La durée est mesurée ici, parce qu'elle n'existe nulle part dans le protocole.** Aucune des
+   * trois trames monitor ne porte de durée, ni écoulée ni restante — vérifié sur trois
+   * préparations réelles. On date donc le premier monitor non-repos et on compte.
+   */
+  const [debut, setDebut] = useState<number | null>(null);
+  useEffect(() => {
+    if (mon?.auRepos === false) setDebut((d) => d ?? Date.now());
+    else if (mon?.auRepos === true) setDebut(null);
+  }, [mon?.auRepos]);
+  const ecoule = prepa && debut ? Math.round((Date.now() - debut) / 1000) : null;
 
   let label: string;
   // Le libellé interne du programme (« Paramètres 100+9 ») ne dit rien à qui attend un café :
   // On dit qu'une commande est en cours : c'est l'information actionnable.
   if (running) label = t("running");
+  /**
+   * **Une préparation que NOUS n'avons pas lancée existe aussi.** Une boisson démarrée au panneau
+   * de la machine ne passe par aucune tâche, donc `running` est faux — et l'octet d'état pouvant
+   * rester à `0x04` pendant toute la préparation (mesuré, voir `isOn`), la ligne aurait affiché
+   * « En veille » juste au-dessus d'une barre à 84 %. On ne dit pas « commande en cours », ce
+   * serait s'attribuer un geste qu'on n'a pas fait : l'étape, elle, est un fait rapporté par la
+   * machine, et la barre juste dessous porte le pourcentage.
+   */
+  else if (prepa) label = stepLabel(prepa.etapeCle ?? null, t);
   else if (!mon) label = t("unknownNoMonitor");
   else if (stale) label = t("stale", { state: stateLabel(mon.stateByte, t), age: fmtAge(ageSec!, t) });
   else label = stateLabel(mon.stateByte, t);
@@ -852,6 +917,53 @@ function PowerCard({
             <span className="lbl">{t("stop")}</span>
           </button>
         </div>
+      </div>
+
+      {/* **La progression, montée en permanence et vide au repos.** Une région `role="status"`
+          créée en même temps que son contenu n'est pas annoncée — seule une modification À
+          L'INTÉRIEUR d'une région déjà présente l'est. La rendre conditionnelle priverait donc de
+          l'annonce exactement l'instant qui compte. `.progression:empty` la fait disparaître
+          visuellement, comme `.enLigne` ailleurs. */}
+      {/* `aria-atomic="false"` — même règle que la carte « Activité » de /pilotage, et ici c'est
+          le temps écoulé qui l'impose : il bat à la SECONDE, donc en atomique (ce que
+          `role="status"` implique par défaut) toute la région serait relue une fois par seconde.
+          Seul le nœud qui change est annoncé, et le temps écoulé est retiré de l'arbre
+          d'accessibilité : « depuis 12 s » n'apprend rien qu'on veuille entendre douze fois. */}
+      <div className="progression" role="status" aria-live="polite" aria-atomic="false">
+        {prepa && (
+          <>
+            <div className="progLigne">
+              <span className="progEtape">{stepLabel(prepa.etapeCle ?? null, t)}</span>
+              {/* Le pourcentage porte l'unité, le temps est explicitement le NÔTRE : la trame n'en
+                  contient aucun, et laisser croire que la machine annonce une durée serait faux. */}
+              <span className="sub mono">{prepa.pourcent != null ? t("percent", { value: prepa.pourcent }) : tc("dash")}</span>
+              {ecoule != null && (
+                <span className="sub" aria-hidden="true">
+                  {t("elapsed", { sec: ecoule })}
+                </span>
+              )}
+            </div>
+            <div
+              className="jauge"
+              role="progressbar"
+              aria-label={t("progressLabel")}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              {...(prepa.pourcent != null
+                ? {
+                    "aria-valuenow": prepa.pourcent,
+                    // Le nombre seul ne dit pas de quoi il est le pourcentage : l'étape est ce
+                    // qui le rend lisible quand la barre est interrogée hors contexte.
+                    "aria-valuetext": `${t("percent", { value: prepa.pourcent })} — ${stepLabel(prepa.etapeCle ?? null, t)}`,
+                  }
+                : {})}
+            >
+              {/* `pourcent` peut rester à 0 pendant toute la mouture : la barre est alors vide, ce
+                  qui est exact — c'est l'étape, au-dessus, qui dit que ça avance. */}
+              <span className="jaugeBarre" style={{ width: `${prepa.pourcent ?? 0}%` }} />
+            </div>
+          </>
+        )}
       </div>
 
       <div className="blocSuite">
@@ -1446,11 +1558,6 @@ function raisonEchec(e: unknown, tc: Translator): string {
  * déduits d'observations concordantes, et tout autre code est affiché brut plutôt que deviné.
  */
 
-function fmtAge(sec: number, t: Translator): string {
-  if (sec < 90) return t("ageSeconds", { n: sec });
-  if (sec < 5400) return t("ageMinutes", { n: Math.round(sec / 60) });
-  return t("ageHours", { n: Math.round(sec / 3600) });
-}
 /** Paramètre décodé (avec son identifiant d'énum) pour cette boisson — la traduction du libellé
  *  se fait ensuite via `useParamLabel`. */
 const paramOf = (bev: Beverage, id: number): Param | undefined =>

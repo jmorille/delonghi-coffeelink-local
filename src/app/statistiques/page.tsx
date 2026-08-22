@@ -26,30 +26,23 @@ interface Payload {
   scan: { remaining: number; total: number } | null;
   appIds: number[];
   known: Known[];
+  /** Plages de balayage publiées par le serveur (`STAT_RANGES`). */
+  ranges?: { known: [number, number][]; all: [number, number][] };
 }
 
 /**
- * Trois plages suffisent à couvrir les 10 compteurs connus, parce que la machine **énumère** :
- * elle renvoie les paramètres existants suivants en sautant les trous. Dix requêtes unitaires
- * prendraient deux minutes, trois plages en prennent trente secondes.
+ * **Les plages viennent du serveur** (`GET /api/stats` → `ranges`), elles ne sont plus écrites ici.
+ *
+ * Elles y étaient, et le serveur en a désormais besoin lui aussi pour « Tout lire » : deux copies
+ * d'une table de protocole finissent toujours par diverger, et celle-ci décide de ce qu'on lit sur
+ * un appareil. Trois plages suffisent aux 10 compteurs connus, huit couvrent les 62 relevés, parce
+ * que la machine **énumère** — un id inexistant renvoie les suivants qui existent, en sautant les
+ * trous.
+ *
+ * Ce repli ne sert qu'au premier rendu, avant la première réponse : sans lui les deux boutons
+ * seraient inertes pendant une fraction de seconde, ce qui se remarque au doigt.
  */
-const RANGES_KNOWN: [number, number][] = [
-  [100, 10], // 100, 101, 105, 106, 108, 109, 111, 115, 116, 3000
-  [3001, 10], // 3001..3010
-  [3017, 10], // 3017..3038
-];
-
-/** Balayage complet de l'espace de paramètres relevé sur ce modèle (62 entrées). */
-const RANGES_ALL: [number, number][] = [
-  [100, 10],
-  [3001, 10],
-  [3011, 10],
-  [3021, 10],
-  [3039, 10],
-  [23000, 10],
-  [23009, 10],
-  [43011, 10],
-];
+const RANGES_VIDES: { known: [number, number][]; all: [number, number][] } = { known: [], all: [] };
 
 export default function Statistiques() {
   const t = useTranslations("stats");
@@ -63,6 +56,8 @@ export default function Statistiques() {
    */
   const statLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
   const [d, setD] = useState<Payload | null>(null);
+  /** Publiées par le serveur, plus recopiées ici — voir RANGES_VIDES. */
+  const plages = d?.ranges ?? RANGES_VIDES;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -94,8 +89,15 @@ export default function Statistiques() {
   }, [live, scanning, load]);
 
   /**
-   * Enchaîne les plages côté client : le serveur refuse une seconde lecture tant que la
-   * précédente tourne (409), donc on attend que `scan` retombe à null entre chaque.
+   * Enchaîne les plages, une requête par plage, en attendant que la machine soit libre entre
+   * chacune.
+   *
+   * ⚠️ Le motif d'origine a disparu : le serveur REFUSAIT une seconde lecture tant que la
+   * précédente tournait (409), parce qu'elle l'aurait écrasée. Depuis la file de tâches
+   * (`src/lib/tasks.mjs`) il n'écrase plus rien — les huit plages pourraient partir d'un coup et
+   * former une seule tâche de huit pas, comme le fait « Tout lire ». L'attente ci-dessous est donc
+   * devenue superflue ; elle est conservée telle quelle parce qu'elle est correcte et que la
+   * remplacer demande d'étendre `/api/stats` à une liste de plages.
    */
   const read = async (ranges: [number, number][], label: string) => {
     setBusy(true);
@@ -190,11 +192,11 @@ export default function Statistiques() {
             pour les dix compteurs identifies, huit pour l'espace complet. Inventer un second dessin
             aurait affirme une difference de nature qui n'existe pas ; la difference d'echelle est
             deja portee par `.mini`, qui rend le second en 13 px estompes a cote d'un 16 px plein. */}
-        <button className="iconBtn" disabled={busy || scanning} onClick={() => read(RANGES_KNOWN, t("scopeKnown"))}>
+        <button className="iconBtn" disabled={busy || scanning || !plages.known.length} onClick={() => read(plages.known, t("scopeKnown"))}>
           <Icone nom="lire" />
           <span className="lbl">{t("readKnown")}</span>
         </button>
-        <button className="mini iconBtn" disabled={busy || scanning} onClick={() => read(RANGES_ALL, t("scopeAll"))} title={t("readAllTitle")}>
+        <button className="mini iconBtn" disabled={busy || scanning || !plages.all.length} onClick={() => read(plages.all, t("scopeAll"))} title={t("readAllTitle")}>
           <Icone nom="lire" taille={14} />
           <span className="lbl">{t("readAll")}</span>
         </button>
