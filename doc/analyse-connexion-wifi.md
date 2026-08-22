@@ -1155,3 +1155,119 @@ Le banc acceptait auparavant un accusé sur `datapoint.json` : il ne pouvait don
 défaut. Même leçon que la réponse vide de `datapoint.json` (§ plus haut) — **un banc infidèle sur
 un seul point est aveugle exactement là.**
 
+
+### 7octies. Une lecture d'application : la réponse ne passe pas par la réponse
+
+Symptôme, une fois l'allumage réglé : la machine obéit, l'accusé arrive en 39 ms, et
+l'application affiche toujours un échec de connexion. Au journal des applications, la même ligne
+en boucle — `lecture d302_monitor (×72)` — et côté téléphone :
+
+```
+E/LocalNetwork: Timed out waiting for command response: LanCmd[1]=property.json?name=d302_monitor
+```
+
+**Les soixante-douze demandes n'en étaient qu'une, réessayée.**
+
+#### Ce qu'une lecture attend vraiment
+
+Le SDK construit sa commande en désignant lui-même l'endroit où il attend la réponse :
+
+```java
+public static AylaLanCommand newGetPropertyCommand(String name) {
+    return new AylaLanCommand("GET", "property.json?name=" + name, null,
+                              "/local_lan/property/datapoint.json");
+}
+```
+
+> ⚠️ **Servir la commande ne la dénoue pas.** `handleLanCommandRequest` la déplace dans
+> `_commandsPendingResponses` et arme son délai ; ce qui la termine est un **POST de datapoint que
+> l'appareil initie**, et lui seul.
+
+Et l'appariement ne regarde ni le corps, ni le chemin :
+
+```java
+private LanCommand getCommand(a.j jVar) {
+    String str = (String) jVar.c().get("cmd_id");        // c() == getParms(), la query string
+    AylaLanCommand queued = str != null ? getQueuedCommand(Integer.parseInt(str)) : null;
+    if (queued == null) { AylaLog.d(…, "No matching command found in the queue"); return null; }
+    ...
+}
+```
+
+Sans `?cmd_id=<n>` dans l'URL, `command` vaut `null`, `setModuleResponse()` n'est jamais appelé, et
+la commande meurt sur `getRequestTimeout()` — `defaultNetworkTimeoutMs`, **5 secondes** mesurées
+entre la commande servie et le `Timed out`. Une poussée spontanée, elle, n'en porte pas : c'est
+correct, `getCommand()` rend `null` et la propriété est appliquée quand même.
+
+#### Et le datapoint est un objet NU
+
+Défaut jumeau, trouvé dans la foulée et **plus grave, parce qu'il touchait toutes les
+rediffusions** :
+
+```java
+// AylaLanModule.handlePropertyUpdateRequest
+JSONObject jSONObject = new JSONObject(payload.data);
+String string = jSONObject.getString("name");
+Object obj    = jSONObject.get("value");
+String dsn    = jSONObject.optString("dsn", null);
+```
+
+Nous poussions `{"properties":[{"property":{…}}]}` — la forme que l'application emploie pour
+*écrire*, pas celle que l'appareil emploie pour *répondre*. `getString("name")` lève alors une
+`JSONException`, la commande reçoit un `JsonError`, et l'application répond **400 « Bad message
+JSON »**. Autrement dit le cœur du multiplexeur — une lecture réelle, N destinataires — poussait
+depuis toujours des messages que personne ne pouvait lire. Le journal disait « état rediffusé », et
+c'était vrai ; ce qui manquait, c'est que rien n'arrivait de l'autre côté.
+
+#### Répondre à temps est impossible en allant chercher la valeur
+
+Cinq secondes, c'est moins qu'un aller-retour vers la cafetière : elle ne prend **qu'une commande
+par visite**, et elle ne visite que toutes les 2,5 s. Attendre la machine pour répondre revient
+donc à ne pas répondre.
+
+D'où le cache : `m.dernieresValeurs`, la dernière valeur **brute** de chaque propriété, retenue
+avant tout décodage — une valeur qu'on ne sait pas décoder doit pouvoir être servie comme les
+autres. Trois règles en découlent :
+
+- **On répond tout de suite avec ce qu'on a**, et on demande le rafraîchissement ensuite.
+- **En deçà de `FRAICHEUR_LECTURE_APP` (10 s), on ne redemande rien** : deux applications qui
+  interrogent le monitor à trois secondes d'intervalle valent une lecture réelle, pas deux.
+- **Si la valeur est inconnue, l'identifiant est retenu** (`app.lectures`, propriété → `cmd_id`) et
+  consommé par la poussée que la machine finira par produire. L'appariement a lieu dans les deux
+  cas.
+
+#### `d302_monitor` a trois lecteurs, et une seule lecture
+
+> ⚠️ **Le monitor ne se lit pas comme une propriété : il se DEMANDE, avec `0x75`**, et sa réponse
+> arrive en poussée de `d302_monitor`. Une lecture de propriété Ayla sur ce nom-là ne déclenche
+> rien.
+
+C'est le même geste que « Lire l'état » de `/pilotage` : la demande d'une application part donc
+dans la **même tâche**, avec la même clé de fusion `presence`. Le bouton, la page `/` et chaque
+téléphone branché regardent tous cette valeur — une lecture réelle vers la cafetière, N
+destinataires. Une tâche par téléphone, à côté de celle du bouton, pour aller chercher ce que
+l'autre rapportait déjà, aurait été la négation même du multiplexeur.
+
+#### Vérifié sur le banc
+
+```
+→ commande servie : lecture d302_monitor (200, dernière)
+← datapoint d302_monitor = 0BJ1DwQAAAAAAAAAAAAAAAAA (réponse à la commande 1)
+lecture d302_monitor : RÉPONDUE et appariée (cmd_id 1).
+```
+
+et, côté serveur, les deux chemins l'un après l'autre :
+
+```
+APP a1 · lecture d302_monitor · valeur inconnue, demandée à la machine
+OUT t1 · Présence — lecture · monitor (0x75) · trame 0d 05 75 0f da 25
+APP a1 · état servi · d302_monitor · état machine 0x04 · au repos
+…
+APP a2 · lecture d302_monitor · servie du cache, rafraîchissement demandé
+```
+
+Le banc a d'abord annoncé « jamais appariée » alors que le serveur envoyait bien le `cmd_id` : il
+lisait la requête sur une URL dont il avait lui-même retiré la query string. Même leçon qu'aux
+§ précédents — **un banc infidèle sur un seul point est aveugle exactement là**, et cette fois il
+accusait à tort.
+

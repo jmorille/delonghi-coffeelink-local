@@ -219,9 +219,55 @@ export function analyserCommandes(clair) {
   return out;
 }
 
-/** Le paquet `{properties:[…]}` qu'un appareil pousse vers une application. */
+/**
+ * **Le datapoint qu'un appareil pousse vers une application : un objet NU.**
+ *
+ * ⚠️ Même piège que l'accusé, et il était encore plus coûteux parce qu'il touchait *toutes* les
+ * rediffusions. `AylaLanModule.handlePropertyUpdateRequest` lit la charge à plat :
+ *
+ * ```java
+ * JSONObject jSONObject = new JSONObject(payload.data);
+ * String string = jSONObject.getString("name");
+ * Object obj    = jSONObject.get("value");
+ * String dsn    = jSONObject.optString("dsn", null);
+ * ```
+ *
+ * Enveloppé dans `{properties:[{property:…}]}`, `getString("name")` lève une `JSONException` :
+ * la propriété n'est jamais appliquée, la commande en attente reçoit un `JsonError`, et
+ * l'application répond **400 « Bad message JSON »**. Autrement dit, le cœur du multiplexeur —
+ * une lecture réelle, N destinataires — poussait depuis toujours des messages que personne ne
+ * pouvait lire. Le journal disait « état rediffusé » et c'était vrai ; ce qui manquait, c'est
+ * que rien n'arrivait de l'autre côté.
+ *
+ * `metadata` et `dev_time_ms` sont facultatifs (`JSONException` attrapée, `optInt`) ; `dsn` ne
+ * l'est pas tout à fait — quand il est là, le SDK s'en sert pour retrouver l'appareil visé.
+ */
 export function paquetDatapoint(dsn, name, value) {
-  return JSON.stringify({ properties: [{ property: { base_type: "string", name, value, dsn } }] });
+  return JSON.stringify({ name, value, dsn });
+}
+
+/**
+ * **L'URL qui apparie une poussée à la commande de lecture qui l'attendait.**
+ *
+ * `AylaLanModule.getCommand()` ne regarde ni le corps ni le chemin : il lit le paramètre d'URL
+ * `cmd_id`, et lui seul.
+ *
+ * ```java
+ * String str = (String) jVar.c().get("cmd_id");        // c() == getParms(), la query string
+ * AylaLanCommand queued = str != null ? getQueuedCommand(Integer.parseInt(str)) : null;
+ * if (queued == null) { AylaLog.d(…, "No matching command found in the queue"); return null; }
+ * ```
+ *
+ * Sans le paramètre, `command` vaut `null`, `setModuleResponse()` n'est jamais appelé, et la
+ * commande expire au bout de `getRequestTimeout()` — `defaultNetworkTimeoutMs`, **5 secondes**
+ * mesurées en direct : `E/LocalNetwork: Timed out waiting for command response:
+ * LanCmd[1]=property.json?name=d302_monitor`.
+ *
+ * Une poussée spontanée n'en porte pas, et c'est correct : `getCommand()` rend `null`, la
+ * propriété est appliquée quand même.
+ */
+export function cheminAvecCmd(chemin, cmdId) {
+  return cmdId === null || cmdId === undefined ? chemin : `${chemin}?cmd_id=${encodeURIComponent(cmdId)}`;
 }
 
 /**

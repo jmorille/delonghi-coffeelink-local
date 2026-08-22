@@ -11,7 +11,7 @@
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
          echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
-import { analyserCommandes, paquetAck, CHEMIN_ACK, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
+import { analyserCommandes, paquetAck, paquetDatapoint, cheminAvecCmd, CHEMIN_ACK, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -302,6 +302,49 @@ test("l'accusé : objet NU, ack_status 200, et un chemin qui finit par ack.json"
   // 3. C'est l'URI, et elle seule, qui fait d'un POST un accusé :
   //    `endsWith("ack.json") ? handleDatapointAck(…) : handlePropertyUpdateRequest(…)`.
   vrai(CHEMIN_ACK.endsWith("ack.json"), "le chemin décide, pas la charge");
+});
+test("un datapoint poussé vers une application est un objet NU", () => {
+  // ⚠️ Même piège que l'accusé, en pire : il touchait TOUTES les rediffusions, c'est-à-dire le
+  // cœur du multiplexeur. `handlePropertyUpdateRequest` lit la charge à plat —
+  // `new JSONObject(payload.data).getString("name")` — donc une enveloppe
+  // `{properties:[{property:…}]}` lève une JSONException, la propriété n'est jamais appliquée,
+  // et l'application répond 400 « Bad message JSON ». Le journal disait « état rediffusé » et
+  // c'était vrai : ce qui manquait, c'est que rien n'arrivait de l'autre côté.
+  const d = JSON.parse(paquetDatapoint("AC000W0XXXXXXXX", "d302_monitor", "0FUP"));
+  vrai(d.properties === undefined, "aucune enveloppe properties");
+  eq(d.name, "d302_monitor", "le nom est à la racine");
+  eq(d.value, "0FUP", "la valeur aussi");
+  eq(d.dsn, "AC000W0XXXXXXXX", "le dsn est lu par optString(\"dsn\", null)");
+});
+
+test("une lecture n'est appariée que par le cmd_id de l'URL", () => {
+  // `AylaLanModule.getCommand()` ne regarde ni le corps ni le chemin :
+  //     String str = (String) jVar.c().get("cmd_id");   // c() == getParms()
+  // Sans ce paramètre, `command` vaut null, `setModuleResponse()` n'est jamais appelé, et la
+  // commande expire sur `defaultNetworkTimeoutMs` — 5 secondes, mesurées en direct :
+  //     E/LocalNetwork: Timed out waiting for command response:
+  //                     LanCmd[1]=property.json?name=d302_monitor
+  eq(cheminAvecCmd("/property/datapoint.json", 7), "/property/datapoint.json?cmd_id=7",
+     "le cmd_id part en paramètre d'URL");
+  // Un cmd_id de 0 est un identifiant valide — `__nextLanCommandId` commence à zéro. Le tester
+  // par sa véracité l'aurait transformé en poussée spontanée, donc en commande expirée.
+  eq(cheminAvecCmd("/property/datapoint.json", 0), "/property/datapoint.json?cmd_id=0",
+     "zéro est un identifiant, pas une absence");
+  // Une poussée spontanée n'en porte pas, et c'est correct : getCommand() rend null et la
+  // propriété est appliquée quand même.
+  eq(cheminAvecCmd("/property/datapoint.json", null), "/property/datapoint.json",
+     "une rediffusion spontanée reste sans cmd_id");
+});
+
+test("une lecture d'application est nommée avec son cmd_id", () => {
+  // C'est `analyserCommandes` qui doit le remonter : sans lui, rien en aval ne peut apparier.
+  const [i] = analyserCommandes(JSON.stringify({ cmds: [{ cmd: {
+    cmd_id: 4, method: "GET", resource: "property.json?name=d302_monitor",
+    data: "", uri: "/local_lan/property/datapoint.json",
+  } }] }));
+  eq(i.type, "lecture", "reconnue comme une lecture");
+  eq(i.nom, "d302_monitor", "la propriété demandée");
+  eq(i.cmdId, 4, "l'identifiant est conservé");
 });
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

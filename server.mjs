@@ -33,7 +33,7 @@ import { makeLanSession, token } from "./src/lib/lansession.mjs";
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
          cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
-         estRefus, porteUneCharge, encoreDesCommandes, CHEMIN_ACK,
+         estRefus, porteUneCharge, encoreDesCommandes, CHEMIN_ACK, cheminAvecCmd,
          PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
@@ -290,6 +290,23 @@ function makeMachine(row) {
     /** Compteur de visites de commands.json, pour la chorégraphie `device_connected`. */
     visites: 0,
     cmdId: 0,
+    /**
+     * **La dernière valeur BRUTE de chaque propriété, telle que la machine l'a poussée.**
+     *
+     * Ni décodée ni interprétée : c'est ce qu'on redonne à une application qui la demande, et
+     * une valeur qu'on ne sait pas décoder doit pouvoir être servie comme les autres.
+     *
+     * Elle existe parce que la lecture d'une application a **5 secondes** pour être servie
+     * (`defaultNetworkTimeoutMs`), là où un aller-retour vers la cafetière en demande
+     * facilement le double : la machine ne vient chercher qu'une commande par visite, et elle
+     * ne visite que toutes les 2,5 s. Répondre depuis ce cache n'est donc pas une optimisation,
+     * c'est la seule façon de répondre à temps — et c'est exactement la promesse du
+     * multiplexeur : **une lecture réelle, N destinataires.**
+     *
+     * En mémoire seulement, bornée par le nombre de propriétés distinctes (~60). Un redémarrage
+     * la vide, ce qui ne coûte qu'une lecture réelle de plus.
+     */
+    dernieresValeurs: new Map(),
     lastMonitor: null,
     lastDataResponse: null,
     lastRegisterAt: 0,
@@ -1343,6 +1360,20 @@ function desarmerSondeApp(app) {
 /** Combien de blocs on accepte d'enchaîner sur un même passage. Voir `sonderApp`. */
 const MAX_BLOCS_ENCHAINES = 12;
 
+/**
+ * **En deçà, une lecture d'application est servie depuis le cache sans redemander à la machine.**
+ *
+ * C'est la promesse du multiplexeur mise en chiffre : deux applications qui interrogent le
+ * monitor à trois secondes d'intervalle valent **une** lecture réelle, pas deux. La vraie
+ * application sonde `d302_monitor` sans relâche — soixante-douze demandes en deux secondes ont
+ * été relevées — et sans ce seuil chacune mettrait une tâche en file.
+ *
+ * La valeur est servie dans tous les cas : au-delà du seuil on répond quand même avec ce qu'on
+ * a, et on demande un rafraîchissement en plus. Attendre la machine pour répondre reviendrait à
+ * ne pas répondre, ses 5 secondes d'attente étant plus courtes que notre aller-retour.
+ */
+const FRAICHEUR_LECTURE_APP = 10000;
+
 async function sonderApp(m, app) {
   if (app.etat !== "etablie" || !app.session) return;
   if (app.sondeEnCours) return;
@@ -1491,7 +1522,46 @@ async function executerPourApp(m, app, intention) {
       return;
     case "lecture": {
       app.commandes++;
-      LA("in", `lecture ${intention.nom}`, app, m);
+      // ⚠️ **Une lecture se dénoue par une POUSSÉE de notre part, pas par la réponse HTTP.** Le
+      // SDK garde la commande dans `_commandsPendingResponses` et n'y rattache un datapoint que
+      // par le `cmd_id` de l'URL. On retient donc l'identifiant tout de suite : qu'on réponde
+      // depuis le cache maintenant ou que la machine pousse dans dix secondes, l'appariement
+      // aura lieu. Sans cela, l'application redemandait sans fin — `lecture d302_monitor (×72)`
+      // au journal n'était pas soixante-douze demandes, c'était une demande réessayée.
+      app.lectures.set(intention.nom, intention.cmdId);
+      const connue = m.dernieresValeurs.get(intention.nom) ?? null;
+      const fraiche = !!connue && Date.now() - connue.at < FRAICHEUR_LECTURE_APP;
+      const dit = connue ? (fraiche ? " · servie du cache" : " · servie du cache, rafraîchissement demandé")
+                         : " · valeur inconnue, demandée à la machine";
+      LA("in", `lecture ${intention.nom}${dit}`, app, m);
+      if (connue) {
+        // Servie AVANT de mettre quoi que ce soit en file : les 5 secondes de l'application
+        // courent déjà, et notre file, elle, peut être occupée par une préparation.
+        app.lectures.delete(intention.nom);
+        pousserVersApp(m, app, paquetDatapoint(m.dsn ?? "", intention.nom, connue.valeur),
+                       "/property/datapoint.json", intention.cmdId).catch(() => {});
+      }
+      // Une valeur assez fraîche vaut pour tout le monde : c'est la promesse du multiplexeur, et
+      // c'est ce qui évite qu'une application bavarde monopolise la cafetière.
+      if (fraiche) return;
+      /**
+       * ⚠️ **Le monitor ne se lit pas comme une propriété : il se DEMANDE, avec `0x75`.** C'est
+       * la seule trame qui interroge la machine sur son état, et sa réponse arrive en poussée de
+       * `d302_monitor` — pas en `data_response`. Une lecture de propriété Ayla sur ce nom-là ne
+       * déclenche rien.
+       *
+       * Et c'est exactement le même geste que « Lire l'état » de `/pilotage`, donc la même tâche,
+       * donc la même clé de fusion. Cette propriété a trois lecteurs — le bouton, la page `/`, et
+       * chaque téléphone branché — et ils regardent tous la même valeur : **une lecture réelle
+       * vers la cafetière, N destinataires.** Passer par `startImport` aurait mis en file une
+       * tâche distincte par téléphone, à côté de celle du bouton, pour aller chercher la valeur
+       * que l'autre rapportait déjà.
+       */
+      if (intention.nom.startsWith(m.mon)) {
+        startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor",
+                     { cle: "presence", rang: RANG.LECTURE, i18n: { k: "presence" } });
+        return;
+      }
       startImport(m, [intention.nom], 30000, {
         label: `App ${app.id} · lecture ${intention.nom}`,
         rang: RANG.LECTURE,
@@ -1629,17 +1699,21 @@ function relancerSessionApp(m, app, motif = "flux illisible") {
  * l'ordre de production est aussi l'ordre d'émission.
  */
 /**
- * `chemin` par défaut : le datapoint. Un ACCUSÉ doit partir sur `CHEMIN_ACK` — c'est l'URI, et
- * elle seule, qui décide si l'application le lit comme un accusé ou comme une écriture.
+ * `chemin` par défaut : le datapoint. Un ACCUSÉ part sur `CHEMIN_ACK` — c'est l'URI, et elle
+ * seule, qui décide si l'application le lit comme un accusé ou comme une écriture.
+ *
+ * `cmdId` non nul apparie la poussée à une commande de lecture que l'application attend. Voir
+ * `cheminAvecCmd` : le SDK ne fait ce lien que par ce paramètre d'URL, et sans lui la commande
+ * expire au bout de 5 secondes en `Timed out waiting for command response`.
  */
-function pousserVersApp(m, app, corpsJson, chemin = "/property/datapoint.json") {
+function pousserVersApp(m, app, corpsJson, chemin = "/property/datapoint.json", cmdId = null) {
   if (app.etat !== "etablie" || !app.session) return Promise.resolve(false);
   const suite = (app.chaine ?? Promise.resolve()).then(async () => {
     // Re-vérifié DANS le maillon : la session a pu tomber pendant l'attente de notre tour.
     if (app.etat !== "etablie" || !app.session) return false;
     try {
       await httpJson({
-        ip: app.ip, port: app.port, path: `${app.uri}${chemin}`,
+        ip: app.ip, port: app.port, path: `${app.uri}${cheminAvecCmd(chemin, cmdId)}`,
         method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
       });
       toucher(app, Date.now());
@@ -1764,12 +1838,17 @@ function diffuserAuxApps(m, name, value) {
   const corps = paquetDatapoint(m.dsn ?? "", name, value);
   for (const app of cibles) {
     app.datapoints++;
+    // Cette propriété était-elle attendue par une commande de lecture de CETTE application ?
+    // Si oui, la poussée doit porter son `cmd_id`, sinon la commande expire alors même que la
+    // valeur, elle, est bien arrivée. L'entrée est consommée : un `cmd_id` ne sert qu'une fois.
+    const attendue = app.lectures.get(name) ?? null;
+    if (attendue !== null) app.lectures.delete(name);
     // Le cœur du multiplexeur — une lecture réelle, N destinataires — n'était visible nulle
     // part : ni au journal, ni ailleurs qu'en compteur cumulé. Il l'est ici, et le repli des
     // lignes identiques suffit à contenir une préparation, où la machine pousse toutes les 1 à
     // 3 secondes. C'est aussi la seule trace de ce qu'une application a REÇU de nous.
-    LA("out", `état rediffusé · ${libelleEtat(m, name, value)}`, app, m);
-    pousserVersApp(m, app, corps).catch(() => {});
+    LA("out", `état ${attendue !== null ? "servi" : "rediffusé"} · ${libelleEtat(m, name, value)}`, app, m);
+    pousserVersApp(m, app, corps, "/property/datapoint.json", attendue).catch(() => {});
   }
 }
 
@@ -1988,6 +2067,9 @@ function handleProperty(m, name, value) {
   // interroge. Le noter AVANT tout traitement, sinon un décodage raté ferait passer une machine
   // bavarde pour une machine muette.
   contactMachine(m.file, Date.now());
+  // Retenue AVANT tout décodage, et **brute** : c'est ce qu'une application redemandera, et une
+  // propriété qu'on ne sait pas décoder doit pouvoir être servie comme les autres.
+  m.dernieresValeurs.set(name, { at: Date.now(), valeur: value });
   // Rediffusion aux applications branchées, AVANT tout décodage : ce que nous savons décoder
   // n'a rien à voir avec ce qu'elles savent lire, et filtrer ici les priverait de propriétés
   // parfaitement valides que nous ignorons. Sans proxy actif, c'est un retour immédiat.

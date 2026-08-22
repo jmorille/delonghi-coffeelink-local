@@ -1264,6 +1264,28 @@ makes N independent applications possible where the machine allows one.
 - **The Ayla SDK is silent in logcat.** A full process capture contains no `LanModule`,
   `CreateDPCommand` or `AylaLog` tag; what is observable phone-side stops at De'Longhi's own
   service. Everything below that has to be instrumented here.
+- ⚠️ **An app's property READ is not resolved by the HTTP response — it is resolved by a datapoint
+  WE post, and only if that POST carries `?cmd_id=<n>` in its URL.** `AylaLanModule.getCommand()`
+  reads `session.getParms().get("cmd_id")` and nothing else; without it the command dies on
+  `defaultNetworkTimeoutMs` — **5 s**, measured — as `Timed out waiting for command response:
+  LanCmd[1]=property.json?name=d302_monitor`. The app then retries forever, which is what
+  `lecture d302_monitor (×72)` in the journal actually was: one request, retried, not 72.
+  **And the datapoint itself is a BARE object** — `new JSONObject(payload.data).getString("name")`
+  — so our `{properties:[{property:…}]}` wrapper raised a `JSONException` and the app answered
+  `400 Bad message JSON`: the multiplexer's whole point, one real read for N recipients, had been
+  pushing messages nobody could read, while the journal truthfully said "état rediffusé".
+  `paquetDatapoint()` and `cheminAvecCmd()` in `appproxy.mjs` hold both rules, `verif-apps.mjs`
+  pins them, and `faux-app.mjs` now reports the read's verdict in three branches (appariée / sans
+  cmd_id / jamais répondue).
+- ⚠️ **5 s is shorter than a round trip to the appliance**, which takes one command per visit every
+  2.5 s — so waiting for the machine before answering IS not answering. `m.dernieresValeurs` keeps
+  the last **raw** value per property (kept before any decoding: a value we cannot decode must
+  still be servable), the read is answered from it immediately, and a refresh is queued only when
+  that value is older than `FRAICHEUR_LECTURE_APP` (10 s). When we hold nothing, the `cmd_id` is
+  parked in `app.lectures` and consumed by the machine's eventual push — so the pairing happens on
+  both paths. **`d302_monitor` is read with `0x75`, not as an Ayla property**, and an app's request
+  therefore joins the very task `/pilotage`'s "Lire l'état" queues, merging on `cle: "presence"`:
+  the button, `/`, and every connected phone watch that one value — one real read, N recipients.
 - ⚠️⚠️ **A datapoint ack has THREE things to get right, and each one alone makes the app call the
   command failed while the appliance actually did it.** Symptom seen live: the machine turns on
   for real, the phone says the connection failed. From `AylaLanModule.handleDatapointAck`:

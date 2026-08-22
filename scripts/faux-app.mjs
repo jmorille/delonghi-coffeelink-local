@@ -75,6 +75,20 @@ const ID_PRESENCE = "faux-app-presence";
 let accusePresence = false;
 
 /**
+ * L'identifiant de la commande de lecture que `--lire` met en file, et ce qu'on en a obtenu.
+ *
+ * ⚠️ **Une lecture ne se dénoue pas par la réponse HTTP à `commands.json`.** Le SDK garde la
+ * commande dans `_commandsPendingResponses` et n'y rattache un datapoint que par le paramètre
+ * d'URL `cmd_id` — `getCommand()` lit `session.getParms().get("cmd_id")` et rien d'autre. Sans
+ * lui, la commande expire sur `defaultNetworkTimeoutMs` : `Timed out waiting for command
+ * response: LanCmd[1]=property.json?name=d302_monitor`, relevé en direct sur la vraie
+ * application. Le banc distingue donc les deux cas au lieu de compter un datapoint de plus.
+ */
+const ID_LECTURE = 1;
+let lectureAppariee = false;
+let lectureNonAppariee = false;
+
+/**
  * La file que ce faux appareil sert, une commande par visite. `--lot N` en ajoute N de plus,
  * pour reproduire ce que fait l'application officielle : elle empile la commande demandée puis,
  * une milliseconde plus tard, tout un lot d'alarmes. C'est ce qui fait passer la PREMIÈRE en
@@ -160,11 +174,27 @@ const serveur = createServer(async (req, res) => {
         if (charge.id === ID_PRESENCE && bon) accusePresence = true;
         console.log(`  ← accusé ${charge.id ?? "SANS ID (enveloppé ?)"} statut ${charge.ack_status}` + (bon ? "" : " ⚠ le SDK lit tout sauf 200 comme un NAK"));
       } else {
-        for (const e of charge.properties ?? []) {
-          const q = e.property ?? e;
-          datapoints++;
-          if (q.ack_status !== undefined) console.log(`  ← accusé ${q.id} ⚠ POSTÉ SUR datapoint.json : le SDK le lira comme une écriture`);
-          else console.log(`  ← datapoint ${q.name} = ${String(q.value).slice(0, 60)}`);
+        // ⚠️ **Un datapoint est un objet NU, lui aussi.** `handlePropertyUpdateRequest` fait
+        // `new JSONObject(payload.data).getString("name")` : enveloppé dans
+        // `{properties:[{property:…}]}`, il lève une `JSONException`, la propriété n'est jamais
+        // appliquée et l'application répond 400 « Bad message JSON ». Ce banc acceptait les deux
+        // formes et ne pouvait donc pas voir que le serveur poussait la mauvaise — c'est-à-dire
+        // que le cœur du multiplexeur, une lecture réelle pour N destinataires, n'arrivait
+        // lisible chez personne.
+        const enveloppe = charge.properties !== undefined;
+        const q = enveloppe ? (charge.properties[0]?.property ?? charge.properties[0] ?? {}) : charge;
+        datapoints++;
+        // `cmd_id` est un paramètre d'URL, jamais un champ de la charge.
+        // ⚠️ `url` est privé de sa requête plus haut : c'est `req.url` qui la porte, et le
+        // `cmd_id` n'existe que là. Le lire sur `url` rendait ce banc aveugle à l'appariement
+        // même — il voyait le datapoint arriver et concluait « jamais appariée ».
+        const cmd = new URL(req.url ?? "", "http://x").searchParams.get("cmd_id");
+        if (q.ack_status !== undefined) console.log(`  ← accusé ${q.id} ⚠ POSTÉ SUR datapoint.json : le SDK le lira comme une écriture`);
+        else if (enveloppe) console.log(`  ← datapoint ${q.name} ⚠ ENVELOPPÉ dans properties[] : le SDK lève JSONException et répond 400`);
+        else console.log(`  ← datapoint ${q.name} = ${String(q.value).slice(0, 60)}${cmd === null ? "" : ` (réponse à la commande ${cmd})`}`);
+        if (!enveloppe && q.ack_status === undefined && aLire && q.name === aLire) {
+          if (Number(cmd) === ID_LECTURE) lectureAppariee = true;
+          else lectureNonAppariee = true;
         }
       }
     } catch (e) {
@@ -226,6 +256,15 @@ serveur.listen(monPort, "0.0.0.0", async () => {
     // La file VIDE est l'affirmation centrale quand on passe `--lot` : un serveur qui jette les
     // 206 laisse ici des commandes non servies, et les perd toutes sauf la dernière.
     console.log(`  file de commandes : ${file.length ? `${file.length} JAMAIS SERVIE(S) — le serveur jette-t-il les 206 ?` : "entièrement servie"}.`);
+    // La lecture est l'autre moitié du protocole, et elle a un verdict à trois branches : servie
+    // et appariée, servie sans `cmd_id` (le SDK la laisserait expirer quand même), ou rien.
+    if (aLire) {
+      console.log(`  lecture ${aLire} : ${
+        lectureAppariee ? `RÉPONDUE et appariée (cmd_id ${ID_LECTURE})`
+        : lectureNonAppariee ? "répondue SANS cmd_id — le SDK ne l'apparie pas et la laisse expirer"
+        : "JAMAIS RÉPONDUE — le SDK expire en « Timed out waiting for command response »"
+      }.`);
+    }
     if (session) {
       // Fin de session propre : c'est `DeleteSessionCommand` du SDK, et le serveur doit retirer
       // l'entrée du registre plutôt que d'attendre l'expiration.
