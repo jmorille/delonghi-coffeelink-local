@@ -152,7 +152,6 @@ export default function Boissons() {
   const tEditor = useTranslations("editor");
   const tCat = useCategoryLabel();
   const bevLabel = useBeverageLabel();
-  const imageLabel = useImageLabel();
   const paramLabel = useParamLabel();
   const unitLabel = useUnitLabel();
   const [data, setData] = useState<Payload | null>(null);
@@ -641,22 +640,22 @@ export default function Boissons() {
    * Écrit la recette dans le profil sur la machine (0x83, mode DONTCARE, action SAVE_BEVERAGE).
    * Modification persistante de l'appareil : elle remplace la recette enregistrée de ce profil.
    */
-  const writeToProfile = (bev: Beverage, params: RecipeParam[]) => {
-    setAsk({
-      question: tEditor("confirmWrite", { beverage: bevLabel(bev), profile }),
-      detail: resumeReglages(bev, params, paramLabel, unitLabel, (c) => t("confirmPrepareMore", { count: c })) || undefined,
-      warn: tEditor("confirmWriteWarning"),
-      onConfirm: () =>
-        commande(
-          bevScope(bev.id),
-          "/api/command",
-          { action: "saveToProfile", beverageId: bev.id, profileId: profile, params },
-          // Au moment où l'utilisateur veut savoir si sa recette est passée, on le lui dit. La somme
-          // de contrôle d'avant écriture est une donnée de diagnostic, pas une réponse à sa question.
-          () => tEditor("writeSent"),
-        ),
-    });
-  };
+  /**
+   * **Part au clic, sans dialogue** — demandé explicitement. L'avertissement n'a pas disparu
+   * pour autant : il vit dans l'infobulle du bouton (`editor.writeTitle`, « Remplace durablement
+   * la recette de ce profil… La valeur précédente est perdue »), qui la portait déjà avant. Ce
+   * qu'on retire est l'interruption, pas le fait — un geste sans garde-fou ET sans énoncé serait
+   * un autre changement, qui n'a pas été demandé.
+   */
+  const writeToProfile = (bev: Beverage, params: RecipeParam[]) =>
+    commande(
+      bevScope(bev.id),
+      "/api/command",
+      { action: "saveToProfile", beverageId: bev.id, profileId: profile, params },
+      // Au moment où l'utilisateur veut savoir si sa recette est passée, on le lui dit. La somme
+      // de contrôle d'avant écriture est une donnée de diagnostic, pas une réponse à sa question.
+      () => tEditor("writeSent"),
+    );
 
   /**
    * Donne son image à une recette perso — `0xAB`, **persistant sur l'appareil**.
@@ -664,22 +663,19 @@ export default function Boissons() {
    * L'emplacement vient du serveur (`customSlot`) et n'est pas redérivé de l'identifiant : le
    * 229 qui les relie est une constante de protocole, elle n'a qu'une place.
    *
-   * Le nom repart tel qu'il a été lu parce que la trame le porte dans la même entrée — la
-   * confirmation l'annonce plutôt que de laisser croire à une écriture d'icône seule.
+   * Le nom repart tel qu'il a été lu parce que la trame le porte dans la même entrée.
+   *
+   * **Part au clic, sans dialogue** — demandé explicitement. Le fait reste vrai qu'une écriture
+   * d'icône réécrit le nom, alors il passe dans l'infobulle du bouton plutôt que de disparaître
+   * avec le dialogue qui le portait.
    */
-  const setBeverageIcon = (bev: Beverage, icon: number) => {
-    setAsk({
-      question: t("imageConfirm", { beverage: bevLabel(bev), image: imageLabel(IMAGES_PERSO[icon] ?? String(icon)) }),
-      warn: t("imageConfirmWarning", { name: bev.machineName ?? "" }),
-      onConfirm: () =>
-        commande(
-          bevScope(bev.id),
-          "/api/profiles/name",
-          { kind: "custom", index: bev.customSlot, name: bev.machineName ?? "", icon },
-          () => t("imageSent"),
-        ),
-    });
-  };
+  const setBeverageIcon = (bev: Beverage, icon: number) =>
+    commande(
+      bevScope(bev.id),
+      "/api/profiles/name",
+      { kind: "custom", index: bev.customSlot, name: bev.machineName ?? "", icon },
+      () => t("imageSent"),
+    );
 
   const imported = data ? data.beverages.filter((b) => b.bounds || b.values).length : 0;
 
@@ -1197,6 +1193,7 @@ function VignetteBoisson({ id, icon }: { id?: number; icon?: number | null }) {
  */
 function ChoixImage({
   actuel,
+  nom,
   busy,
   working,
   onChoose,
@@ -1207,6 +1204,8 @@ function ChoixImage({
    * évite d'avoir à inventer un code de repli pour un cas qui ne se produit pas.
    */
   actuel: number;
+  /** Le nom saisi sur la machine : l'écriture le réécrit, l'infobulle du bouton le dit. */
+  nom: string;
   busy: boolean;
   working: boolean;
   onChoose: (icon: number) => void;
@@ -1265,6 +1264,7 @@ function ChoixImage({
               disabled={busy || choix === actuel}
               aria-busy={working || undefined}
               onClick={() => onChoose(choix)}
+              title={t("imageConfirmWarning", { name: nom })}
             >
               <Icone nom="machine" />
               <span className="lbl">{t("imageSave")}</span>
@@ -1446,7 +1446,7 @@ function BeverageCard({
               écriture a besoin d'un nom à réécrire). L'identité de la recette — son dessin — se
               lit avant ses valeurs pour un profil. */}
           {bev.customSlot !== null && bev.icon !== null && (
-            <ChoixImage actuel={bev.icon} busy={busy} working={working} onChoose={onSetIcon} />
+            <ChoixImage actuel={bev.icon} nom={bev.machineName ?? ""} busy={busy} working={working} onChoose={onSetIcon} />
           )}
 
           <RecipeEditor

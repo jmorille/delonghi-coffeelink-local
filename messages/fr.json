@@ -105,7 +105,6 @@
     "imagePick": "Choisir l'image {image}",
     "imageCurrent": "image actuelle",
     "imageSave": "Enregistrer l'image",
-    "imageConfirm": "Donner l'image « {image} » à « {beverage} » ?",
     "imageConfirmWarning": "Écriture persistante sur la cafetière. La même trame porte le nom : il est réécrit à l'identique, « {name} ».",
     "imageSent": "Image envoyée. Elle s'affichera quand la machine aura renvoyé le bloc de noms."
   },
@@ -178,8 +177,6 @@
     "prepareWith": "Préparer avec ces valeurs",
     "writeTo": "Écrire dans {profile}",
     "writeTitle": "Remplace durablement la recette de ce profil sur la machine. La valeur précédente est perdue.",
-    "confirmWrite": "Écrire « {beverage} » dans le profil {profile} de la machine ?",
-    "confirmWriteWarning": "Cela remplace durablement la recette enregistrée de ce profil.",
     "writeSent": "Recette enregistrée dans le profil sur la machine. Relire la boisson pour vérifier ce qu'elle a retenu.",
     "defaults": "Valeurs par défaut",
     "defaultsTitle": "Remet chaque réglage au défaut du modèle (ECAM 610.75.MB), pas à la valeur enregistrée du profil. Local : rien n'est envoyé à la machine avant « Préparer » ou « Écrire ».",
@@ -339,7 +336,6 @@
     "nothingUsable": "Aucune valeur exploitable lue sur la machine pour ce profil.",
     "savedListHeading": "Recettes enregistrées",
     "emptyList": "Aucune recette. Les boissons de la machine se pilotent directement depuis la page Boissons ; cette page sert à enregistrer vos propres variantes.",
-    "writeToProfileConfirm": "Écrire « {beverage} » dans le profil {profile} de la machine ?",
     "writeToProfileWarning": "Cela REMPLACE durablement la recette enregistrée de ce profil sur la machine.",
     "writeSent": "Envoyé. Somme du profil avant écriture : {checksum} — redemander les sommes de contrôle permet de vérifier qu'elle a changé."
   },

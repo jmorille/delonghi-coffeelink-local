@@ -441,8 +441,28 @@ not in nature. It asks **no confirmation**, unlike the three
 above it: the question it used to pose warned about queueing seven tasks at once, back when each new
 request destroyed the previous one. The queue removed that risk — the tasks stack at rank `LECTURE`,
 a command overtakes them, "Activité" shows them one by one and each carries its own "Annuler". The
-confirmations that remain guard a gesture that reaches the appliance (a hot-water rinse, a
-persistent write) and that no queue can undo afterwards; this one only asks.
+confirmations that remain guard a gesture that reaches the appliance and that no queue can undo
+afterwards; this one only asks.
+
+⚠️ **"Persistent write" is no longer one of those gestures, by the owner's explicit decision.**
+"Écrire dans le profil" (`0x83` / `SAVE_BEVERAGE`, on both `/` and `/recipes`) and "Enregistrer
+l'image" (`0xAB`) now fire on the click. Three things about how that was done, because each is
+the difference between a change and a regression:
+
+- **The warning moved, it did not vanish.** `editor.writeTitle` already said "Remplace durablement
+  la recette de ce profil… La valeur précédente est perdue" in the button's tooltip; the other two
+  buttons gained one carrying the same text (`beverages.imageConfirmWarning`,
+  `recipes.writeToProfileWarning`). Removing the **interruption** is what was asked; removing the
+  **fact** would have been a second, unasked change.
+- **Both pages moved together.** `/` and `/recipes` write the same frame through the same
+  endpoint; leaving one of them asking would have made one gesture behave two ways depending on
+  the page — the exact divergence this file warns about everywhere else.
+- **The `Geste` list stayed closed.** These two did NOT become disableable preferences in
+  `confirmPrefs.ts`; they simply have no dialogue any more. The renounceable set is still
+  `power` / `dispense` and still defaults to asking. That module's own comment used to assert
+  that a profile write "ne doit jamais" lose its dialogue — it was corrected in the same commit,
+  because **a comment stating an invariant has to fall with the invariant**; left standing it
+  would promise the next reader a guarantee the code no longer offers.
 
 **`L()` folds consecutive identical lines instead of writing them again.** Measured on a real
 circuit-breaker run: 24 of the last 30 journal lines were `local_reg erreur: socket hang up`, and

@@ -211,19 +211,11 @@ export default function Recipes() {
       refuser(t("fixOutOfRange"));
       return;
     }
-    const detail = draft.params
-      .map((p) => `${paramLabel(editable.find((b) => b.id === p.id) ?? { id: p.id })} = ${p.value}`)
-      .join(`
-`);
-    // La question, les valeurs et la mise en garde étaient une seule chaîne, assemblée avec des
-    // retours à la ligne parce que `window.confirm()` n'a qu'un champ. Le dialogue en a trois, et
-    // c'est exactement ce que cette confirmation demandait : ce qu'on fait, sur quoi, et le prix.
-    demander({
-      question: t("writeToProfileConfirm", { beverage: bevLabel(bev), profile: draft.profileId }),
-      detail,
-      warn: t("writeToProfileWarning"),
-      onConfirm: () => void ecrireDansProfil(),
-    });
+    // **Part au clic, sans dialogue.** C'est le MÊME geste que « Écrire dans le profil » sur `/`
+    // — même trame `0x83` / `SAVE_BEVERAGE`, même endpoint — et deux comportements pour un seul
+    // acte selon la page seraient pires que l'un ou l'autre. L'avertissement passe dans
+    // l'infobulle du bouton : ce qu'on retire est l'interruption, pas le fait.
+    void ecrireDansProfil();
   };
 
   const ecrireDansProfil = async () => {
@@ -382,7 +374,12 @@ export default function Recipes() {
             <Icone nom="lire" />
             <span className="lbl">{t("takeFromProfile")}</span>
           </button>
-          <button className="good iconBtn" onClick={writeToMachine} disabled={!!outOfRange.length || !draft.params.length}>
+          <button
+            className="good iconBtn"
+            onClick={writeToMachine}
+            disabled={!!outOfRange.length || !draft.params.length}
+            title={t("writeToProfileWarning")}
+          >
             <Icone nom="machine" />
             <span className="lbl">{t("writeToProfile", { profile: draft.profileId })}</span>
           </button>

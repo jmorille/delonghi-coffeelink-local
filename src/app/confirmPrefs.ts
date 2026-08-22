@@ -7,11 +7,23 @@
  * appuie — il voit l'appareil. La confirmation reste le défaut, mais elle devient renonçable pour
  * ces deux gestes-là, et pour eux seuls.
  *
- * **Ce que le réglage ne touche pas, et ne doit jamais toucher.** Écrire une recette dans un profil,
- * remplacer un réglage de grain, supprimer, réinitialiser une machine : ce sont des modifications
- * persistantes de l'appareil ou des pertes de données, faites une fois, jamais dans l'urgence.
- * Elles n'ont pas de `Geste` et ne peuvent donc pas être désactivées — voir `confirm.tsx`, où
- * l'absence de `geste` suffit à garder le dialogue.
+ * **Ce que le réglage ne touche pas.** Remplacer un réglage de grain, supprimer, réinitialiser
+ * une machine : des modifications persistantes ou des pertes de données, faites une fois, jamais
+ * dans l'urgence. Elles n'ont pas de `Geste` et ne peuvent donc pas être désactivées ici — voir
+ * `confirm.tsx`, où l'absence de `geste` suffit à garder le dialogue.
+ *
+ * ⚠️ **Ce paragraphe disait « et ne doit jamais toucher », et citait en premier l'écriture d'une
+ * recette dans un profil. Ce n'est plus vrai, et la façon dont ça a cessé de l'être compte.**
+ * « Écrire dans le profil » (sur `/` et sur `/recipes`) et « Enregistrer l'image » ne demandent
+ * plus rien : la confirmation a été retirée **à la demande explicite du propriétaire de la
+ * machine**, pas contournée par ce réglage-ci. La distinction est entière — la liste `Geste`
+ * reste fermée et ces gestes n'y sont pas entrés ; ils sont simplement partis du clic. Ce qui
+ * les accompagnait n'a pas disparu pour autant : l'avertissement est passé dans l'infobulle des
+ * boutons concernés, parce que retirer l'interruption n'est pas retirer le fait.
+ *
+ * La leçon à garder si la question revient : **un commentaire qui énonce un invariant doit
+ * tomber en même temps que l'invariant.** Laissé tel quel, celui-ci aurait affirmé au prochain
+ * lecteur une garantie que le code n'offre plus — pire qu'une absence de commentaire.
  *
  * **Par navigateur, comme le thème et la machine sélectionnée.** Un réglage global aurait désarmé
  * le téléphone qu'on tend à quelqu'un parce que la tablette du mur, elle, n'a pas besoin d'être
