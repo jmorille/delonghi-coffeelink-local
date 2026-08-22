@@ -1479,3 +1479,51 @@ Les quatre octets retirés étaient l'horodatage que `Y1()` ajoute derrière **c
 juste, mais par coïncidence : il supposait une trame ECAM là où il n'y en avait pas, et ne rien
 retirer de ce qu'on ne sait pas lire reste la bonne règle.
 
+
+### 6.1. Les recettes personnalisées sont par profil, pas de 6
+
+Longtemps noté ici et dans le code comme « profil 1 imposé ». **C'est faux**, et la façon dont
+l'erreur tenait mérite d'être gardée : elle reposait sur un fait exact.
+
+L'application n'écrit que six littéraux, sans aucun constructeur à profil variable :
+
+```java
+// it.delonghi.service.DeLonghiWifiConnectService
+C1("d200_1_cstm_recipe_01");  …  C1("d205_1_cstm_recipe_06");
+```
+
+> ⚠️ **Ce que l'application ne sait pas demander, la machine sait néanmoins le publier.** Lire le
+> binaire dit ce que l'app fait, pas ce que l'appareil accepte. Les deux ne coïncident pas.
+
+Relevé le 2026-08-22 à 19:41 : après une écriture de recette (`0x83`), la cafetière a poussé
+d'elle-même les cinq profils.
+
+| propriété | trame | profil |
+|---|---|---|
+| `d202_1_cstm_recipe_03` | `d0 17 a6 f0 01 e8 …` | 1 |
+| `d208_2_cstm_recipe_03` | `d0 17 a6 f0 02 e8 …` | 2 |
+| `d214_3_cstm_recipe_03` | `d0 17 a6 f0 03 e8 …` | 3 |
+| `d220_4_cstm_recipe_03` | `d0 17 a6 f0 04 e8 …` | 4 |
+| `d226_5_cstm_recipe_03` | `d0 17 a6 f0 05 e8 …` | 5 |
+
+Chaque ligne porte **deux confirmations indépendantes** : le numéro suit
+`200 + (p−1)×6 + (slot−1)`, et l'octet de profil de la trame (`f0 0P`) concorde avec le chiffre du
+nom. `0xE8` = 232 = « Recette perso 3 » (§ 2). Le pas de 6 est celui du Bean System (`t()`, base
+160), et `200 + 5×6 = 230` tombe pile au début des identifiants de boisson des recettes perso :
+aucune collision.
+
+D'où la formule :
+
+```
+d{200 + (p−1)×6 + (slot−1)}_{p}_cstm_recipe_{slot}      p = 1…5, slot = 1…6
+```
+
+**Le coût de l'erreur n'était pas cosmétique.** En imposant le profil 1, on lisait `d202_1_…` pour
+les profils 2 à 5 : la recette du profil 1 était affichée comme étant la leur. C'est le défaut du
+Bean System sans pas (§ plus haut), en plus vicieux — celui-là répondait vide et se voyait, celui-ci
+répondait une valeur plausible.
+
+**Et c'est le marqueur de découverte qui l'a trouvé**, pas une relecture du code : `PROPRIÉTÉ NON
+IDENTIFIÉE` s'est allumé sur des noms que la **machine** nous envoyait et que notre propre
+constructeur ne savait pas reproduire. C'est exactement ce pour quoi il existe.
+

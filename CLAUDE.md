@@ -804,9 +804,23 @@ bounds are `d001_rec_espresso` … `d021_rec_brew_over_ice` in the same order. T
 keeping straight: **the 21 is a constant of the app, not the model's recipe count** (an earlier
 version of this file asserted the opposite and refused to switch catalogs on that basis — the
 inference was wrong), and switching a catalog **invalidates no cached read**, since names never move.
-Custom recipes are `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06` with **profile 1 hard-coded**:
-the app writes those names literally and has no builder that varies the profile, so asking for
-`d200_2_…` would be inventing a name.
+**Custom recipes ARE per-profile, stride 6** — `d{200 + (p−1)×6 + (slot−1)}_{p}_cstm_recipe_{slot}`.
+This file long asserted the opposite ("profile 1 hard-coded… asking for `d200_2_…` would be
+inventing a name") from a fact that is itself correct: the app only ever writes six literals,
+`C1("d200_1_cstm_recipe_01")` … `C1("d205_1_cstm_recipe_06")`, and has no profile-varying builder.
+**The inference from it was wrong — what the app cannot ask for, the machine still publishes.**
+Measured 2026-08-22 19:41 in the app journal: after a recipe write (`0x83`) the appliance pushed
+all five profiles on its own — `d202_1`, `d208_2`, `d214_3`, `d220_4`, `d226_5`, each carrying
+`d0 17 a6 f0 0P e8 …` whose **profile byte agrees with the digit in the name**, and `0xE8` = 232 =
+"Recette perso 3". Stride 6 is the Bean System's (`t()`, base 160), and `200 + 5×6 = 230` lands
+exactly where the custom-recipe beverage ids begin — no collision.
+⚠️ **This was not a missing journal label: forcing profile 1 meant reading `d202_1_…` for profiles
+2-5, i.e. showing profile 1's recipe as theirs.** Same shape as the bean-system missing-stride bug
+above, but nastier — that one answered empty and looked absent, this one answered a plausible
+value. And it surfaced the same way three other defects did today: the discovery marker fired
+(`PROPRIÉTÉ NON IDENTIFIÉE`) on names the **machine** sent us and our own builder could not
+reproduce. `profilePropForSlug` in `beverages.mjs` is the single builder; the inverse used for
+naming derives from it, so fixing it fixes both directions at once.
 
 What the table supports, and it is not everything — say so rather than guessing:
 - **10 models** (5 PD_SOUL of 28 beverages, 5 PD_SOUL_BETTER of 22, 3 profiles, 3 custom slots) are
