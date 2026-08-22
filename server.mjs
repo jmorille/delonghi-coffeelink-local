@@ -4541,10 +4541,44 @@ async function handleApi(req, res) {
       rang: RANG.COMMANDE,
       i18n: { k: perso ? "renameCustom" : "renameProfile", p: { index, nom } },
     });
+    /**
+     * **La machine ne repousse RIEN après un `0xAB` / `0xA5`, et il faut donc relire.**
+     *
+     * Constaté en direct : la tâche d'écriture finit « faite », l'appareil affiche bel et bien la
+     * nouvelle icône — et notre cache garde l'ancienne, indéfiniment. Rapporté tel quel : « l'image
+     * est changée sur la machine mais pas dans l'application ».
+     *
+     * ⚠️ C'est l'INVERSE de `0x83`, qui pousse spontanément les cinq profils après une écriture de
+     * recette (voir `beverages.mjs`, § recettes perso par profil). Rien ne laissait deviner cette
+     * asymétrie, et son coût est le pire qui soit pour une écriture : elle réussit, et la page
+     * continue d'affirmer le contraire — sans le moindre signe que la valeur affichée est périmée.
+     *
+     * On ne relit QUE le bloc qui contient l'index écrit, pas les quatre propriétés de la famille :
+     * c'est le même raisonnement que pour l'écriture, qui ne touche qu'une entrée. Rang `LECTURE`,
+     * donc une commande passe devant — et la relecture reste derrière l'écriture qu'elle suit,
+     * puisque `enfiler` insère avant la première tâche de rang STRICTEMENT inférieur.
+     *
+     * Aucun `checksumMark` n'est posé au passage, volontairement : `startImport` n'en pose pas, et
+     * marquer les noms « à jour » ici risquerait de supprimer une relecture ultérieure. Une lecture
+     * redondante ne coûte qu'un aller-retour ; une lecture supprimée à tort n'est récupérable
+     * qu'avec `force: true`.
+     */
+    const famille = perso ? CUSTOM_NAME_PROPS : PROFILE_NAME_PROPS;
+    const bloc = famille
+      .filter((x) => x.stride === STRIDE_CLASSIC && x.first <= index)
+      .sort((a, b) => b.first - a.first)[0] ?? null;
+    const relecture = bloc
+      ? startImport(m, [bloc.prop], 0, { i18n: { k: "readOne", p: { prop: bloc.prop } } })
+      : null;
+
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true, kind: perso ? "custom" : "profile", index, name: nom, icon: icone,
       frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      // Le client sait ainsi qu'une relecture suit, et laquelle : sans elle il afficherait
+      // l'ancienne valeur en croyant l'écriture sans effet.
+      reread: bloc?.prop ?? null,
+      rereadTaskId: relecture?.taskId ?? null,
       register: reg, ...tacheRendue(t),
     }));
   }
