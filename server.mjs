@@ -1350,6 +1350,24 @@ async function sonderApp(m, app) {
   }
 }
 
+/**
+ * **Ce que la sonde a rapporté, dit une fois par CHANGEMENT — jamais une fois par sonde.**
+ *
+ * L'angle mort était total : quatorze sondes en vingt-huit secondes, et pas une ligne. On ne
+ * pouvait donc ni prouver que la boucle tournait, ni voir ce que l'application répondait, ni
+ * situer le moment où un bloc s'est perdu. Or c'est exactement ce qu'on cherche quand une
+ * commande envoyée par le téléphone n'arrive jamais jusqu'ici.
+ *
+ * Journaliser chaque sonde noierait tout : elle bat toutes les 2 s. On ne journalise donc que
+ * la **transition** — statut HTTP, taille du corps, et la forme de ce qu'on en a tiré. Une file
+ * vide se dit une fois et se tait ; la sonde où quelque chose change se voit immédiatement.
+ */
+function noterSondage(m, app, etat) {
+  if (etat === app.dernierSondage) return;
+  app.dernierSondage = etat;
+  LA("out", `sonde commands.json — ${etat}`, app, m);
+}
+
 async function sonderAppSerialise(m, app) {
   let rep;
   try {
@@ -1369,7 +1387,13 @@ async function sonderAppSerialise(m, app) {
     if (e?.code === "ETIMEDOUT") relancerSessionApp(m, app, "sonde expirée, réponse peut-être perdue");
     return;
   }
-  if (rep.status !== 200 || !rep.corps.trim()) return;
+  if (rep.status !== 200 || !rep.corps.trim()) {
+    // ⚠️ Ce retour anticipé saute le déchiffrement. Si l'application avait tout de même produit
+    // un message chiffré, son flux a avancé et le nôtre non — le désaccord d'un message qui rend
+    // tout le reste illisible. Le dire est le minimum : c'était jusqu'ici une sortie muette.
+    noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — non déchiffré`);
+    return;
+  }
   toucher(app, Date.now());
   let clair;
   try {
@@ -1378,11 +1402,14 @@ async function sonderAppSerialise(m, app) {
     // Même cause que le cas `illisible` plus bas — un flux perdu — mais détectée un cran plus
     // tôt, quand c'est le déchiffrement lui-même qui refuse (remplissage invalide). On
     // journalisait et on repartait sonder un flux qui ne redeviendrait jamais lisible.
+    noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — indéchiffrable`);
     LA("in", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
     relancerSessionApp(m, app, "déchiffrement refusé");
     return;
   }
-  for (const intention of analyserCommandes(clair)) await executerPourApp(m, app, intention);
+  const intentions = analyserCommandes(clair);
+  noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — ${intentions.map((i) => i.type).join(", ")}`);
+  for (const intention of intentions) await executerPourApp(m, app, intention);
 }
 
 /**

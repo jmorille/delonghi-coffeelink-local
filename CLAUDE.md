@@ -1219,6 +1219,28 @@ makes N independent applications possible where the machine allows one.
   the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
   {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
   the only signal, and not answering leaves the app waiting then concluding failure.
+- ⚠️ **An app's LAN command queue is AT-MOST-ONCE, and the app cannot tell.**
+  `AylaLanModule.handleLanCommandRequest` removes the command from `_pendingLanCommands` the
+  instant it **encrypts** it into the HTTP response — not when it is received, and there is no
+  retry. One lost response therefore produces both symptoms at once, which is what made them
+  impossible to connect: the command is gone for good, **and** the app's outbound AES stream has
+  advanced by a message we never consumed, so everything after it is unreadable (`…ta":{}}`,
+  leading block only). Measured end to end: the official app logged `AylaDatapoint sent to SDK:
+  0d 07 84 0f 02 01` (turn on) then `onCreateDatapointOk`, while our side recorded
+  `commandes = 0` and, twenty seconds later, one unreadable block — and the appliance, read
+  minutes afterwards, had not moved, so it had not gone via the cloud either.
+  **`onCreateDatapointOk` proves nothing about delivery**: the app says "delivered" on the
+  strength of its own queue, which it emptied by encrypting.
+- **The poll itself is journalled, on CHANGE only.** Fourteen probes in twenty-eight seconds used
+  to write not one line, so one could not tell whether the loop was even running, what the app was
+  answering, or where a block went missing. `noterSondage()` logs a transition — HTTP status, body
+  size, and the shape of the intentions parsed — so an empty queue says so once and goes quiet.
+  Logging every probe would drown the journal: it beats every 2 s. The early return that skips
+  decryption (non-200, empty body) goes through it too — it is one of the places a message can
+  vanish without a trace.
+- **The Ayla SDK is silent in logcat.** A full process capture contains no `LanModule`,
+  `CreateDPCommand` or `AylaLog` tag; what is observable phone-side stops at De'Longhi's own
+  service. Everything below that has to be instrumented here.
 - ⚠️ **The ack is owed to any property carrying an `id`, INCLUDING one we do not relay.** It says
   "received", not "executed" — it is a transport ack, and treating it as a business validation is
   what broke the real app. Measured: the official app opens **every** session by writing

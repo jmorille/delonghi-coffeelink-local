@@ -969,3 +969,71 @@ Un échange de clés ne touche pas la cafetière : il ne recrée que le chiffrem
 l'application et nous. Rouvrir tôt ne coûte donc rien, et un verrou de 15 s empêche l'emballement
 si le téléphone est seulement lent.
 
+
+### 7quater quater. La file de commandes d'une application est à AU PLUS UNE remise
+
+Relevé dans le SDK décompilé (`AylaLanModule.handleLanCommandRequest`), et c'est la propriété la
+plus lourde de conséquences de tout ce chemin :
+
+```java
+String payload = lanCommandPeek.getPayload();
+String enc = this._encryption.encryptEncapsulateSign(payload);   // le flux AES avance ICI
+if (!lanCommandPeek.expectsModuleRequest()) {
+    lanCommandPeek.setModuleResponse("");
+    this._pendingLanCommands.remove(lanCommandPeek);             // et la commande part de la file
+}
+return newFixedLengthResponse(getResponseCode(), MIME_JSON, enc);
+```
+
+> ⚠️ **La commande quitte la file au moment où elle est CHIFFRÉE, pas quand elle est reçue.** Il
+> n'y a aucun réessai : si cette réponse HTTP se perd, la commande est perdue **définitivement**,
+> et le flux AES de l'application a avancé d'un message que nous n'avons jamais consommé.
+
+Une seule réponse perdue produit donc les deux symptômes à la fois, et c'est ce qui les rendait
+impossibles à relier :
+
+1. **la commande n'arrive jamais** — l'application, elle, la croit remise ;
+2. **tout ce qui suit est illisible** — un flux CBC persistant décalé d'un message ne se rattrape
+   pas ; d'où la signature `…ta":{}}`, où seul le bloc de tête est sali.
+
+Conséquences pour ce serveur, toutes déjà appliquées :
+
+- une sonde `commands.json` qui **expire** doit être traitée comme un flux douteux et forcer un
+  nouvel échange de clés, pas comme un simple silence ;
+- un retour anticipé qui saute le déchiffrement (statut ≠ 200, corps vide) doit être **journalisé** :
+  c'est un endroit où un message peut disparaître sans laisser de trace ;
+- la sonde elle-même doit se voir dans le journal. Une transition par changement — statut, taille,
+  forme des intentions — suffit, et journaliser chaque sonde noierait tout : elle bat toutes les 2 s.
+
+**Ce que cela ne dit pas.** Rien ici ne permet de savoir *pourquoi* une réponse s'est perdue : le
+SDK Ayla n'écrit pas ses journaux dans logcat (aucun tag `LanModule` ni `CreateDPCommand` dans une
+capture complète), donc le seul point d'observation est notre côté. C'est précisément ce que la
+trace de sonde existe pour combler.
+
+### 7quater quinquies. Un relevé complet, côté téléphone, d'un allumage qui n'arrive pas
+
+Capture `adb logcat` de l'application officielle, tampon vidé juste avant. Les horodatages sont
+ceux du téléphone.
+
+```
+18:04:07   local_reg → session établie avec nous
+18:04:09   VIP: Dispositivo entrato in modalità LAN     ← l'app nous accepte comme l'appareil
+18:04:09   onSingleChangeProperty device_connected sameLan: true
+18:04:14   turnMachineOn / getPacketForTurnOn / sendCommand
+18:04:14   AylaDatapoint sent to SDK:  0d 07 84 0f 02 01 55 12      ← ALLUMER
+18:04:14   encodedPacket DQeEDwIBVRJqich+
+18:04:21   onCreateDatapointOk                          ← l'app la croit remise (6,5 s plus tard)
+```
+
+Côté serveur, sur la même session : `commandes = 0`, aucune ligne `data_request`, puis à 18:04:35
+un bloc illisible finissant par `…ta":{}}`. Et la machine, interrogée sept minutes plus tard,
+n'avait pas bougé — donc la commande n'est pas passée par le cloud non plus.
+
+Deux enseignements de méthode :
+
+- **`onCreateDatapointOk` ne prouve rien sur la remise.** L'application affiche « remise » sur la
+  foi de sa propre file, qu'elle a vidée en chiffrant. Ne jamais s'en servir comme preuve.
+- **Le SDK Ayla est muet dans logcat.** Une capture complète du processus ne contient aucun tag
+  `LanModule`, `CreateDPCommand` ou `AylaLog`. Ce qu'on peut observer du côté téléphone s'arrête
+  au service De'Longhi ; tout le reste doit être instrumenté ici.
+
