@@ -76,6 +76,7 @@ node scripts/fausse-machine.mjs --serveur 127.0.0.1:3099         # pushes one st
 # Regenerate the extracted tables from the APK (do not hand-edit their JSON output).
 node scripts/extract-catalogs.mjs   # → src/lib/machine-catalogs.json
 node scripts/extract-models.mjs     # → src/lib/machine-models.json
+node scripts/extract-images.mjs     # → src/lib/beverage-images.json + public/boissons/ (gitignoré)
 ```
 
 `pnpm-workspace.yaml` exists solely to **refuse** the install scripts of `@parcel/watcher` and
