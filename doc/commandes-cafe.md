@@ -333,6 +333,22 @@ pas celle qu'on devine à la lecture des trames :
 > (voir § 11.5). Un client qui apparierait n'importe quelle poussée à n'importe quelle lecture en
 > attente déclarerait donc lues des données jamais reçues. L'appariement doit porter sur la
 > commande demandée.
+>
+> **Cadence mesurée de la poussée `d302_monitor` : 12 à 13 secondes.** Relevé le 2026-08-22 sur
+> quatre intervalles consécutifs — 13 s, 12 s, 13 s, puis 12,4 s au chronomètre (16:36:42,297 puis
+> 16:36:54,740). La première poussée arrive à **l'ouverture de session**, avant même qu'une trame
+> `0x75` ait été servie : ce n'est donc pas une réponse, c'est une horloge.
+>
+> Conséquence pour qui attend une lecture d'état : **le délai d'attente doit dépasser cette cadence,
+> pas l'égaler.** Une échéance de 12 s en fait un tirage au sort selon l'endroit où la demande tombe
+> dans le cycle. Et le coût d'entrée s'y ajoute : sur une session froide, la machine consomme
+> d'abord une visite pour `device_connected` — 2,7 s mesurées entre la mise en file et le moment où
+> la trame `0x75` lui est enfin servie, une visite valant une commande.
+>
+> C'est ce qui explique l'asymétrie déroutante avec les statistiques : `0xA2` répond dans la **même
+> seconde**, parce qu'il rend un vrai `data_response`. Les deux lectures n'attendent pas la même
+> chose — l'une une réponse, l'autre un battement.
+
 
 
 Les deux dernières familles se distinguent par ce qu'elles laissent derrière (une écriture est

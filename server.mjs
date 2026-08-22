@@ -512,6 +512,26 @@ const frameChecksums = () => seal([0x0d, 0x05, 0xa3, 0xf0, 0, 0]);
 // V(data2) : demande du monitor. Trame de LECTURE, sans aucun effet de bord — c'est ce qu'il
 // faut pour tenir la présence, contrairement à 0xA9 qui sélectionne un profil.
 const frameMonitorRequest = () => seal([0x0d, 0x05, 0x75, 0x0f, 0, 0]);
+
+/**
+ * Échéance d'un pas « Présence », et elle ne peut PAS valoir `DELAIS.reponse`.
+ *
+ * `0x75` ne rend aucun `data_response` : il est satisfait par la prochaine poussée périodique de
+ * `d302_monitor`. Or cette poussée a une **cadence mesurée de 12 à 13 secondes** (12,4 s le
+ * 2026-08-22 : 16:36:42,297 puis 16:36:54,740 ; et 13 s, 12 s, 13 s sur les relevés précédents),
+ * c'est-à-dire exactement l'échéance de 12 s qu'on lui opposait. La réussite se jouait donc à
+ * l'endroit où la demande tombait dans le cycle de la machine — un tirage au sort, gagné ce jour-là
+ * avec 1,7 s de marge, perdu les fois d'avant.
+ *
+ * Le contraste avec `0xA2` dit tout : une lecture de statistiques répond dans la **même seconde**,
+ * parce qu'elle rend un vrai `data_response`. Les deux ne sont pas de la même famille, et leur
+ * donner la même échéance revenait à traiter une attente d'horloge comme une attente de réponse.
+ *
+ * Même raisonnement que `AGE_PROGRESSION`, qui est tenu strictement au-dessus du pire écart mesuré
+ * entre deux trames : une échéance sous la cadence réelle ne mesure pas une panne, elle en fabrique.
+ * 30 s laisse plus de deux cycles, et c'est aussi le plafond que `startProgram` s'autorise.
+ */
+const DELAI_PRESENCE = 30000;
 // U(index) « BEAN_SYSTEM_READ » : seule source du NOM d'un profil Bean Adapt.
 const frameBeanSystem = (index) => seal([0x0d, 0x06, 0xba, 0xf0, index & 0xff, 0, 0]);
 /**
@@ -3698,7 +3718,7 @@ async function handleApi(req, res) {
     const taches = [];
     const ajouter = (r) => { if (r?.ok) taches.push({ id: r.taskId, position: r.position }); };
 
-    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } }));
+    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor", { cle: "presence", i18n: { k: "presence" } }));
     ajouter(startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)", i18n: { k: "model" } }));
     ajouter(startProgram(m, datapointValue(frameChecksums()), "Sommes de contrôle", 15000, "monitor", { cle: "checksums", i18n: { k: "checksums" } }));
 
@@ -4025,7 +4045,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ skipped: true, reason: "présence déjà demandée récemment", lastMonitor: m.lastMonitor }));
     }
     m.lastPresenceAt = now;
-    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } });
+    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor", { cle: "presence", i18n: { k: "presence" } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ started: true, register: reg, ...tacheRendue(t) }));
   }
