@@ -1264,6 +1264,21 @@ makes N independent applications possible where the machine allows one.
 - **The Ayla SDK is silent in logcat.** A full process capture contains no `LanModule`,
   `CreateDPCommand` or `AylaLog` tag; what is observable phone-side stops at De'Longhi's own
   service. Everything below that has to be instrumented here.
+- ⚠️⚠️ **A datapoint ack has THREE things to get right, and each one alone makes the app call the
+  command failed while the appliance actually did it.** Symptom seen live: the machine turns on
+  for real, the phone says the connection failed. From `AylaLanModule.handleDatapointAck`:
+  **(1) the URI decides** — `PropertyUpdateHandler.post()` does `endsWith("ack.json") ?
+  handleDatapointAck(…) : handlePropertyUpdateRequest(…)`, so an ack posted to
+  `/property/datapoint.json` is read as a property write, nothing is resolved, and the app's
+  `_ackTimeout` (10 s) fires `TimeoutError`; **(2) the payload is the BARE object**, not
+  `{properties:[{property:…}]}` — the SDK does `fromJson(payload.data, CreateDatapointAck.class)`,
+  so a wrapped ack yields `id = null`, matches no command, and raises `PreconditionError`;
+  **(3) `ack_status` must be `200`**, an HTTP code reused as an application status —
+  `if (ack.ack_status == Status.OK.getRequestStatus())` succeeds, anything else becomes
+  `ServerError(…, "Datapoint NAK")`, so `0` is read as an explicit refusal. `CHEMIN_ACK` and
+  `paquetAck()` in `appproxy.mjs` hold all three, `verif-apps.mjs` pins them, and `faux-app.mjs`
+  now routes on the URI like the real SDK — it used to accept an ack on `datapoint.json`, so it
+  was blind to exactly this.
 - ⚠️ **The ack is owed to any property carrying an `id`, INCLUDING one we do not relay.** It says
   "received", not "executed" — it is a transport ack, and treating it as a business validation is
   what broke the real app. Measured: the official app opens **every** session by writing

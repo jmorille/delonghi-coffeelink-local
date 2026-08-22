@@ -33,7 +33,7 @@ import { makeLanSession, token } from "./src/lib/lansession.mjs";
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
          cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
-         estRefus, porteUneCharge, encoreDesCommandes,
+         estRefus, porteUneCharge, encoreDesCommandes, CHEMIN_ACK,
          PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
@@ -1478,7 +1478,7 @@ async function accuserSiDemande(m, app, intention) {
   if (!intention.ackId) return false;
   // Le retour est celui de l'ENVOI, pas de l'intention : dire « accusée » sur une poussée qui a
   // échoué journaliserait le contraire de ce qui s'est produit.
-  return pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
+  return pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId), CHEMIN_ACK);
 }
 
 async function executerPourApp(m, app, intention) {
@@ -1628,14 +1628,18 @@ function relancerSessionApp(m, app, motif = "flux illisible") {
  * D'où la chaîne de promesses : le chiffrement ET l'envoi ont lieu dans le même maillon, donc
  * l'ordre de production est aussi l'ordre d'émission.
  */
-function pousserVersApp(m, app, corpsJson) {
+/**
+ * `chemin` par défaut : le datapoint. Un ACCUSÉ doit partir sur `CHEMIN_ACK` — c'est l'URI, et
+ * elle seule, qui décide si l'application le lit comme un accusé ou comme une écriture.
+ */
+function pousserVersApp(m, app, corpsJson, chemin = "/property/datapoint.json") {
   if (app.etat !== "etablie" || !app.session) return Promise.resolve(false);
   const suite = (app.chaine ?? Promise.resolve()).then(async () => {
     // Re-vérifié DANS le maillon : la session a pu tomber pendant l'attente de notre tour.
     if (app.etat !== "etablie" || !app.session) return false;
     try {
       await httpJson({
-        ip: app.ip, port: app.port, path: `${app.uri}/property/datapoint.json`,
+        ip: app.ip, port: app.port, path: `${app.uri}${chemin}`,
         method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
       });
       toucher(app, Date.now());

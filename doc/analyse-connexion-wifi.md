@@ -1097,3 +1097,61 @@ visible d'une commande évaporée. C'est en **amont** qu'il faut chercher ce qui
 jamais dans le bloc lui-même. Le nouvel échange de clés qu'on déclenche derrière ne répare rien de
 perdu — il évite seulement le bloc sali suivant.
 
+
+### 7septies. L'accusé de datapoint — trois détails, et chacun suffit
+
+Symptôme : **la machine s'allume pour de bon, et le téléphone affiche que la connexion a
+échoué.** L'ordre est passé, l'appareil l'a exécuté, et l'application le compte comme un échec.
+
+L'accusé est ce qui dénoue l'attente de l'application. `CreateDatapointCommand` le réclame quand
+la propriété est `ack_enabled` (le champ `id` dans la charge **est** la demande), place la
+commande dans `_commandsPendingResponses`, et arme `_ackTimeout` — 10 s par défaut — au bout
+duquel elle lève `TimeoutError("Timed out waiting for datapoint ack")`.
+
+Trois choses doivent être justes, et elles se lisent dans `AylaLanModule.handleDatapointAck` :
+
+| ce qu'il faut | ce que nous faisions | ce que l'application en concluait |
+|---|---|---|
+| poster sur un chemin finissant par **`ack.json`** | `/property/datapoint.json` | ce n'est pas un accusé, c'est une écriture de propriété — rien n'est dénoué, `TimeoutError` au bout de 10 s |
+| une charge qui est **l'objet nu** | `{properties:[{property:{…}}]}` | Gson ne trouve ni `id` ni `ack_status`, aucune commande n'est appariée, `PreconditionError` |
+| **`ack_status: 200`** | `0` | `ServerError(0, "Datapoint NAK")` — un refus explicite |
+
+**C'est l'URI, et elle seule, qui fait d'un POST un accusé.** Les deux routes tombent sur le même
+gestionnaire, qui tranche sur la fin du chemin :
+
+```java
+// PropertyUpdateHandler.post()
+return gVar.c().endsWith("ack.json")
+     ? lanModule.handleDatapointAck(gVar, map, jVar)
+     : lanModule.handlePropertyUpdateRequest(gVar, map, jVar);
+```
+
+Et le statut est un **code HTTP réemployé comme statut applicatif** — ce qui n'est devinable
+d'aucune façon :
+
+```java
+if (createDatapointAck.ack_status == Status.OK.getRequestStatus()) {   // == 200
+    ... succès, la propriété est mise à jour, le successListener part ...
+} else {
+    ... errorListener.onErrorResponse(new ServerError(ack_status, null, "Datapoint NAK", null));
+}
+```
+
+> ⚠️ **Un accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »).** Il est donc dû dès
+> que `id` est présent, y compris sur une propriété que nous ne relayons pas à la cafetière —
+> `device_connected`, que l'application officielle écrit à l'ouverture de chaque session.
+
+Vérifié sur le banc, `faux-app.mjs` routant désormais sur l'URI comme le vrai SDK :
+
+```
+→ commande servie : device_connected (accusé demandé) (206, il en reste 2)
+← accusé faux-app-presence statut 200
+→ commande servie : lot 1 (206, il en reste 1)
+→ commande servie : lot 2 (200, dernière)
+device_connected : accusé REÇU.   file de commandes : entièrement servie.
+```
+
+Le banc acceptait auparavant un accusé sur `datapoint.json` : il ne pouvait donc pas attraper ce
+défaut. Même leçon que la réponse vide de `datapoint.json` (§ plus haut) — **un banc infidèle sur
+un seul point est aveugle exactement là.**
+

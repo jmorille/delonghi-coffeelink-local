@@ -141,17 +141,31 @@ const serveur = createServer(async (req, res) => {
 
   if (url.includes("/property/datapoint") && req.method === "POST") {
     if (!session) return repondre("{}", 412);
+    // ⚠️ **C'est l'URI qui fait d'un POST un accusé, comme dans le vrai SDK** :
+    // `PropertyUpdateHandler.post()` fait `endsWith("ack.json") ? handleDatapointAck(…) :
+    // handlePropertyUpdateRequest(…)`. Accepter un accusé sur `datapoint.json` — ce que faisait
+    // ce banc — rendait indétectable un serveur qui les postait au mauvais endroit : la vraie
+    // application, elle, les lisait comme des écritures de propriété et déclarait la commande en
+    // échec au bout de son `_ackTimeout`, alors que la machine l'avait bel et bien exécutée.
+    const estAck = url.endsWith("ack.json");
     try {
       const clair = session.decapsulate(JSON.parse(corps));
       const j = JSON.parse(clair);
-      for (const e of j.data?.properties ?? j.properties ?? []) {
-        const p = e.property ?? e;
+      const charge = j.data ?? j;
+      if (estAck) {
+        // `fromJson(payload.data, CreateDatapointAck.class)` lit l'objet NU. Une enveloppe
+        // `{properties:[{property:…}]}` donnerait `id = null`, donc aucune commande appariée.
         datapoints++;
-        if (p.ack_status !== undefined) {
-          if (p.id === ID_PRESENCE) accusePresence = true;
-          console.log(`  ← accusé ${p.id} statut ${p.ack_status}`);
+        const bon = charge.ack_status === 200;
+        if (charge.id === ID_PRESENCE && bon) accusePresence = true;
+        console.log(`  ← accusé ${charge.id ?? "SANS ID (enveloppé ?)"} statut ${charge.ack_status}` + (bon ? "" : " ⚠ le SDK lit tout sauf 200 comme un NAK"));
+      } else {
+        for (const e of charge.properties ?? []) {
+          const q = e.property ?? e;
+          datapoints++;
+          if (q.ack_status !== undefined) console.log(`  ← accusé ${q.id} ⚠ POSTÉ SUR datapoint.json : le SDK le lira comme une écriture`);
+          else console.log(`  ← datapoint ${q.name} = ${String(q.value).slice(0, 60)}`);
         }
-        else console.log(`  ← datapoint ${p.name} = ${String(p.value).slice(0, 60)}`);
       }
     } catch (e) {
       console.log(`  ← datapoint ILLISIBLE (${e.message}) — mauvais sens de clés ?`);

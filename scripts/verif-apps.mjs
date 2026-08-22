@@ -11,7 +11,7 @@
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
          echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
-import { analyserCommandes, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
+import { analyserCommandes, paquetAck, CHEMIN_ACK, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -283,6 +283,25 @@ test("ce qui ne porte rien de chiffré ne doit PAS être déchiffré", () => {
   vrai(!porteUneCharge(200, "   "), "corps blanc");
   vrai(!porteUneCharge(412, '{"error":"no session"}'), "412 : erreur en clair");
   vrai(!porteUneCharge(404, "Not found"), "404");
+});
+test("l'accusé : objet NU, ack_status 200, et un chemin qui finit par ack.json", () => {
+  // Les trois détails de `AylaLanModule.handleDatapointAck`, et chacun suffit à faire déclarer
+  // la commande en échec par l'application ALORS QUE l'appareil l'a exécutée. Symptôme vécu :
+  // la machine s'allume pour de bon et le téléphone affiche que la connexion a échoué.
+  const a = JSON.parse(paquetAck("AC000W0XXXXXXXX", "abcd"));
+  // 1. `fromJson(payload.data, CreateDatapointAck.class)` lit l'objet directement. Enveloppé
+  //    dans {properties:[{property:…}]}, Gson ne trouve ni `id` ni `ack_status` : l'identifiant
+  //    sort null, aucune commande ne correspond, PreconditionError.
+  vrai(a.properties === undefined, "aucune enveloppe properties");
+  eq(a.id, "abcd", "l'identifiant est à la racine");
+  eq(a.dsn, "AC000W0XXXXXXXX", "le dsn aussi");
+  // 2. Un code HTTP réemployé comme statut applicatif : `== Status.OK.getRequestStatus()`,
+  //    sinon `ServerError(…, "Datapoint NAK")`. Un 0 bien routé est lu comme un refus explicite.
+  eq(a.ack_status, 200, "200, surtout pas 0");
+  eq(a.ack_message, 0, "ack_message présent");
+  // 3. C'est l'URI, et elle seule, qui fait d'un POST un accusé :
+  //    `endsWith("ack.json") ? handleDatapointAck(…) : handlePropertyUpdateRequest(…)`.
+  vrai(CHEMIN_ACK.endsWith("ack.json"), "le chemin décide, pas la charge");
 });
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

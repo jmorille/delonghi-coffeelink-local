@@ -224,7 +224,38 @@ export function paquetDatapoint(dsn, name, value) {
   return JSON.stringify({ properties: [{ property: { base_type: "string", name, value, dsn } }] });
 }
 
-/** L'accusé qu'une application attend quand sa propriété portait un `id`. */
-export function paquetAck(dsn, id, status = 0) {
-  return JSON.stringify({ properties: [{ property: { dsn, id, ack_status: status, ack_message: 0 } }] });
+/**
+ * **Le chemin d'un accusé — et c'est l'URI qui en fait un accusé, rien d'autre.**
+ *
+ * Les deux routes tombent sur le même gestionnaire, qui tranche sur la fin du chemin :
+ *
+ * ```java
+ * return gVar.c().endsWith("ack.json")
+ *      ? lanModule.handleDatapointAck(gVar, map, jVar)
+ *      : lanModule.handlePropertyUpdateRequest(gVar, map, jVar);
+ * ```
+ *
+ * Un accusé posté sur `/property/datapoint.json` est donc lu comme une **écriture de
+ * propriété** : il ne dénoue rien, et l'application déclare la commande en échec au bout de son
+ * `_ackTimeout`. Symptôme vécu : la machine s'allume pour de bon, et le téléphone affiche que la
+ * connexion a échoué.
+ */
+export const CHEMIN_ACK = "/property/datapoint/ack.json";
+
+/**
+ * **L'accusé qu'une application attend quand sa propriété portait un `id`.** Trois détails, tous
+ * relevés dans `AylaLanModule.handleDatapointAck`, et chacun suffit à faire échouer la commande
+ * du point de vue de l'application alors que l'appareil, lui, a bien exécuté.
+ *
+ * 1. **La charge est l'objet NU**, pas un `{properties:[{property:…}]}`. Le SDK fait
+ *    `fromJson(payload.data, CreateDatapointAck.class)` : enveloppé, Gson ne trouve ni `id` ni
+ *    `ack_status`, l'identifiant sort `null`, aucune commande ne correspond, et l'application
+ *    lève `PreconditionError("Received ack for this device without a matching command")`.
+ * 2. **`ack_status` vaut `200`, pas `0`.** C'est un code HTTP réemployé comme statut applicatif :
+ *    `if (ack.ack_status == Status.OK.getRequestStatus())` → succès, **sinon** `ServerError(…,
+ *    "Datapoint NAK")`. Un `0` bien routé est donc lu comme un refus explicite.
+ * 3. Le chemin doit finir par `ack.json` — voir `CHEMIN_ACK`.
+ */
+export function paquetAck(dsn, id, status = 200) {
+  return JSON.stringify({ dsn, id, ack_status: status, ack_message: 0 });
 }
