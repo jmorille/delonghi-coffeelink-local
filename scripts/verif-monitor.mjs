@@ -19,7 +19,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { decodeMonitor, MONITOR_ETAPES } from "../src/lib/monitor.mjs";
+import { decodeMonitor, MONITOR_ETAPES, MONITOR_SWITCHES, MONITOR_ALARMS } from "../src/lib/monitor.mjs";
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const CAPTURES = join(ICI, "captures");
@@ -150,6 +150,73 @@ const charger = (nom) =>
   }
   // Le repli, emprunté quand aucun couple ne correspond — cinq étapes réelles sont dans ce cas.
   ok("le repli « en cours » a un libellé", typeof messages.power?.step_encours === "string");
+
+  // **Capteurs et alarmes : le protocole et le catalogue doivent rester en face.** Les deux
+  // tables vivent dans `monitor.mjs` et leurs libellés dans `messages/fr.json` ; une entrée
+  // ajoutée d'un côté et oubliée de l'autre s'affiche en identifiant brut, et seulement quand ce
+  // capteur-là se déclenche — c'est-à-dire rarement, et jamais chez le développeur.
+  for (const sw of MONITOR_SWITCHES) {
+    ok(`le capteur « ${sw.name} » a un libellé`, typeof messages.sensor?.[sw.name] === "string");
+  }
+  for (const nom of Object.values(MONITOR_ALARMS)) {
+    ok(`l'alarme « ${nom} » a un libellé`, typeof messages.alarm?.[nom] === "string");
+  }
+}
+
+// ── Le repos se lit sur l'ÉTAPE seule : la fonction 12 existe ────────────────────────────────
+// Mesure du 2026-08-22, en retirant physiquement la carafe a lait : au repos avec la carafe
+// branchee la machine dit `f=12, e=0`, sans elle `f=7, e=0`. Le predicat de l'app (`f==7 && e==0`)
+// lisait donc « preparation en cours » en permanence des que la carafe etait en place.
+{
+  const t = charger("carafe");
+  ok("carafe : deux trames", t.length === 2);
+  ok("carafe branchee : la fonction vaut 12", t[0].fonction === 12, `reçu ${t[0].fonction}`);
+  ok("carafe branchee : c'est POURTANT le repos", t[0].auRepos === true);
+  ok("carafe branchee : aucun pourcentage affiché", t[0].pourcent === null);
+  ok("carafe retirée : la fonction revient à 7", t[1].fonction === 7, `reçu ${t[1].fonction}`);
+  ok("carafe retirée : toujours le repos", t[1].auRepos === true);
+}
+
+// ── Les DEUX bits « carafe » disent la meme chose, a la molette pres ─────────────────────────
+// Mesure du 2026-08-22, carafe laissee en place, seule la molette bougeant :
+//   nettoyage -> octet 6 = 0b00000010 (bit 1.1 CIOCCO_TANK) ; toute autre position -> 0b00000001
+//   (bit 1.0 IFD_CARAFFE) ; carafe retiree -> 0b00000000. Jamais les deux ensemble.
+// Le detecteur ne connait qu'UNE frontiere : nettoyage ou pas. Trois positions hors nettoyage
+// (mousse au cran courant, mousse au minimum, graduation « insert ») donnent une trame identique
+// octet pour octet — elles ne sont donc pas archivees, une capture en double ne prouve rien de
+// plus, mais le libelle ne doit jamais redire « mousse ».
+// Les noms viennent de l'app et induisent en erreur — `CIOCCO_TANK` ne designe aucun bac a
+// chocolat sur ce modele, qui n'a pas de boisson chocolatee. Les LIBELLES, eux, doivent dire la
+// position ; sans cette assertion un « nettoyage » recolle au mauvais bit passerait inapercu,
+// les deux etats etant plausibles.
+{
+  const t = charger("carafe-molette");
+  const noms = (x) => x.switches.map((sw) => sw.name);
+  ok("molette : deux trames", t.length === 2);
+  ok("molette nettoyage : CIOCCO_TANK seul", JSON.stringify(noms(t[0])) === '["CIOCCO_TANK"]', noms(t[0]).join(","));
+  ok("molette mousse : IFD_CARAFFE seul", JSON.stringify(noms(t[1])) === '["IFD_CARAFFE"]', noms(t[1]).join(","));
+  ok("molette : les deux positions sont bien au repos", t.every((x) => x.auRepos === true));
+  // Le libelle est verifie A PARTIR DE LA TRAME, pas d'un nom ecrit en dur : c'est ce qui fait
+  // echouer une interversion des deux libelles, le piege exact que cette section documente.
+  const lib = (x) => x.switches[0]?.label ?? "";
+  ok("molette nettoyage : libellé « carafe à lait (nettoyage) »", lib(t[0]) === "carafe à lait (nettoyage)", lib(t[0]));
+  ok("molette hors nettoyage : libellé « carafe à lait (hors nettoyage) »", lib(t[1]) === "carafe à lait (hors nettoyage)", lib(t[1]));
+  ok("les deux libellés nomment la carafe", [lib(t[0]), lib(t[1])].every((l) => /^carafe à lait /.test(l)));
+}
+
+// L'invariant qui rend la regle ci-dessus sure : sur TOUTES les captures, l'etape 0 n'apparait
+// qu'au repos. Si une preparation utilisait un jour l'etape 0 comme etape de travail, la barre
+// disparaitrait en plein milieu — et cette assertion le dirait avant l'utilisateur.
+for (const f of readdirSync(CAPTURES)) {
+  const t = charger(f.replace(/\.json$/, ""));
+  ok(
+    `${f} : l'étape 0 ne porte jamais de progression`,
+    t.filter((x) => x.etape === 0).every((x) => x.auRepos === true && x.pourcent === null),
+  );
+  ok(
+    `${f} : toute étape non nulle est une préparation`,
+    t.filter((x) => x.etape != null && x.etape !== 0).every((x) => x.auRepos === false),
+  );
 }
 
 // ── Une préparation peut tourner ENTIÈREMENT sous l'octet d'état « veille » ──────────────────

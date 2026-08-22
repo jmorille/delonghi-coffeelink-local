@@ -562,6 +562,21 @@
     "EXPANSION_SUBMODULES_PROB": "Problème de sous-modules d'extension",
     "CONDENSE_FAN_PROBLEM": "Problème de ventilateur de condensation"
   },
+  "sensor": {
+    "WATER_SPOUT": "buse à eau",
+    "MOTOR_UP": "moteur haut",
+    "MOTOR_DOWN": "moteur bas",
+    "COFFEE_WASTE_CONTAINER": "bac à marc",
+    "WATER_TANK_ABSENT": "réservoir d'eau absent",
+    "KNOB": "molette",
+    "WATER_LEVEL_LOW": "niveau d’eau bas",
+    "COFFEE_JUG": "verseuse",
+    "IFD_CARAFFE": "carafe à lait (hors nettoyage)",
+    "CIOCCO_TANK": "carafe à lait (nettoyage)",
+    "CLEAN_KNOB": "molette nettoyage",
+    "DOOR_OPENED": "porte ouverte",
+    "PREGROUND_DOOR_OPENED": "trappe café moulu ouverte"
+  },
   "beanAdapt": {
     "heading": "Bean Adapt",
     "intro": "Ajuste mouture, température et arôme d'un profil de café en fonction de ce que tu observes dans la tasse. C'est la fonction Bean Adapt de l'app officielle, rejouée ici sans le cloud.",

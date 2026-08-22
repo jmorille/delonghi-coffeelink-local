@@ -26,6 +26,27 @@ export function stateLabel(state: number, t: Translator): string {
 }
 
 /**
+ * **Le libellé d'un capteur, traduit côté client.**
+ *
+ * Le serveur envoie l'identifiant de protocole (`IFD_CARAFFE`, `COFFEE_WASTE_CONTAINER`…) *et*
+ * un libellé français — mais ce libellé-là ne sert qu'au **journal du terminal**, exactement comme
+ * ceux de `beverages.mjs` et `profiles.mjs`. Rien de traduisible ne doit traverser l'API : c'est ce
+ * qui permet d'ajouter une langue sans toucher au serveur. Les deux pages qui affichent des
+ * capteurs (`/` et `/pilotage`) rendaient `sw.label` directement, donc le français du serveur
+ * arrivait tel quel dans l'interface. Les alarmes, elles, passaient déjà par l'espace `alarm`.
+ *
+ * Repli sur le libellé du serveur quand la clé manque — même règle que `labels.ts` pour les
+ * boissons : un capteur ajouté au protocole s'affiche avec son nom du serveur plutôt que de
+ * disparaître ou de montrer un identifiant brut.
+ */
+export function sensorLabel(sw: { name: string; label?: string }, t: HasTranslator): string {
+  return t.has(sw.name) ? t(sw.name) : (sw.label ?? sw.name);
+}
+
+/** Un traducteur d'espace de noms, avec le `has` que next-intl expose pour tester une clé. */
+export type HasTranslator = Translator & { has: (key: string) => boolean };
+
+/**
  * **L'étape d'une préparation en cours.** Le serveur envoie une clé de protocole (`etapeCle`,
  * dérivée du couple fonction/étape des octets 9-10 du monitor) ou `null` quand le couple observé
  * n'est nommé ni par la table de l'app ni par nos relevés. `null` n'est pas une erreur : cinq
@@ -89,7 +110,7 @@ export function stateTone(state: number): "" | "on" | "info" {
  * **Un capteur PRÉSENT et un capteur qui RÉCLAME ne sont pas le même fait.**
  *
  * Les treize capteurs du monitor arrivaient tous dans la même pastille verte — le vert que la
- * palette réserve à la marche. Relevé sur la machine : « niveau d'eau bas · bac chocolat » en
+ * palette réserve à la marche. Relevé sur la machine : « niveau d'eau bas · carafe à lait » en
  * vert, juste à côté de « alarme signalée » en rouge. Le produit annonçait donc en couleur de
  * succès la seule chose qui empêchait de faire un café.
  *
