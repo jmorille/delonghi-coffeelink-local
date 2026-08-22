@@ -677,6 +677,41 @@ Et ce n'est pas faisable par une règle de pare-feu : le téléphone et la machi
 /24, le trafic est commuté et ne traverse jamais la passerelle (vérifié : `ip route get
 IP_MACHINE` ne montre aucun `via`, et l'entrée ARP porte le MAC du module ESP32).
 
+### 7quater.1 « Rechercher ma machine à café » est du BLUETOOTH, pas du réseau
+
+Test complémentaire le même jour, dans les mêmes conditions (cafetière hors réseau, notre serveur
+répondant `{"host_symname":"<DSN>","registration_type":"Same-LAN"}` sur le port 80). L'application
+propose une recherche automatique d'appareil : elle n'a rien trouvé, et la trace dit pourquoi.
+
+```
+GoogleAnalyticsHelper  logEvent  pairing_user_search_machine_tapped
+                                 screen_name - PAIRING_SEARCH_OPTIONS_SCREEN
+SearchingViewModel     I'm scanning / scan
+b                      startEcamScan
+c                      scanLeDevice(true) — starting LE scan for 5 seconds
+BluetoothAdapter       startLeScan()          × 11
+DeLonghiWifiConnectService  Blufi: startBlufiScan / Start scan ble / onIntervalScanUpdate
+```
+
+**Aucune requête IP de toute la fenêtre.** Les seules lignes réseau sont les `local_reg` de fond
+qui continuent d'échouer vers `IP_MACHINE:80`, indépendantes de la recherche ; côté serveur,
+`/api/apps` reste à `apps: [], refus: []` — rien ne nous a jamais touchés.
+
+L'appairage passe donc par **BLE**, et notamment par **BluFi**, le protocole d'approvisionnement
+Wi-Fi d'Espressif par Bluetooth : c'est ainsi que le module ESP32 reçoit ses identifiants Wi-Fi.
+Aucun balayage de sous-réseau, aucun mDNS, aucune sonde `regtoken.json`.
+
+**Conséquence : cette fonction ne pourra jamais nous trouver**, et pas faute d'être crédibles — elle
+ne cherche pas là. L'application n'a que deux façons d'atteindre une machine :
+
+1. **l'adresse IP que le cloud lui a donnée** (`AylaDevice.getLanIp()`, utilisée telle quelle par
+   `lanURL()`), pour le pilotage ;
+2. **le BLE / BluFi**, pour l'appairage initial.
+
+Ni l'une ni l'autre n'est interceptable par un imposteur situé sur un autre segment IP. Cela ferme
+la dernière voie de découverte plausible et laisse une seule option au multiplexeur : **occuper
+l'adresse que l'application interroge déjà**, sur le segment où elle l'interroge.
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02
