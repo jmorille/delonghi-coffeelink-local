@@ -6,6 +6,7 @@ import { mfetch } from "../machine";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import Alerte from "../Alerte";
+import { INGREDIENTS, groupeDe, presenceInitiale, valeurAbsente } from "../ingredients";
 
 /**
  * Édition des recettes locales, **sous les contraintes du modèle**.
@@ -40,6 +41,8 @@ interface Beverage {
   boundsProp: string | null;
   /** Recette réellement enregistrée pour le profil demandé, si elle a été lue. */
   values: { params: { id: number; value: number }[] } | null;
+  /** Emplacement perso 1-6, ou `null`. Seuls ces emplacements se règlent par ingrédient. */
+  customSlot: number | null;
   valuesProp: string | null;
 }
 interface Param {
@@ -78,6 +81,10 @@ export default function Recipes() {
   const dire = (text: string) => setMsg({ text, kind: "ok" });
   const refuser = (text: string) => setMsg({ text, kind: "err" });
   const { demander, dialogue } = useConfirm();
+  // L'espace de noms `editor` est REUTILISE tel quel : ce sont les mêmes ingrédients, les mêmes
+  // libellés et la même limite à énoncer. Les recopier dans `recipes` ferait deux textes pour un
+  // seul fait, à corriger deux fois.
+  const tEd = useTranslations("editor");
 
   const load = useCallback(
     () => mfetch("/api/recipes").then((r) => r.json()).then((d) => setList(d.recipes)),
@@ -91,7 +98,12 @@ export default function Recipes() {
   // Les bornes sont communes aux profils, mais les VALEURS enregistrées sont propres à chacun :
   // on recharge donc le catalogue quand le profil du brouillon change.
   useEffect(() => {
-    fetch(`/api/beverages?profile=${draft.profileId}`)
+    // ⚠️ `mfetch`, JAMAIS `fetch` nu : un appel nu vise la machine PAR DÉFAUT, pas celle qui est
+    // sélectionnée. Ici le prix n'était pas cosmétique — cette page lisait le catalogue, les
+    // bornes et les valeurs de profil d'une machine, puis écrivait sur une autre, puisque
+    // « Écrire dans le profil » passe, lui, par `mfetch`. `searchParams.set` conserve le
+    // `?profile=` déjà présent.
+    mfetch(`/api/beverages?profile=${draft.profileId}`)
       .then((r) => r.json())
       .then((d) => setBeverages(d.beverages ?? []))
       .catch(() => {});
@@ -123,12 +135,23 @@ export default function Recipes() {
       .filter((p): p is Bound => !!p && p.max === p.min);
   }, [bev]);
 
-  /** Ce qui part réellement à la machine : les réglages + les paramètres imposés. */
-  const payload = (): Param[] => [...draft.params, ...fixedParams.map((b) => ({ id: b.id, value: b.def }))];
+  /**
+   * Ce qui part réellement à la machine : les réglages + les paramètres imposés.
+   *
+   * Un ingrédient décoché n'est pas OMIS — il est écrit ABSENT, quantité 0 et options 255, avec
+   * la convention de la machine elle-même. L'omettre laisserait l'ancienne valeur en place sur
+   * l'appareil, donc l'ingrédient présent : le contraire de ce que la case décochée annonce.
+   */
+  const payload = (): Param[] =>
+    [...draft.params, ...fixedParams.map((b) => ({ id: b.id, value: b.def }))].map((prm) => {
+      const g = groupe(prm.id);
+      return g && !presents[g.cle] ? { id: prm.id, value: valeurAbsente(g, prm.id) } : prm;
+    });
 
   // En changeant de boisson, on repart des valeurs par défaut de la machine : garder les
   // paramètres de la boisson précédente produirait des valeurs hors bornes, voire inapplicables.
   const pickBeverage = (id: number) => {
+    setPresents(presenceInitiale(beverages.find((b) => b.id === id)?.values?.params));
     const target = beverages.find((b) => b.id === id);
     const params =
       target?.bounds?.params
@@ -145,6 +168,19 @@ export default function Recipes() {
     setDraft((d) => ({ ...d, params: editable.map((b) => ({ id: b.id, value: bev ? seedValue(bev, b) : b.def })) }));
   }, [editable, draft.params.length]);
 
+  /**
+   * **Un emplacement perso se règle par ingrédient**, comme sur `/` et comme l'écran de création
+   * de l'application. Ailleurs les ingrédients ne se choisissent pas : la liste des paramètres
+   * est attachée à la boisson.
+   *
+   * La présence repart des valeurs lues du profil à chaque changement de boisson — c'est ce que
+   * fait déjà `pickBeverage` pour les valeurs, et deux règles différentes pour un même geste
+   * dérouteraient plus qu'elles n'aideraient.
+   */
+  const estPerso = bev?.customSlot !== null && bev?.customSlot !== undefined;
+  const [presents, setPresents] = useState<Record<string, boolean>>(() => presenceInitiale(undefined));
+  const groupe = (id: number) => (estPerso ? groupeDe(id) : null);
+
   const valueOf = (id: number) => draft.params.find((p) => p.id === id)?.value;
 
   const setValue = (id: number, raw: number) => {
@@ -156,7 +192,11 @@ export default function Recipes() {
     setDraft({ ...draft, params });
   };
 
+  // Un réglage dont l'ingrédient est décoché n'est pas « hors bornes » : il n'est pas réglé du
+  // tout. Le compter bloquerait l'enregistrement d'une recette parfaitement valide.
   const outOfRange = editable.filter((b) => {
+    const g = groupe(b.id);
+    if (g && !presents[g.cle]) return false;
     const v = valueOf(b.id);
     return v !== undefined && (v < b.min || v > b.max);
   });
@@ -182,6 +222,18 @@ export default function Recipes() {
 
   /** Valeur actuellement enregistrée sur la machine pour ce profil, si elle a été lue. */
   const machineValue = (id: number) => bev?.values?.params.find((p) => p.id === id)?.value;
+
+  /** Les réglages à montrer : ceux d'un ingrédient décoché n'ont rien à faire dans le tableau. */
+  const lignes = editable.filter((b) => {
+    const g = groupe(b.id);
+    return !g || presents[g.cle];
+  });
+  const groupesVisibles = estPerso
+    ? INGREDIENTS.filter((g) => editable.some((b) => b.id === g.quantite))
+    : [];
+  // Deux appels littéraux plutôt qu'une clé construite : `verif-messages.mjs` ne vérifie que les
+  // littéraux, une clé dynamique lui échapperait sans bruit.
+  const nomGroupe = (cle: string) => (cle === "cafe" ? tEd("groupCoffee") : tEd("groupMilk"));
 
   /** Recopie dans le brouillon ce que la machine a enregistré pour ce profil. */
   const loadFromMachine = () => {
@@ -288,6 +340,28 @@ export default function Recipes() {
           </p>
         ) : (
           <>
+            {/* **Les ingrédients d'un emplacement perso se cochent**, comme sur `/` et comme dans
+                l'écran de création de l'application. Une boisson du catalogue n'en montre aucune :
+                ses ingrédients ne se choisissent pas. */}
+            {groupesVisibles.length > 0 && (
+              <>
+                <p className="chapeau">{tEd("ingredientsHint")}</p>
+                <div className="row">
+                  {groupesVisibles.map((g) => (
+                    <label className="caseLibelle" key={g.cle}>
+                      <input
+                        type="checkbox"
+                        checked={!!presents[g.cle]}
+                        onChange={(e) => setPresents((prec) => ({ ...prec, [g.cle]: e.target.checked }))}
+                      />
+                      <span>{nomGroupe(g.cle)}</span>
+                    </label>
+                  ))}
+                </div>
+                {groupesVisibles.every((g) => !presents[g.cle]) && <Alerte>{tEd("noIngredient")}</Alerte>}
+                <p className="sub">{tEd("noWaterHere")}</p>
+              </>
+            )}
             <div className="tableWrap">
             <table>
               <thead>
@@ -301,7 +375,7 @@ export default function Recipes() {
                 </tr>
               </thead>
               <tbody>
-                {editable.map((b) => {
+                {lignes.map((b) => {
                   const v = valueOf(b.id);
                   const bad = v !== undefined && (v < b.min || v > b.max);
                   return (

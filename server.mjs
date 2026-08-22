@@ -1375,7 +1375,14 @@ const MAX_BLOCS_ENCHAINES = 12;
 const FRAICHEUR_LECTURE_APP = 10000;
 
 async function sonderApp(m, app) {
-  if (app.etat !== "etablie" || !app.session) return;
+  if (app.etat !== "etablie" || !app.session) {
+    // **La sonde est la seule horloge de ce côté ; elle sert donc aussi à réparer.** Elle
+    // repartait à vide sur une entrée sans session, ce qui laissait un échange de clés raté sans
+    // aucune seconde chance. Le verrou de 15 s de `reprendreSessionApp` fait le débit ; ici on
+    // ne fait que lui donner le tempo, sans minuterie supplémentaire à armer ni à désarmer.
+    reprendreSessionApp(m, app);
+    return;
+  }
   if (app.sondeEnCours) return;
   app.sondeEnCours = true;
   try {
@@ -1687,6 +1694,54 @@ const DELAI_RELANCE_APP = 15_000;
  * Rouvrir est donc la seule issue, et c'est sans risque pour l'appareil : un échange de clés ne
  * touche pas la cafetière, il ne recrée que le chiffrement entre l'application et nous.
  */
+/**
+ * **Reprendre une session ABSENTE — le pendant manquant de `relancerSessionApp`.**
+ *
+ * Les deux fonctions se ressemblent et ne traitent pas la même situation, ce qui est exactement
+ * pourquoi il en faut deux : `relancerSessionApp` jette un flux VIVANT devenu illisible,
+ * celle-ci essaie d'en rouvrir un qui n'existe plus.
+ *
+ * ⚠️ **Sans elle, un échange de clés raté était DÉFINITIF.** Relevé en direct sur un vrai
+ * téléphone :
+ *
+ * ```
+ * 21:15:04  sonde expirée, réponse peut-être perdue — nouvel échange de clés
+ * 21:15:09  échange de clés échoué — délai dépassé
+ * 21:16:31  muette depuis 90 s, oubliée
+ * ```
+ *
+ * Entre les deux dernières lignes, 82 secondes pendant lesquelles l'application était là — elle
+ * continuait à s'annoncer — et où nous n'avons rien tenté. Deux impasses s'y ajoutaient :
+ *
+ *   1. `sonderApp` sort immédiatement quand la session manque, donc la sonde de 2 s, seule
+ *      horloge de ce côté, tournait à vide sur une entrée morte au lieu de la réparer ;
+ *   2. une nouvelle annonce ne déclenche l'échange que `if (nouvelle)` — or l'entrée existait
+ *      déjà, donc le téléphone pouvait s'annoncer indéfiniment sans que rien ne reparte.
+ *
+ * Le symptôme visible était le pire des deux mondes : `/pilotage` affichait une application
+ * branchée, avec son `User-Agent` et ses compteurs, qui ne pouvait plus rien recevoir.
+ *
+ * ⚠️ **Cela ne contredit pas « un PUT ne doit JAMAIS déclencher d'échange de clés ».** Cette
+ * règle protège un flux AES sur lequel l'application est en train de lire : le remplacer sous
+ * elle la ferait décrocher. Ici il n'y a **rien à casser** — `session` est nul, il n'existe
+ * aucun flux. La garde en première ligne rend la distinction exécutable plutôt que verbale.
+ *
+ * Le même verrou de 15 s que `relancerSessionApp` : au pire une tentative toutes les 15 s, et
+ * l'expiration à 90 s emporte de toute façon l'entrée si le téléphone est vraiment parti. Les
+ * tentatives sont donc bornées à cinq environ, sans compteur à tenir.
+ */
+function reprendreSessionApp(m, app, motif = null) {
+  // Jamais sur un flux vivant : c'est `relancerSessionApp` qui traite ce cas, et lui seul.
+  if (app.etat === "etablie" && app.session) return false;
+  const maintenant = Date.now();
+  if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return false;
+  app.relanceA = maintenant;
+  if (motif) LA("sys", motif, app, m);
+  app.etat = "annoncee";
+  ouvrirSessionApp(m, app).catch(() => {});
+  return true;
+}
+
 function relancerSessionApp(m, app, motif = "flux illisible") {
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
@@ -2060,6 +2115,13 @@ async function handleAppReg(req, res) {
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.
     ouvrirSessionApp(m, app).catch(() => {});
+  } else if (!app.session || app.etat !== "etablie") {
+    // **Une annonce reçue sur une entrée SANS session est le signal de réparation le plus sûr
+    // qui soit** : l'application vient de dire elle-même qu'elle est là et qu'elle écoute. Le
+    // test `if (nouvelle)` au-dessus ne couvrait que la première annonce, si bien qu'après un
+    // échange raté le téléphone pouvait s'annoncer cent fois sans que rien ne reparte.
+    // Passe avant `notify` : sans session, aucune commande ne peut être servie de toute façon.
+    reprendreSessionApp(m, app, "annonce reçue sans session — nouvelle tentative d'échange de clés");
   } else if (reg.notify) {
     // `notify: 1` veut dire « j'ai quelque chose pour toi ». Aller le chercher tout de suite,
     // plutôt que d'attendre le prochain tour de sonde, est ce qui rend l'app réactive.
