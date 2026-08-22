@@ -593,11 +593,11 @@ has **no** default to offer: it is labelled "pas de défaut" and left untouched 
 rather than forced to `min`. Both resets are local — nothing reaches the machine until "Préparer" or
 "Écrire"), `/profils` (imports profile names/icons, favourite order, custom-recipe names, and
 lists **all** profiles including factory-named ones), `/pilotage`
-(dashboard: on/off, live monitor, **activity**, log), `/recipes` (custom recipes, **constrained by the model's min/def/max bounds** — the `0xB0` bounds are
-model characteristics shared by all 5 profiles, so a profile may only pick a value inside them; the
-page shows them and clamps inputs, shows the profile's stored value beside them, and can **write a
-recipe into a profile on the machine** — `0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a
-persistent device write), `/statistiques` (usage counters: the
+(dashboard: on/off, live monitor, **activity**, log), `/recipes` (a local library of recipes: name
+one, pick its beverage and profile, keep it here, write it into the profile on the machine —
+`0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a persistent device write. **The values are
+edited by the shared `RecipeEditor`, not by a second editor of its own** — see below),
+`/statistiques` (usage counters: the
 10 identified ones with labels and unit conversion, the 52 unlabelled ones raw, and buttons that
 read them — 3 range requests for the known set, 8 for a full sweep, exploiting the fact that the
 machine enumerates), `/machines` (**every machine's configuration, in place** — see the
@@ -796,6 +796,32 @@ and then a sentence ending in "vérification cloud désactivée".
 `/` has **no bulk-import block** (removed on request). Beverage settings are re-read one at a time
 with the per-card "Lire" button; `POST /api/beverages/import` still accepts a full-catalog import if
 a bulk entry point is ever needed again.
+
+**There is ONE recipe editor, `src/app/RecipeEditor.tsx`, and `/` and `/recipes` both mount it.**
+`/recipes` used to hold its own: a Paramètre / Min / Max / Défaut machine / Profil / Valeur table
+with bare sliders. Same gesture, same `0x83` frame, same endpoint — two interfaces, and the
+`/recipes` one had none of what `/` had grown: no switches for the 0/1 parameters, no ingredient
+checkboxes for a custom slot, no return to the **model's** defaults, no advanced fold. An
+ergonomic fix landed on one page out of two, and someone who had learned one had to learn the
+other. The types and the four value rules (`defautModele`, `valeurProfil`, `valeurDepart`,
+`valeurSure`) went with it into `src/app/beverage.ts` — `/recipes` had typed `values.params` as
+bare `{id, value}` couples where the server sends full parameters, which is precisely what had
+kept it from reusing anything.
+
+Two extension points, and their shape is the point. **`initial`** imposes the starting values so a
+locally-saved recipe reopens as it was saved; without it the editor would restart from the profile
+and silently erase what "Modifier" was clicked to retrieve. **`actions`** is a function that
+*receives* the current payload rather than the host keeping a copy of the editor's state — two
+states for one recipe is two chances to diverge, which is the defect being repaired. `/` passes
+"Infos techniques" through it (it ignores the payload), `/recipes` passes "Enregistrer
+localement" (it needs it).
+
+One deliberate difference survives: **`/recipes` shows no "Préparer"** — that page saves recipes,
+it does not command the appliance, and `onDispense` being absent says so with no display variant
+to maintain. Two of its buttons disappeared without losing anything: "Reprendre du profil" *is*
+the editor's "↺ réinitialiser", and the out-of-bounds refusal is unreachable now that every field
+is clamped as you type. The `misalignedWarning` moved into the editor (`editor.boundsMisaligned`)
+because it judges the **reading** of the bounds, not the page showing them — so `/` gained it.
 
 **Beverage display order** — `/` lists beverages in the **machine's own order** for the active
 profile, taken from `d{260+p}_{p}_rec_priority` and exposed as `order` by `/api/beverages`. The

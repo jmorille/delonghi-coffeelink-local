@@ -1,50 +1,33 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { mfetch } from "../machine";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
-import Alerte from "../Alerte";
-import { INGREDIENTS, groupeDe, presenceInitiale, valeurAbsente } from "../ingredients";
+import RecipeEditor from "../RecipeEditor";
+import type { Beverage, RecipeParam } from "../beverage";
 
 /**
- * Édition des recettes locales, **sous les contraintes du modèle**.
+ * Bibliothèque de recettes locales, **avec l'éditeur du produit et pas un second**.
  *
- * Les bornes min/défaut/max (propriétés `d001_rec_espresso`…, trame `0xB0`) sont des
- * caractéristiques de la machine, partagées par les 5 profils : un profil ne peut que choisir
- * une valeur *dans* ces bornes. Cette page les affiche et les impose — elle ne redéfinit donc
- * plus sa propre table de boissons, elle lit le catalogue réel via `/api/beverages`.
- * (L'ancienne version avait sa propre liste, avec des identifiants faux : thé=16, cortado=18…)
+ * Cette page tenait sa propre édition : un tableau Paramètre / Min / Max / Défaut machine /
+ * Profil / Valeur, des curseurs nus, et trois boutons. Même geste que sur `/`, même trame `0x83`,
+ * deux interfaces — et celle-ci n'avait ni les interrupteurs pour les paramètres booléens, ni les
+ * ingrédients à cocher d'un emplacement perso, ni le retour aux défauts du modèle, ni le pli des
+ * réglages avancés. Ce qui s'y corrigeait n'atteignait qu'une page sur deux, et un utilisateur
+ * qui avait appris l'une devait réapprendre l'autre.
+ *
+ * Ne reste ici que ce qui lui appartient vraiment : **choisir** la boisson et le profil, nommer la
+ * recette, l'enregistrer localement, la rouvrir, la supprimer. Les valeurs sont l'affaire de
+ * `RecipeEditor`.
+ *
+ * Deux boutons ont disparu sans rien perdre : « Reprendre du profil » est le « ↺ réinitialiser »
+ * de l'éditeur, et « ⟲ valeurs par défaut » lui ajoute les défauts du modèle, que cette page
+ * n'offrait pas. Le refus « hors bornes » aussi : l'éditeur borne chaque champ à la saisie, une
+ * valeur hors bornes n'y est plus atteignable.
  */
 
-interface Bound {
-  id: number;
-  name: string;
-  label: string;
-  unit: string;
-  kind: "user" | "meta" | "maint";
-  min: number;
-  def: number;
-  max: number;
-}
-interface Beverage {
-  id: number;
-  label: string;
-  factoryName: string;
-  /** Identifiant stable du protocole : c'est lui qui sert de clé de traduction. */
-  slug: string;
-  /** Nom saisi sur la machine (« Mon latte », « Grain A ») — jamais traduit. */
-  machineName: string | null;
-  ingredients: number[];
-  bounds: { params: Bound[]; exact: boolean } | null;
-  boundsProp: string | null;
-  /** Recette réellement enregistrée pour le profil demandé, si elle a été lue. */
-  values: { params: { id: number; value: number }[] } | null;
-  /** Emplacement perso 1-6, ou `null`. Seuls ces emplacements se règlent par ingrédient. */
-  customSlot: number | null;
-  valuesProp: string | null;
-}
 interface Param {
   id: number;
   value: number;
@@ -72,19 +55,14 @@ export default function Recipes() {
   /**
    * Compte rendu et refus de validation.
    *
-   * C'était un `<span className="sub">` posé au bout de la rangée de boutons : « Corrigez les
-   * valeurs hors bornes » — un refus qui empêche l'écriture — s'affichait en petit texte gris, du
-   * même poids qu'une légende, et n'était annoncé à personne. Un refus de validation et une
-   * confirmation d'écriture partageaient ce même traitement.
+   * C'était un `<span className="sub">` posé au bout de la rangée de boutons : un refus qui
+   * empêche l'écriture s'affichait en petit texte gris, du même poids qu'une légende, et n'était
+   * annoncé à personne.
    */
   const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const dire = (text: string) => setMsg({ text, kind: "ok" });
   const refuser = (text: string) => setMsg({ text, kind: "err" });
   const { demander, dialogue } = useConfirm();
-  // L'espace de noms `editor` est REUTILISE tel quel : ce sont les mêmes ingrédients, les mêmes
-  // libellés et la même limite à énoncer. Les recopier dans `recipes` ferait deux textes pour un
-  // seul fait, à corriger deux fois.
-  const tEd = useTranslations("editor");
 
   const load = useCallback(
     () => mfetch("/api/recipes").then((r) => r.json()).then((d) => setList(d.recipes)),
@@ -101,8 +79,7 @@ export default function Recipes() {
     // ⚠️ `mfetch`, JAMAIS `fetch` nu : un appel nu vise la machine PAR DÉFAUT, pas celle qui est
     // sélectionnée. Ici le prix n'était pas cosmétique — cette page lisait le catalogue, les
     // bornes et les valeurs de profil d'une machine, puis écrivait sur une autre, puisque
-    // « Écrire dans le profil » passe, lui, par `mfetch`. `searchParams.set` conserve le
-    // `?profile=` déjà présent.
+    // « Écrire dans le profil » passe, lui, par `mfetch`.
     mfetch(`/api/beverages?profile=${draft.profileId}`)
       .then((r) => r.json())
       .then((d) => setBeverages(d.beverages ?? []))
@@ -111,172 +88,43 @@ export default function Recipes() {
 
   const bev = beverages.find((b) => b.id === draft.beverageId) ?? null;
 
-  /**
-   * Paramètres réglables pour cette boisson : ceux que le modèle déclare (`ingredients`) et
-   * dont on connaît les bornes. On écarte les métadonnées (visibilité, programmabilité…) et la
-   * maintenance : ce ne sont pas des réglages de recette.
-   */
-  const editable = useMemo<Bound[]>(() => {
-    if (!bev?.bounds) return [];
-    return bev.ingredients
-      .map((id) => bev.bounds!.params.find((p) => p.id === id))
-      .filter((p): p is Bound => !!p && p.max > p.min);
-  }, [bev]);
+  // En changeant de boisson, on repart de zéro : garder les valeurs de la précédente produirait
+  // des réglages hors bornes, voire inapplicables. L'éditeur repart alors de ce que le profil a
+  // enregistré sur la machine.
+  const pickBeverage = (id: number) => setDraft({ ...draft, beverageId: id, params: [] });
 
-  /**
-   * Paramètres imposés par le modèle (min == max) : non réglables, mais ils doivent figurer dans
-   * la trame. C'est le cas de l'ordre lait/café d'un flat white, qui vaut toujours 1 et qui
-   * détermine l'action PREPARE_BEVERAGE_INVERSION. Les omettre produirait une recette incomplète.
-   */
-  const fixedParams = useMemo<Bound[]>(() => {
-    if (!bev?.bounds) return [];
-    return bev.ingredients
-      .map((id) => bev.bounds!.params.find((p) => p.id === id))
-      .filter((p): p is Bound => !!p && p.max === p.min);
-  }, [bev]);
-
-  /**
-   * Ce qui part réellement à la machine : les réglages + les paramètres imposés.
-   *
-   * Un ingrédient décoché n'est pas OMIS — il est écrit ABSENT, quantité 0 et options 255, avec
-   * la convention de la machine elle-même. L'omettre laisserait l'ancienne valeur en place sur
-   * l'appareil, donc l'ingrédient présent : le contraire de ce que la case décochée annonce.
-   */
-  const payload = (): Param[] =>
-    [...draft.params, ...fixedParams.map((b) => ({ id: b.id, value: b.def }))].map((prm) => {
-      const g = groupe(prm.id);
-      return g && !presents[g.cle] ? { id: prm.id, value: valeurAbsente(g, prm.id) } : prm;
-    });
-
-  // En changeant de boisson, on repart des valeurs par défaut de la machine : garder les
-  // paramètres de la boisson précédente produirait des valeurs hors bornes, voire inapplicables.
-  const pickBeverage = (id: number) => {
-    setPresents(presenceInitiale(beverages.find((b) => b.id === id)?.values?.params));
-    const target = beverages.find((b) => b.id === id);
-    const params =
-      target?.bounds?.params
-        .filter((p) => target.ingredients.includes(p.id) && p.max > p.min)
-        .map((p) => ({ id: p.id, value: seedValue(target, p) })) ?? [];
-    setDraft({ ...draft, beverageId: id, params });
-  };
-
-  // Le brouillon démarre vide (avant le chargement du catalogue on ne connaît pas les bornes) :
-  // dès qu'on les a, on le pré-remplit aux défauts machine. Sans ça la page s'affichait avec des
-  // curseurs positionnés mais un brouillon vide, donc l'écriture dans le profil était désactivée.
-  useEffect(() => {
-    if (!editable.length || draft.params.length) return;
-    setDraft((d) => ({ ...d, params: editable.map((b) => ({ id: b.id, value: bev ? seedValue(bev, b) : b.def })) }));
-  }, [editable, draft.params.length]);
-
-  /**
-   * **Un emplacement perso se règle par ingrédient**, comme sur `/` et comme l'écran de création
-   * de l'application. Ailleurs les ingrédients ne se choisissent pas : la liste des paramètres
-   * est attachée à la boisson.
-   *
-   * La présence repart des valeurs lues du profil à chaque changement de boisson — c'est ce que
-   * fait déjà `pickBeverage` pour les valeurs, et deux règles différentes pour un même geste
-   * dérouteraient plus qu'elles n'aideraient.
-   */
-  const estPerso = bev?.customSlot !== null && bev?.customSlot !== undefined;
-  const [presents, setPresents] = useState<Record<string, boolean>>(() => presenceInitiale(undefined));
-  const groupe = (id: number) => (estPerso ? groupeDe(id) : null);
-
-  const valueOf = (id: number) => draft.params.find((p) => p.id === id)?.value;
-
-  const setValue = (id: number, raw: number) => {
-    const b = editable.find((p) => p.id === id);
-    const value = b ? clamp(raw, b.min, b.max) : raw;
-    const params = draft.params.some((p) => p.id === id)
-      ? draft.params.map((p) => (p.id === id ? { ...p, value } : p))
-      : [...draft.params, { id, value }];
-    setDraft({ ...draft, params });
-  };
-
-  // Un réglage dont l'ingrédient est décoché n'est pas « hors bornes » : il n'est pas réglé du
-  // tout. Le compter bloquerait l'enregistrement d'une recette parfaitement valide.
-  const outOfRange = editable.filter((b) => {
-    const g = groupe(b.id);
-    if (g && !presents[g.cle]) return false;
-    const v = valueOf(b.id);
-    return v !== undefined && (v < b.min || v > b.max);
-  });
-
-  const save = async () => {
+  const save = async (params: RecipeParam[]) => {
     if (!draft.id || !draft.name) {
       refuser(t("idAndNameRequired"));
-      return;
-    }
-    if (outOfRange.length) {
-      refuser(t("outOfRange", { list: outOfRange.map((b) => paramLabel(b)).join(", ") }));
       return;
     }
     await mfetch("/api/recipes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(draft),
+      body: JSON.stringify({ ...draft, params }),
     });
     dire(t("saved"));
     setDraft(empty());
     load();
   };
 
-  /** Valeur actuellement enregistrée sur la machine pour ce profil, si elle a été lue. */
-  const machineValue = (id: number) => bev?.values?.params.find((p) => p.id === id)?.value;
-
-  /** Les réglages à montrer : ceux d'un ingrédient décoché n'ont rien à faire dans le tableau. */
-  const lignes = editable.filter((b) => {
-    const g = groupe(b.id);
-    return !g || presents[g.cle];
-  });
-  const groupesVisibles = estPerso
-    ? INGREDIENTS.filter((g) => editable.some((b) => b.id === g.quantite))
-    : [];
-  // Deux appels littéraux plutôt qu'une clé construite : `verif-messages.mjs` ne vérifie que les
-  // littéraux, une clé dynamique lui échapperait sans bruit.
-  const nomGroupe = (cle: string) => (cle === "cafe" ? tEd("groupCoffee") : tEd("groupMilk"));
-
-  /** Recopie dans le brouillon ce que la machine a enregistré pour ce profil. */
-  const loadFromMachine = () => {
-    if (!bev?.values) return;
-    const params = editable
-      .map((b) => {
-        const v = machineValue(b.id);
-        return v === undefined ? null : { id: b.id, value: clamp(v, b.min, b.max) };
-      })
-      .filter((p): p is Param => !!p);
-    if (!params.length) {
-      refuser(t("nothingUsable"));
-      return;
-    }
-    setDraft({ ...draft, params });
-    dire(t("takenFromProfile", { count: params.length, profile: draft.profileId }));
-  };
-
   /**
    * Écrit la recette DANS le profil sur la machine (0x83, mode DONTCARE, action SAVE_BEVERAGE).
    * C'est une modification persistante de l'appareil : elle remplace la recette enregistrée du
    * profil, exactement comme si on l'avait reprogrammée sur l'écran de la machine.
+   *
+   * **Part au clic, sans dialogue** — c'est le MÊME geste que « Écrire dans le profil » sur `/`,
+   * même trame, même endpoint, et deux comportements pour un seul acte selon la page seraient
+   * pires que l'un ou l'autre. L'avertissement vit dans l'infobulle du bouton de l'éditeur : ce
+   * qu'on retire est l'interruption, pas le fait.
    */
-  const writeToMachine = async () => {
-    if (!bev || !draft.params.length) return;
-    if (outOfRange.length) {
-      refuser(t("fixOutOfRange"));
-      return;
-    }
-    // **Part au clic, sans dialogue.** C'est le MÊME geste que « Écrire dans le profil » sur `/`
-    // — même trame `0x83` / `SAVE_BEVERAGE`, même endpoint — et deux comportements pour un seul
-    // acte selon la page seraient pires que l'un ou l'autre. L'avertissement passe dans
-    // l'infobulle du bouton : ce qu'on retire est l'interruption, pas le fait.
-    void ecrireDansProfil();
-  };
-
-  const ecrireDansProfil = async () => {
+  const ecrireDansProfil = async (params: RecipeParam[]) => {
     if (!bev) return;
     setMsg(null);
     const r = await mfetch("/api/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: draft.profileId, params: payload() }),
+      body: JSON.stringify({ action: "saveToProfile", beverageId: bev.id, profileId: draft.profileId, params }),
     }).then((x) => x.json());
     if (r.error) refuser(tc("error", { message: r.error }));
     else dire(t("writeSent", { checksum: r.checksumBefore != null ? "0x" + r.checksumBefore.toString(16) : tc("unknown") }));
@@ -329,141 +177,46 @@ export default function Recipes() {
           </div>
         </div>
 
-        <h2>{t("paramsHeading")}</h2>
         {!bev ? (
           <p className="sub">{tc("loading")}</p>
-        ) : !bev.bounds ? (
-          <Alerte>{t("boundsMissing", { beverage: bevLabel(bev) })}</Alerte>
-        ) : !editable.length ? (
-          <p className="sub">
-            {t("noParams")}
-          </p>
         ) : (
           <>
-            {/* **Les ingrédients d'un emplacement perso se cochent**, comme sur `/` et comme dans
-                l'écran de création de l'application. Une boisson du catalogue n'en montre aucune :
-                ses ingrédients ne se choisissent pas. */}
-            {groupesVisibles.length > 0 && (
-              <>
-                <p className="chapeau">{tEd("ingredientsHint")}</p>
-                <div className="row">
-                  {groupesVisibles.map((g) => (
-                    <label className="caseLibelle" key={g.cle}>
-                      <input
-                        type="checkbox"
-                        checked={!!presents[g.cle]}
-                        onChange={(e) => setPresents((prec) => ({ ...prec, [g.cle]: e.target.checked }))}
-                      />
-                      <span>{nomGroupe(g.cle)}</span>
-                    </label>
-                  ))}
-                </div>
-                {groupesVisibles.every((g) => !presents[g.cle]) && <Alerte>{tEd("noIngredient")}</Alerte>}
-                <p className="sub">{tEd("noWaterHere")}</p>
-              </>
-            )}
-            <div className="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("colParam")}</th>
-                  <th>{t("colMin")}</th>
-                  <th>{t("colMax")}</th>
-                  <th>{t("colDefault")}</th>
-                  <th>Profil {draft.profileId}</th>
-                  <th>{t("colValue")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lignes.map((b) => {
-                  const v = valueOf(b.id);
-                  const bad = v !== undefined && (v < b.min || v > b.max);
-                  return (
-                    <tr key={b.id}>
-                      <td>
-                        {paramLabel(b)}
-                        {b.unit ? ` (${unitLabel(b.unit)})` : ""}{" "}
-                        <span className="sub mono">
-                          {b.id}
-                        </span>
-                      </td>
-                      <td className="num">{b.min}</td>
-                      <td className="num">{b.max}</td>
-                      <td className="num">{b.def}</td>
-                      <td className="num">{machineValue(b.id) ?? <span className="sub">non lu</span>}</td>
-                      <td>
-                        <div className="ctl">
-                          <input
-                            type="range"
-                            min={b.min}
-                            max={b.max}
-                            value={v ?? b.def}
-                            aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
-                            onChange={(e) => setValue(b.id, Number(e.target.value))}
-                          />
-                          <input
-                            className="numField"
-                            type="number"
-                            min={b.min}
-                            max={b.max}
-                            value={v ?? b.def}
-                            onChange={(e) => setValue(b.id, Number(e.target.value))}
-                            style={{ borderColor: bad ? "var(--danger-edge)" : undefined }}
-                          />
-                          {v !== undefined && v !== b.def && (
-                            <button className="iconBtn" onClick={() => setValue(b.id, b.def)} title={t("useDefaultTitle")}>
-                              <Icone nom="defauts" taille={14} />
-                              <span className="lbl">{t("useDefault")}</span>
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-            {!bev.bounds.exact && (
-              <Alerte className="note">{t("misalignedWarning")}</Alerte>
-            )}
+            {/* Le titre nomme la boisson en cours d'édition : sans lui la page sautait du `h2` au
+                `h4` de l'éditeur, et rien au-dessus des réglages ne disait à quoi ils
+                s'appliquent une fois la liste déroulante refermée. */}
+            <h3>{bevLabel(bev)}</h3>
+            <RecipeEditor
+              /* Remonté à chaque changement de boisson, de profil ou de recette rouverte : son
+                 état repart ainsi des bonnes valeurs sans logique de réinitialisation à écrire —
+                 le même procédé que la carte de `/`, qui ne le monte qu'à l'ouverture. */
+              key={`${bev.id}:${draft.profileId}:${draft.id}`}
+              bev={bev}
+              profile={draft.profileId}
+              profileName={null}
+              busy={false}
+              working={false}
+              initial={draft.params.length ? draft.params : null}
+              /* Pas de « Préparer » ici : cette page enregistre des recettes, elle ne commande pas
+                 l'appareil. */
+              onWrite={(params) => void ecrireDansProfil(params)}
+              actions={(params) => (
+                <button className="primary iconBtn" onClick={() => void save(params)}>
+                  <Icone nom="ecrire" />
+                  <span className="lbl">{t("saveLocal")}</span>
+                </button>
+              )}
+            />
           </>
         )}
 
-        <div className="row note">
-          {/* **Trois destinations dans une seule rangee, donc trois dessins qui les nomment.** La
-              disquette garde ici, la fleche descendante reprend ce que le profil a enregistre, la
-              machine envoie sur l'appareil. C'est le seul endroit du produit ou les trois sens
-              coexistent : deux fleches opposees s'y confondraient — la raison pour laquelle
-              `ecrire` n'en est pas une. */}
-          <button className="primary iconBtn" onClick={save} disabled={!!outOfRange.length}>
-            <Icone nom="ecrire" />
-            <span className="lbl">{t("saveLocal")}</span>
-          </button>
-          <button className="iconBtn" onClick={loadFromMachine} disabled={!bev?.values} title={
-              !bev?.values
-                ? t("takeFromProfileUnavailable")
-                : t("takeFromProfileTitle")
-            }>
-            <Icone nom="lire" />
-            <span className="lbl">{t("takeFromProfile")}</span>
-          </button>
-          <button
-            className="good iconBtn"
-            onClick={writeToMachine}
-            disabled={!!outOfRange.length || !draft.params.length}
-            title={t("writeToProfileWarning")}
-          >
-            <Icone nom="machine" />
-            <span className="lbl">{t("writeToProfile", { profile: draft.profileId })}</span>
-          </button>
-          {draft.id && (
+        {draft.id && (
+          <div className="row note">
             <button className="iconBtn" onClick={() => setDraft(empty())}>
               <Icone nom="ajouter" />
               <span className="lbl">{tc("new")}</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
             n'est pas annoncé. Vide, `.status:empty` le masque. */}
         <p className={"status " + (msg?.kind === "err" ? "err" : "ok")} role="status">
@@ -519,24 +272,6 @@ export default function Recipes() {
 }
 
 const clamp = (v: number, min: number, max: number) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min);
-
-/**
- * Une borne n'est exploitable que si elle délimite un intervalle et que le défaut y tombe. La
- * machine renvoie 0 ou 255 (0xFF) pour un paramètre non configuré — constaté sur les recettes
- * perso vierges et le mug de voyage.
- */
-/**
- * Valeur de départ d'un paramètre : ce que la machine a enregistré pour ce profil si c'est dans
- * les bornes, sinon le défaut du modèle s'il l'est, sinon le minimum. La machine renvoie 0 ou 255
- * pour un paramètre jamais configuré (mug de voyage, recettes perso vierges) — retomber sur `min`
- * permet de le régler, là où une version précédente masquait la ligne entière.
- */
-function seedValue(bev: Beverage, b: Bound): number {
-  const stored = bev.values?.params.find((p) => p.id === b.id)?.value;
-  if (stored !== undefined && stored >= b.min && stored <= b.max) return stored;
-  if (b.def >= b.min && b.def <= b.max) return b.def;
-  return b.min;
-}
 
 function describe(
   r: Recipe,
