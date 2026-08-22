@@ -734,6 +734,18 @@ const bevLabel = (m, id) => m.catalog.byId(id)?.label ?? id;
  * du catalogue, que le client résout avec le même helper que ses pages. Le repli reste le `label`
  * français de la tâche : catalogue incomplet ⇒ texte serveur, jamais de clé brute à l'écran.
  */
+/**
+ * Le nom d'une boisson pour un libellé de tâche : soit un **paramètre** (`p`) quand la boisson
+ * porte un nom SAISI sur la machine — qui ne se traduit pas — soit une **référence** (`refs`) vers
+ * le slug du catalogue, que le client traduit lui-même.
+ *
+ * ⚠️ **Ne jamais étaler le résultat par-dessus un `p` existant.** Il rend l'une OU l'autre clé, et
+ * `{ p: { profil }, ...bevRef(…) }` écrase silencieusement `p` tout entier dans le cas « nom
+ * saisi » — le paramètre `profil` disparaît et next-intl lève `FORMATTING_ERROR` au rendu. Le
+ * piège est vicieux parce qu'il ne se déclenche **que** sur les machines où l'utilisateur a
+ * renommé une recette : partout ailleurs c'est la branche `refs`, et il n'y a pas de collision.
+ * Fusionner explicitement : `p: { …, ...(r.p ?? {}) }, refs: r.refs`.
+ */
 function bevRef(m, id, nom = "boisson") {
   const perso = machineBeverageNames(m.store.machineView())[id]?.name;
   if (perso) return { p: { [nom]: perso } };
@@ -3380,7 +3392,9 @@ async function handleApi(req, res) {
         if (!params.length) return raw(res, JSON.stringify({ error: "aucun paramètre à enregistrer" }), 400);
         frame = frameDispense(bev, prof, MODE.DONTCARE, ACT.SAVE, params);
         label = `Enregistrer ${bevLabel(m, bev)} dans le profil ${prof}`;
-        cleLibelle = { k: "saveToProfile", p: { profil: prof }, ...bevRef(m, bev) };
+        // ⚠️ Fusionner `p`, ne PAS étaler `bevRef` par-dessus : voir le commentaire de `bevRef`.
+        const rSave = bevRef(m, bev);
+        cleLibelle = { k: "saveToProfile", p: { profil: prof, ...(rSave.p ?? {}) }, refs: rSave.refs };
         dur = 20000;
         // On renvoie la somme de contrôle du profil AVANT écriture : la redemander ensuite
         // (POST /api/checksums) permet de vérifier que la machine a bien enregistré, au lieu de

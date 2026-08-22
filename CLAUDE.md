@@ -1249,6 +1249,16 @@ binds `t` to both `power` and `editor`, and without scope analysis nothing says 
 it **cannot see the failure that motivated it** — a key requested inside a helper the translator was
 passed to. For that class, the guard is the comment on `fmtAge` naming the namespace it needs.
 
+**A third class it cannot see: a key that resolves but is handed the wrong *parameters*.** Reported
+from real use — `task.saveToProfile` ("Enregistrer {boisson} dans le profil {profil}") was built as
+`{ k, p: { profil }, ...bevRef(m, bev) }`, and `bevRef` returns **either** `{p}` **or** `{refs}`, so
+the spread silently wiped the whole `p` and with it `profil`. next-intl then threw
+`FORMATTING_ERROR` at render. What makes it nasty is that it fires **only on machines where a
+recipe was renamed**: everywhere else `bevRef` takes the `refs` branch and there is no collision, so
+it is invisible in testing. `taskLabel`'s catch keeps the page alive by falling back to the server
+label, which is exactly why it went unnoticed. Merge explicitly — `p: { …, ...(r.p ?? {}) },
+refs: r.refs` — the `dispense` branch already did it correctly and was the model for the fix.
+
 **Never put `<...>` in a message string.** next-intl reads angle brackets as rich-text tags, so a
 message like `0D 08 A2 0F <id> <qty>` fails to parse and the UI prints the raw key
 (`stats.protocolNote`) instead of the text. Use brackets or backticks for protocol placeholders.
