@@ -67,6 +67,12 @@ node_modules/.bin/tsc --noEmit   # typecheck (TypeScript 7)
 # sends — the tool for framing / keep-alive / key-exchange-sequence bugs.
 node --env-file=.env.local debug-capture.mjs
 
+# Multiplexer, end to end on the loopback, no machine and no phone (see its section below).
+PROXY_APPS=1 SERVER_PORT=3099 node server.mjs
+node scripts/faux-app.mjs --serveur 127.0.0.1:3099 --port 8888   # a client, read-only
+node scripts/faux-app.mjs --serveur 127.0.0.1:3099 --port 8890   # a second one
+node scripts/fausse-machine.mjs --serveur 127.0.0.1:3099         # pushes one state to both
+
 # Regenerate the extracted tables from the APK (do not hand-edit their JSON output).
 node scripts/extract-catalogs.mjs   # → src/lib/machine-catalogs.json
 node scripts/extract-models.mjs     # → src/lib/machine-models.json
@@ -400,7 +406,9 @@ it reads as an isolated incident where there were two dozen.
 machine** — fourteen assertions over ordering (including the statistics sweep's back-of-queue rank
 and its suspend-and-resume), preemption-with-resume, merging, the cap, retry, window-as-success, the
 breaker, cancellation and the view. Plain `node scripts/verif-tasks.mjs`, no
-dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`. The scheduler is pure
+dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`,
+`scripts/verif-lansession.mjs` and `scripts/verif-apps.mjs` — four now, and the list only grows
+where a part was kept pure on purpose. The scheduler is pure
 (the instant is always a parameter, no I/O, no logging) precisely so this stays possible; keep it
 that way.
 
@@ -1100,6 +1108,86 @@ reference matrix verifies **9/9**. No cloud call.
 - Writes use
   `0xBB`, 52 bytes - and **deletion is the same frame with `visible = 0`**. Index 0 is not a coffee
   profile but the machine's own on/off entry; index n >= 1 maps to beverage 199 + n.
+
+## Application multiplexer — lan-server plays the MACHINE
+
+**Measured 2026-08-22, and it is the premise of the whole feature: the machine keeps exactly ONE
+local peer.** Open the official De'Longhi app on the same network and our tasks start failing —
+`0 sur 2`, folded `×4`, motive "sans réponse". Our `local_reg` is still answered 202; the machine
+simply stops coming to us. Close the app and, after a delay, lan-server takes the slot back on its
+own. Full write-up in `doc/analyse-connexion-wifi.md` §7ter and `doc/spec-proxy-multi-app.md` §7.1.
+
+Two consequences beyond the feature itself. **The eviction is silent**, so "an app took the slot"
+and "the machine is off" produce the identical symptom — which is why `taskMuteHint` now names
+this third cause. And **the recovery is automatic**: nothing to restart.
+
+The multiplexer is the answer: since the slot is unique, someone must hold it for everyone. We
+already are that someone.
+
+**Off by default — `PROXY_APPS=1` turns it on**, and without it `/regtoken.json` and
+`/local_reg.json` do not exist on this server. Impersonating an appliance to third-party software
+is a deliberate gesture, not a side effect of an upgrade; it also guarantees an existing install
+behaves identically on this version.
+
+**Port 80 is not negotiable.** The SDK builds `http://<ip>/…` with **no port**, so an app looks
+for the appliance on 80 and nowhere else. Boot warns when `SERVER_PORT` is anything else, because
+the alternative is a long hunt for why nothing ever connects.
+
+**`src/lib/lansession.mjs` holds BOTH roles in one implementation** — it runs, `server.mjs`
+imports it. The key exchange derives four keys; `role` ("client" / "device") only picks which set
+encrypts outbound. Writing that derivation a second time for the proxy would have been the most
+predictable fault available. `makeSession()` in `server.mjs` is now a thin `role: "client"`
+wrapper, and the refactor was proven byte-for-byte neutral against the old inline code before
+being kept.
+
+**Getting the direction wrong raises NO error** — decryption yields plausible, unreadable bytes and
+the symptom is a session that "stops answering". Hence `scripts/verif-lansession.mjs`, whose
+central assertion is that *two sessions of the same role do not understand each other*.
+
+**The proxy terminates both sides; it never tunnels bytes.** Each session owns a persistent
+AES-CBC stream, so a ciphertext is meaningful only inside the stream it was produced in.
+Everything crossing is decrypted and re-encrypted, once per application — which is exactly what
+makes N independent applications possible where the machine allows one.
+
+- `src/lib/appregistry.mjs` — **pure**, no I/O, instant always a parameter (same discipline as
+  `tasks.mjs`, same reason: `scripts/verif-apps.mjs` runs in CI). An application's identity is its
+  **`ip:port`**, because that is all `local_reg` carries. `nouvelle` is what triggers a key
+  exchange and **a `PUT` must never trigger one** — that would replace the AES stream the app is
+  mid-read on, and look like a phone that "drops" every few seconds.
+- `src/lib/appproxy.mjs` — transport (`node:http`, explicit `Content-Length`, same lesson as
+  `local_reg`) plus `analyserCommandes()`, the pure part. The two payload shapes are **read out of
+  the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
+  {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
+  the only signal, and not answering leaves the app waiting then concluding failure.
+- `POST /local_reg.json` carries **`?dsn=`** on the first registration only (`!_isActive` branch).
+  It is the one moment the protocol says out loud which appliance the app believes it is talking
+  to, hence the only chance to refuse a request that is not ours. A `PUT` carries none, but always
+  follows a `POST`.
+- **App commands go through the same queue as everything else**, rank `COMMANDE`. An app request
+  is worth a UI request, no more; and the scheduler guarantees they do not collide — which the
+  machine's single slot emphatically does not. ⚠️ **A relayed write reaches a real appliance**: it
+  can start a preparation or persist a recipe. That is the point, and it is why every relay is
+  logged and why `/pilotage` lists who is connected.
+- Only `m.send` is relayed. An app writing anything else is **logged and ignored**, never guessed.
+
+**`/pilotage` gained an "Applications branchées" panel**, rendered **even when the multiplexer is
+off**: hiding it would make the feature invisible to anyone not reading the docs, and "no
+applications" is not the same information as "we are not looking". It lists connections *and*
+refusals (`dsnInconnu`, `sansCle`, `echecEchange`…), because that is the impersonation-monitoring
+half — without it, someone trying their luck on the LAN leaves no visible trace. Refusals fold on
+consecutive identical entries with a `×N` count, same rule as the journal. **No session ever
+leaves `vueApps()`**: a session is derived from the LAN key, so "no endpoint returns the key"
+applies to what descends from it.
+
+**Two scripts prove the chain without hardware**, and they are the pattern to follow:
+`scripts/faux-app.mjs` plays a client, `scripts/fausse-machine.mjs` plays the appliance. Run
+together against a `PROXY_APPS=1` server they demonstrate the central claim — **one datapoint from
+the machine, two applications served, each in its own stream** (verified). `faux-app` is
+deliberately read-only: it cannot build an ECAM frame and never will.
+
+**What is still NOT proven**, and no local test can close it: that a *real* De'Longhi app will
+accept us. It may check things our fake client does not. The mDNS responder (spec step 1) is also
+unwritten, so an app cannot yet find us by itself.
 
 ## Internationalisation
 

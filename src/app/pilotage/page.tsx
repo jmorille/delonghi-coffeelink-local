@@ -39,6 +39,7 @@ export default function Dashboard() {
   const tset = useTranslations("settings");
   const tpw = useTranslations("profilesWhat");
   const tconf = useTranslations("confirmations");
+  const tapps = useTranslations("apps");
   /**
    * **Le nom d'une tâche, dit par nous et non par le serveur.** Les libellés de tâches étaient la
    * dernière chose que le serveur envoyait en français pour affichage direct, et ce panneau était
@@ -59,6 +60,12 @@ export default function Dashboard() {
     [ttask, tbev, tset, tpw],
   );
   const [status, setStatus] = useState<any>(null);
+  /**
+   * Les applications branchées sur ce serveur quand il joue la machine. Lu dans le même
+   * rafraîchissement que l'état : chaque évènement d'application passe par `L()`, donc par
+   * `sseTouch`, donc ce panneau suit le flux sans minuteur à lui.
+   */
+  const [apps, setApps] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   /**
    * Retour de la dernière action. Sans lui, un refus du serveur (409 clé LAN absente) passait
@@ -74,8 +81,14 @@ export default function Dashboard() {
   const { demander, dialogue } = useConfirm();
 
   const refresh = useCallback(async () => {
-    const s = await mfetch("/api/status").then((r) => r.json());
+    // En parallèle : deux requêtes indépendantes, et faire attendre l'état pour la liste des
+    // applications n'aurait aucun sens. Un échec sur l'une ne doit pas emporter l'autre.
+    const [s, a] = await Promise.all([
+      mfetch("/api/status").then((r) => r.json()),
+      mfetch("/api/apps").then((r) => r.json()).catch(() => null),
+    ]);
     setStatus(s);
+    if (a) setApps(a);
   }, []);
 
   useEffect(() => {
@@ -833,6 +846,87 @@ export default function Dashboard() {
 
       {/* `id` : la pastille « alarme signalée » de l'accueil mène ici. C'était la seule route vers
           « quelle alarme ? », et elle vivait dans un attribut `title` — donc nulle part au doigt. */}
+
+      {/**
+        * **Les applications branchées, c'est-à-dire qui d'autre parle à cette machine.**
+        *
+        * Sa raison d'être tient à une mesure du 2026-08-22 (`doc/analyse-connexion-wifi.md` §7ter) :
+        * la machine ne retient qu'UN interlocuteur local, et une application De'Longhi ouverte sur
+        * le réseau évince ce serveur **sans aucun signal** — nos annonces restent acceptées, la
+        * machine cesse simplement de venir. Ce panneau est le seul endroit d'où l'on peut voir la
+        * différence entre « une application a pris la main » et « la machine est éteinte », qui
+        * jusqu'ici produisaient exactement le même symptôme.
+        *
+        * Placé juste après « Activité » : la file dit ce qui est demandé, ceci dit par qui.
+        *
+        * Rendu **même quand le multiplexeur est éteint**, ce qui est le cas par défaut. Masquer la
+        * section rendrait la fonctionnalité invisible à quiconque ne lit pas la documentation, et
+        * surtout : « aucune application » et « on ne regarde pas » ne sont pas la même information.
+        */}
+      <section aria-labelledby="titre-apps">
+      <h2 id="titre-apps">{tapps("heading")}</h2>
+      <div className="card">
+        {!apps?.actif ? (
+          <>
+            <p className="sub">{tapps("off")}</p>
+            <p className="sub">{tapps("offHint")}</p>
+          </>
+        ) : (
+          <>
+            {/* Le port avant tout le reste : c'est la réponse à « pourquoi rien n'arrive ». */}
+            {!apps.portOk && (
+              <p className="sub attention">{tapps("portWarn", { port: apps.port, attendu: apps.portAttendu })}</p>
+            )}
+            <p className="sub">{tapps("warning")}</p>
+            {!apps.apps?.length ? (
+              <>
+                <p className="sub">{tapps("none")}</p>
+                <p className="sub">{tapps("noneHint")}</p>
+              </>
+            ) : (
+              <dl className="kvListe">
+                {apps.apps.map((a: any) => (
+                  <div className="kv" key={a.id}>
+                    <dt className="k">{a.ip}:{a.port}</dt>
+                    <dd>
+                      <span className={`pill${a.etat === "etablie" ? "" : " off"}`}>
+                        {a.etat === "etablie" ? tapps("stateEstablished") : a.etat === "expiree" ? tapps("stateExpired") : tapps("stateAnnounced")}
+                      </span>
+                      {a.machine && <span className="sub">{tapps("machine", { machine: a.machine })}</span>}
+                      <span className="sub">{tapps("traffic", { datapoints: a.datapoints, commandes: a.commandes })}</span>
+                      <span className="sub">{tapps("seen", { age: a.ageSec })}</span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
+            <h3>{tapps("refusHeading")}</h3>
+            {!apps.refus?.length ? (
+              <p className="sub">{tapps("refusNone")}</p>
+            ) : (
+              <dl className="kvListe">
+                {apps.refus.map((r: any, i: number) => (
+                  <div className="kv" key={`${r.from}-${r.motif}-${i}`}>
+                    <dt className="k">{r.from}</dt>
+                    <dd>
+                      <span className="pill off">
+                        {tapps.has(`motif_${r.motif}`) ? tapps(`motif_${r.motif}` as any) : r.motif}
+                      </span>
+                      {r.detail && <span className="sub">{r.detail}</span>}
+                      {/* Le compte, jamais perdu : une ligne repliée sans lui se lit comme un
+                          incident isolé là où il y en a eu une douzaine. Même règle que le journal. */}
+                      {r.repetitions > 1 && <span className="sub">{tapps("repeats", { count: r.repetitions })}</span>}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </>
+        )}
+      </div>
+      </section>
+
       <section id="alarmes" aria-labelledby="titre-alarmes">
       <h2 id="titre-alarmes">{t("alarms")}</h2>
       <div className="card">

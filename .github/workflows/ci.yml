@@ -57,9 +57,11 @@ jobs:
             node --check "$f"
           done
 
-      # Les deux seules choses de ce dépôt qui se prouvent SANS la machine. L'ordonnanceur est pur
-      # (l'instant est toujours un paramètre) et le décodage du monitor l'est aussi (des octets
-      # entrent, un objet sort) — d'où deux scripts sans dépendance, exécutables ici.
+      # Ce que ce dépôt sait prouver SANS la machine. Toutes ces parties sont PURES par
+      # construction — l'ordonnanceur prend l'instant en paramètre, le décodeur du monitor prend
+      # des octets et rend un objet, le registre d'applications ne fait aucune E/S — d'où des
+      # scripts sans dépendance, exécutables ici. Garder cette pureté est ce qui garde ce bloc
+      # possible.
       # `verif-monitor` rejoue des trames RÉELLES capturées pendant trois préparations : c'est le
       # seul endroit du projet où du comportement d'appareil est figé et rejouable.
       - name: Vérifier l'ordonnanceur de tâches
@@ -67,6 +69,15 @@ jobs:
 
       - name: Vérifier le décodage du monitor
         run: node scripts/verif-monitor.mjs
+
+      # Les deux moitiés du multiplexeur. `verif-lansession` fait dialoguer les rôles « client »
+      # et « appareil » d'une même session : se tromper de sens de clés ne lève AUCUNE erreur —
+      # on obtient du déchiffrement plausible et illisible — donc c'est la seule façon de le voir.
+      - name: Vérifier la session LAN dans les deux rôles
+        run: node scripts/verif-lansession.mjs
+
+      - name: Vérifier le registre d'applications
+        run: node scripts/verif-apps.mjs
 
       # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
       # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à

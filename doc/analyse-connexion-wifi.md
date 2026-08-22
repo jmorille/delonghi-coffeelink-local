@@ -546,6 +546,42 @@ fonctionnera une fois le `local_reg` établi.
 
 ---
 
+## 7ter. Test réel du 2026-08-22 : le créneau `local_reg` est UNIQUE
+
+**Manipulation.** lan-server tourne et pilote la machine normalement. On ouvre l'application
+officielle De'Longhi sur le même réseau, sans rien changer d'autre. Puis on la ferme.
+
+**Observation.**
+
+| Moment | Ce que fait lan-server | Ce que fait la machine |
+|---|---|---|
+| App fermée | `local_reg` toutes les 2,5 s, accepté (202) | se connecte à nous, commandes servies |
+| **App ouverte** | `local_reg` toujours accepté (202) | **ne se connecte plus à nous** |
+| App fermée, après un délai | inchangé | se reconnecte à nous, seule |
+
+Côté file de tâches, le symptôme est une tâche « Présence » à `0 sur 2`, repliée `×4`, motif
+« sans réponse » : le coupe-circuit muet la déclare absente au bout de 25 s.
+
+**Conclusion — trois faits, dont deux n'étaient pas acquis.**
+
+1. **Le module ne retient qu'UN interlocuteur local.** Cela se lisait dans l'APK — ressource au
+   singulier, POST puis PUT (`new AylaJsonRequest<>(z9 ? 2 : 1, …)` où `z9 = _isActive`), et un
+   `DeleteSessionCommand` qui fait `DELETE local_reg.json` — mais c'était une lecture, pas une
+   mesure. C'en est une maintenant. Le dernier qui s'annonce prend la place.
+2. **L'éviction ne produit AUCUN signal.** Notre `local_reg` continue de recevoir 202 : la machine
+   accepte l'annonce et ne s'y connecte simplement plus. Rien ne distingue donc, dans le journal,
+   « une application a pris le créneau » de « la machine est éteinte » ou « le retour réseau est
+   coupé ». C'est le piège de diagnostic de cette section, et il est cher : le motif « muette »
+   oriente aujourd'hui vers le chemin réseau, qui est le coupable habituel mais pas le seul.
+3. **La reprise est automatique.** Aucune action n'est nécessaire côté serveur : l'annonce
+   périodique reprend le créneau dès que l'app le libère. Il n'y a pas de bail à attendre côté
+   nous, et le `DELETE` explicite du SDK n'est pas la seule façon de rendre la place — l'abandon
+   suffit.
+
+C'est la prémisse du multiplexeur décrit dans `doc/spec-proxy-multi-app.md` : puisque le créneau
+est unique, faire cohabiter plusieurs applications suppose que quelqu'un le tienne pour tout le
+monde.
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02

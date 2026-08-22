@@ -21,6 +21,12 @@ import { CATEGORIES, catalogFor, decodeRecipeProperty, modelSheet } from "./src/
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
+import { makeLanSession, token } from "./src/lib/lansession.mjs";
+// Multiplexeur : lan-server joue la machine auprès de N applications. Voir doc/spec-proxy-multi-app.md.
+import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
+         cleApp, DELAI_APP_MUETTE } from "./src/lib/appregistry.mjs";
+import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
+         PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
 import { RANG, DELAIS, MAX_FILE, nouvelleFile, tache, pasLecture, pasTrame, enfiler, aServir,
@@ -425,38 +431,26 @@ function machineByKeyId(keyId) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-// --- crypto (port validé de debug-capture.mjs) ---
-const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
-const derive = (K, seed) => hmac(K, Buffer.concat([hmac(K, seed), seed])); // double HMAC
-const CH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-const token = (n) => { const b = crypto.randomBytes(n); let s = ""; for (let i = 0; i < n; i++) s += CH[b[i] % 62]; return s; };
+// --- crypto ---
+/**
+ * **La dérivation vit dans `src/lib/lansession.mjs`, et elle y vit pour les DEUX rôles.**
+ *
+ * Elle était ici, en un seul sens : lan-server ne savait qu'être le client auquel la machine se
+ * connecte. Le multiplexeur (`doc/spec-proxy-multi-app.md`) demande l'autre moitié — se faire
+ * passer pour l'appareil auprès des applications — et c'est le MÊME protocole, opérandes échangés.
+ * En garder une copie ici aurait donné deux implémentations d'une dérivation cryptographique, qui
+ * divergent au premier correctif ; le module est en prime PUR, donc `scripts/verif-lansession.mjs`
+ * fait dialoguer les deux rôles sans machine ni réseau.
+ */
 function makeSession(m, kx, time2) {
-  const R1 = Buffer.from(kx.random_1, "utf8"), R2 = Buffer.from(token(16), "utf8");
-  const T1 = Buffer.from(String(kx.time_1), "utf8"), T2 = Buffer.from(time2, "utf8");
-  const tag = (t) => Buffer.from([t]);
-  const a = (t) => Buffer.concat([R1, R2, T1, T2, tag(t)]);
-  const d = (t) => Buffer.concat([R2, R1, T2, T1, tag(t)]);
-  const aSign = derive(m.lanKey, a(0x30)), aCrypto = derive(m.lanKey, a(0x31)), aIv = derive(m.lanKey, a(0x32)).subarray(0, 16);
-  const dSign = derive(m.lanKey, d(0x30)), dCrypto = derive(m.lanKey, d(0x31)), dIv = derive(m.lanKey, d(0x32)).subarray(0, 16);
-  const e = crypto.createCipheriv("aes-256-cbc", aCrypto, aIv); e.setAutoPadding(false);
-  const dc = crypto.createDecipheriv("aes-256-cbc", dCrypto, dIv); dc.setAutoPadding(false);
-  let seq = 0;
-  return {
-    random2: R2.toString("utf8"),
-    encapsulate(dataJson) {
-      const inner = `{"seq_no":${seq++},"data":${dataJson}}`;
-      const ib = Buffer.from(inner, "utf8");
-      const sign = crypto.createHmac("sha256", aSign).update(ib).digest("base64");
-      let len = ib.length + 1; const r = len % 16; if (r) len += 16 - r;
-      const pad = Buffer.alloc(len); ib.copy(pad, 0);
-      return JSON.stringify({ enc: e.update(pad).toString("base64"), sign });
-    },
-    decapsulate(body) {
-      let p = dc.update(Buffer.from(body.enc, "base64"));
-      let end = p.length; while (end > 0 && p[end - 1] === 0) end--;
-      return p.subarray(0, end).toString("utf8");
-    },
-  };
+  return makeLanSession({
+    lanKey: m.lanKey,
+    random1: kx.random_1,
+    random2: token(16),
+    time1: kx.time_1,
+    time2,
+    role: "client",
+  });
 }
 
 // --- ECAM ---
@@ -1131,6 +1125,328 @@ async function handleLan(req, res) {
   return raw(res, "{}");
 }
 
+// --- multiplexeur : lan-server joue la MACHINE auprès des applications ---
+/**
+ * La moitié « appareil » du serveur. Voir `doc/spec-proxy-multi-app.md`, et surtout le §7.1 :
+ * mesuré le 2026-08-22, **le créneau `local_reg` de la machine est unique**. Une application
+ * De'Longhi ouverte sur le réseau nous évince, sans erreur et sans le moindre signal — nos
+ * annonces continuent d'être acceptées, la machine cesse simplement de venir. C'est de là que
+ * vient cette fonctionnalité : puisque le créneau est unique, il faut que quelqu'un le tienne
+ * pour tout le monde.
+ *
+ * Nous sommes déjà ce quelqu'un. Il ne reste qu'à servir les autres.
+ *
+ * ## Éteint par défaut, et ce n'est pas de la timidité
+ *
+ * `PROXY_APPS=1` l'allume. Sans ce réglage, `/regtoken.json` et `/local_reg.json` n'existent pas
+ * sur ce serveur. Se faire passer pour un appareil auprès d'un logiciel tiers est une usurpation,
+ * même consentie et même chez soi : elle doit être un geste explicite, pas un effet de bord d'une
+ * mise à jour. C'est aussi ce qui garantit qu'une installation existante ne change pas de
+ * comportement en passant sur cette version.
+ *
+ * ## Le port 80, contrainte non négociable
+ *
+ * Le SDK construit ses URL en `http://<ip>/…` — **sans port**. Une application cherchera donc
+ * l'appareil sur le port 80 et nulle part ailleurs. Tant que lan-server écoute sur 3000, aucune
+ * application ne le trouvera d'elle-même : il faut écouter sur 80, ou rediriger. On le dit au
+ * démarrage plutôt que de laisser chercher.
+ */
+const PROXY = {
+  actif: /^(1|true|oui|on)$/i.test(process.env.PROXY_APPS ?? ""),
+  registre: nouveauRegistre(),
+  /** Sondes de récupération des commandes, une par application établie. */
+  sondes: new Map(),
+};
+
+/** L'intervalle auquel nous allons chercher les commandes d'une application. */
+const PERIODE_SONDE_APP = 2000;
+
+const appsEtablies = () => [...PROXY.registre.apps.values()].filter((a) => a.etat === "etablie");
+
+/**
+ * Quelle machine une application veut-elle piloter ?
+ *
+ * Le `POST local_reg.json` porte `?dsn=` — l'app l'ajoute au premier enregistrement
+ * (`AylaLanModule.sendLocalRegistration`, branche `!_isActive`). C'est une aubaine : c'est la
+ * seule fois où le protocole nous dit explicitement à qui l'application croit parler, donc la
+ * seule occasion de refuser une demande qui ne nous concerne pas. Le `PUT` n'en porte pas, mais
+ * il suit toujours un `POST`, donc l'application est déjà rattachée.
+ */
+function machinePourApp(dsn) {
+  if (dsn) {
+    const m = machineList().find((x) => x.dsn && x.dsn === dsn);
+    return m ?? null;
+  }
+  // Sans DSN, une seule machine tranche sans ambiguïté ; plusieurs, non — et deviner reviendrait
+  // à relayer des commandes vers la mauvaise cafetière.
+  return MACHINES.size === 1 ? machineList()[0] : null;
+}
+
+/**
+ * Ouvre la session chiffrée VERS une application, dans le rôle de l'appareil.
+ *
+ * C'est le miroir exact de ce que la machine nous fait subir, et cette symétrie n'est pas une
+ * image : `makeLanSession` est le même code, avec `role: "device"` au lieu de `"client"`. Ce qui
+ * change de main, ce sont les clés d'émission — voir `src/lib/lansession.mjs`.
+ *
+ * Nous présentons le `key_id` et la clé LAN de la **vraie** machine : c'est ce qui fait tenir la
+ * supercherie, l'application ayant obtenu la même clé du cloud pour ce DSN.
+ */
+async function ouvrirSessionApp(m, app) {
+  try {
+    const random1 = token(16);
+    const time1 = String(Math.floor(Date.now() / 1000));
+    const { random2, time2 } = await echangeClesVersApp({
+      ip: app.ip, port: app.port, uri: app.uri, keyId: m.lanKeyId, random1, time1,
+    });
+    const session = makeLanSession({ lanKey: m.lanKey, random1, random2, time1, time2, role: "device" });
+    etablir(PROXY.registre, app, session, Date.now());
+    L("out", `app ${app.id} (${app.ip}:${app.port}) : session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, m);
+    armerSondeApp(m, app);
+  } catch (e) {
+    app.dernierMotif = "echecEchange";
+    refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
+    L("out", `app ${app.id} (${app.ip}:${app.port}) : échange de clés échoué — ${e.message}`, m);
+  }
+}
+
+/**
+ * Va chercher, périodiquement, ce que l'application a à nous demander.
+ *
+ * L'appareil est le CLIENT de ce côté-ci : c'est lui qui visite `commands.json`. Nous rejouons
+ * donc la cadence de la machine plutôt que d'inventer un mécanisme de notification — l'objectif
+ * est que l'application ne puisse pas distinguer notre comportement du sien.
+ */
+function armerSondeApp(m, app) {
+  desarmerSondeApp(app);
+  const timer = setInterval(() => { sonderApp(m, app).catch(() => {}); }, PERIODE_SONDE_APP);
+  timer.unref?.();
+  PROXY.sondes.set(app.id, timer);
+}
+
+function desarmerSondeApp(app) {
+  const t = PROXY.sondes.get(app.id);
+  if (t) clearInterval(t);
+  PROXY.sondes.delete(app.id);
+}
+
+/** Une visite : on récupère au plus un bloc de commandes, on l'analyse, on l'exécute. */
+async function sonderApp(m, app) {
+  if (app.etat !== "etablie" || !app.session) return;
+  let rep;
+  try {
+    rep = await httpJson({ ip: app.ip, port: app.port, path: `${app.uri}/commands.json`, method: "GET", timeout: 4000 });
+  } catch {
+    // Une application qui ne répond plus n'est pas une erreur à journaliser toutes les deux
+    // secondes : c'est un téléphone verrouillé. `expirer()` s'en occupe, une fois.
+    return;
+  }
+  if (rep.status !== 200 || !rep.corps.trim()) return;
+  toucher(app, Date.now());
+  let clair;
+  try {
+    clair = app.session.decapsulate(JSON.parse(rep.corps));
+  } catch (e) {
+    L("in", `app ${app.id} : bloc de commandes illisible (${e.message})`, m);
+    return;
+  }
+  for (const intention of analyserCommandes(clair)) await executerPourApp(m, app, intention);
+}
+
+/**
+ * Traduit ce qu'une application demande en travail pour la file de la machine.
+ *
+ * ⚠️ **Une écriture relayée atteint une vraie cafetière.** C'est le but — l'utilisateur commande
+ * depuis son application officielle — mais cela vaut d'être écrit noir sur blanc : ce chemin peut
+ * lancer une préparation, écrire une recette dans un profil, changer un réglage. D'où la
+ * journalisation systématique, et d'où l'existence de la liste des applications sur `/pilotage` :
+ * on doit pouvoir voir qui a commandé quoi.
+ *
+ * Les commandes passent par la **file**, comme tout le reste. Rang `COMMANDE` : une demande
+ * d'application vaut une demande d'interface, ni plus ni moins, et l'ordonnanceur garantit
+ * qu'elles ne se marchent pas dessus — ce que le créneau unique de la machine, lui, ne garantit
+ * pas du tout.
+ */
+async function executerPourApp(m, app, intention) {
+  switch (intention.type) {
+    case "vide":
+      return;
+    case "finSession":
+      L("in", `app ${app.id} : fin de session demandée`, m);
+      retirerApp(app, m, "départ");
+      return;
+    case "lecture": {
+      app.commandes++;
+      L("in", `app ${app.id} → lecture ${intention.nom}`, m);
+      startImport(m, [intention.nom], 30000, {
+        label: `App ${app.id} · lecture ${intention.nom}`,
+        rang: RANG.LECTURE,
+        meta: { app: app.id },
+        i18n: { k: "appRead", p: { app: app.id, prop: intention.nom } },
+      });
+      return;
+    }
+    case "ecriture": {
+      // Seules les propriétés de transport de CETTE machine sont relayées. Une application qui
+      // écrirait autre chose se verrait ignorée plutôt que devinée : `m.send` est la propriété
+      // qui porte les trames ECAM, et c'est la seule dont nous sachions ce qu'elle déclenche.
+      if (intention.nom !== m.send) {
+        L("in", `app ${app.id} → écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)`, m);
+        return;
+      }
+      app.commandes++;
+      L("in", `app ${app.id} → ${describeFrame(intention.valeur)}`, m);
+      startProgram(m, intention.valeur, `App ${app.id} · ${describeFrame(intention.valeur)}`, 75000, "monitor", {
+        rang: RANG.COMMANDE,
+        meta: { app: app.id },
+        i18n: { k: "appWrite", p: { app: app.id } },
+      });
+      // L'accusé n'est dû que si la propriété portait un `id` : sa présence EST la demande.
+      // L'application attend dessus, et son absence lui fait conclure à un échec.
+      if (intention.ackId) await pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
+      return;
+    }
+    default:
+      L("in", `app ${app.id} : demande non reconnue — ${JSON.stringify(intention).slice(0, 160)}`, m);
+  }
+}
+
+/** Pousse un corps déjà sérialisé vers une application, chiffré dans SON flux. */
+async function pousserVersApp(m, app, corpsJson) {
+  if (app.etat !== "etablie" || !app.session) return false;
+  try {
+    await httpJson({
+      ip: app.ip, port: app.port, path: `${app.uri}/property/datapoint.json`,
+      method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
+    });
+    toucher(app, Date.now());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rediffuse à toutes les applications ce que la machine vient de nous pousser.
+ *
+ * C'est ce qui fait la différence entre un multiplexeur et un simple partage de créneau : chaque
+ * application reçoit l'état comme si elle était seule branchée sur l'appareil. Une seule lecture
+ * réelle, N destinataires — alors que sans nous, une seule application pouvait exister à la fois.
+ *
+ * ⚠️ Chaque flux AES est indépendant : `encapsulate` est appelé une fois par application, jamais
+ * mutualisé. Réutiliser un chiffré d'une session dans une autre ne produirait pas une erreur mais
+ * du bruit, et désynchroniserait le flux du destinataire pour de bon.
+ */
+function diffuserAuxApps(m, name, value) {
+  if (!PROXY.actif) return;
+  const cibles = appsEtablies().filter((a) => a.machineId === m.id);
+  if (!cibles.length) return;
+  const corps = paquetDatapoint(m.dsn ?? "", name, value);
+  for (const app of cibles) {
+    app.datapoints++;
+    pousserVersApp(m, app, corps).catch(() => {});
+  }
+}
+
+/** Retire une application : sonde désarmée d'abord, sinon elle continuerait sur un objet oublié. */
+function retirerApp(app, m = null, motif = "retirée") {
+  desarmerSondeApp(app);
+  oublier(PROXY.registre, app);
+  L("sys", `app ${app.id} (${app.ip}:${app.port}) : ${motif}`, m);
+}
+
+/** Balayage des applications muettes. Le même raisonnement que le coupe-circuit de la file. */
+setInterval(() => {
+  if (!PROXY.actif) return;
+  for (const app of expirer(PROXY.registre, Date.now())) {
+    desarmerSondeApp(app);
+    L("sys", `app ${app.id} (${app.ip}:${app.port}) : muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`);
+  }
+}, 10000).unref?.();
+
+/**
+ * `GET /regtoken.json` — la seule chose que le module de la machine sert hors mode AP, et donc la
+ * première que touche quiconque cherche à savoir qui répond ici. Nous rendons la même forme, avec
+ * le vrai DSN : c'est ce qui nous fait passer pour l'appareil.
+ */
+function handleAppRegtoken(req, res) {
+  const m = defaultMachine();
+  if (!m?.dsn) {
+    refuser(PROXY.registre, { from: peerAddress(req), motif: "dsnInconnu" }, Date.now());
+    return raw(res, JSON.stringify({ error: "no dsn" }), 404);
+  }
+  L("in", `app ${peerAddress(req)} : regtoken demandé, nous répondons ${m.dsn}`, m);
+  return raw(res, JSON.stringify({ host_symname: m.dsn, registration_type: "Same-LAN" }));
+}
+
+/**
+ * `POST` / `PUT` / `DELETE /local_reg.json` — le créneau, vu de l'autre côté.
+ *
+ * Et voilà la différence de fond avec la machine : **nous n'avons pas un créneau, nous avons un
+ * registre.** C'est toute la fonctionnalité, en une structure de données.
+ */
+async function handleAppReg(req, res) {
+  const from = peerAddress(req);
+  const body = await readBody(req);
+
+  if (req.method === "DELETE") {
+    // Le corps porte `delete_session` (voir `DeleteSessionCommand`), mais la méthode suffit.
+    const app = [...PROXY.registre.apps.values()].find((a) => a.ip === from);
+    if (app) retirerApp(app, machineById(app.machineId), "session fermée par l'application");
+    return raw(res, JSON.stringify({}), 200);
+  }
+  if (req.method !== "POST" && req.method !== "PUT") return raw(res, JSON.stringify({ error: "method" }), 405);
+
+  let reg;
+  try {
+    reg = JSON.parse(body.toString("utf8")).local_reg;
+  } catch {
+    refuser(PROXY.registre, { from, motif: "corpsIllisible" }, Date.now());
+    return raw(res, JSON.stringify({ error: "body" }), 400);
+  }
+  if (!reg?.port) {
+    refuser(PROXY.registre, { from, motif: "corpsIllisible", detail: "port absent" }, Date.now());
+    return raw(res, JSON.stringify({ error: "body" }), 400);
+  }
+
+  const dsn = new URL(req.url, "http://x").searchParams.get("dsn");
+  const existante = PROXY.registre.apps.get(cleApp(reg.ip ?? from, reg.port));
+  const m = existante ? machineById(existante.machineId) : machinePourApp(dsn);
+  if (!m) {
+    // Refus explicite plutôt que rattachement au hasard : relayer vers la mauvaise cafetière est
+    // exactement le genre d'erreur qu'on ne rattrape pas après coup.
+    refuser(PROXY.registre, { from, motif: "dsnInconnu", detail: dsn }, Date.now());
+    L("in", `app ${from} : enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`);
+    return raw(res, JSON.stringify({ error: "unknown dsn" }), 412);
+  }
+  if (!m.lanKey.length) {
+    refuser(PROXY.registre, { from, motif: "sansCle", detail: m.id }, Date.now());
+    L("in", `app ${from} : enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, m);
+    return raw(res, JSON.stringify({ error: "no key" }), 412);
+  }
+
+  const { app, nouvelle } = annoncer(
+    PROXY.registre,
+    { ip: reg.ip ?? from, port: reg.port, uri: reg.uri ?? "/local_lan", notify: reg.notify, keyId: m.lanKeyId },
+    Date.now(),
+  );
+  app.machineId = m.id;
+  // 202, comme la machine : c'est ce que l'app attend d'un `local_reg` accepté.
+  raw(res, JSON.stringify({}), 202);
+
+  if (nouvelle) {
+    L("in", `app ${app.id} : ${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})`, m);
+    // L'échange de clés part APRÈS la réponse : l'application n'a pas encore fini de traiter son
+    // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
+    // prêt à recevoir. La machine fait exactement pareil avec nous.
+    ouvrirSessionApp(m, app).catch(() => {});
+  } else if (reg.notify) {
+    // `notify: 1` veut dire « j'ai quelque chose pour toi ». Aller le chercher tout de suite,
+    // plutôt que d'attendre le prochain tour de sonde, est ce qui rend l'app réactive.
+    sonderApp(m, app).catch(() => {});
+  }
+}
+
 // Une réponse de la machine peut porter {property:{...}}, {properties:[...]} ou un
 // accusé de commande. On collecte donc tous les couples name/value à n'importe quelle
 // profondeur, avec repli regex si le JSON est tronqué.
@@ -1169,6 +1485,10 @@ function handleProperty(m, name, value) {
   // interroge. Le noter AVANT tout traitement, sinon un décodage raté ferait passer une machine
   // bavarde pour une machine muette.
   contactMachine(m.file, Date.now());
+  // Rediffusion aux applications branchées, AVANT tout décodage : ce que nous savons décoder
+  // n'a rien à voir avec ce qu'elles savent lire, et filtrer ici les priverait de propriétés
+  // parfaitement valides que nous ignorons. Sans proxy actif, c'est un retour immédiat.
+  diffuserAuxApps(m, name, value);
   if (name.startsWith(m.mon)) {
     // Isolé : un monitor illisible ne doit pas interrompre le traitement des AUTRES propriétés
     // portées par le même datapoint.
@@ -2819,6 +3139,28 @@ async function handleApi(req, res) {
   // Le flux d'évènements est global, et surtout : il ne doit pas déclencher la résolution du DSN
   // ci-dessous, qui sonde la machine pendant 4 s. Un abonnement n'a aucune raison de faire ça.
   if (url === "/api/events" && req.method === "GET") return sseSubscribe(req, res);
+  /**
+   * Les applications branchées sur ce serveur. Global comme la liste des machines, et traité
+   * ici pour la même raison : une application n'appartient pas à la machine qu'on regarde, et
+   * surveiller des usurpations n'a de sens que si la vue est complète.
+   *
+   * **Aucune session n'en sort** — `vueApps()` ne rend que des métadonnées. Une session porte
+   * des clés dérivées de la clé LAN ; la règle « aucun endpoint ne renvoie la clé » vaut aussi
+   * pour ce qui en descend.
+   */
+  if (url === "/api/apps" && req.method === "GET") {
+    const v = vueApps(PROXY.registre, Date.now());
+    return raw(res, JSON.stringify({
+      actif: PROXY.actif,
+      // Le port dit pourquoi rien n'arrive quand rien n'arrive : une application ne cherche
+      // l'appareil que sur le port 80.
+      port: CFG.port,
+      portAttendu: PORT_ATTENDU_PAR_APP,
+      portOk: CFG.port === PORT_ATTENDU_PAR_APP,
+      ...v,
+      apps: v.apps.map((a) => ({ ...a, machine: a.machineId ?? null })),
+    }));
+  }
 
   // À quelle machine cette requête s'adresse-t-elle ? Un identifiant inconnu est refusé, jamais
   // remplacé en silence par la machine par défaut.
@@ -3997,6 +4339,10 @@ createServer((req, res) => {
     L("in", `requête OTA${m ? "" : ` d'un appareil non reconnu (${peerAddress(req)})`} : ${req.method} ${u}`, m);
     return raw(res, JSON.stringify({ ota: "none" }), 404);
   }
+  // Les deux endpoints que sert une VRAIE machine à un client local. Ils n'existent que si le
+  // multiplexeur est allumé : voir PROXY, et la raison pour laquelle il est éteint par défaut.
+  if (PROXY.actif && u.split("?")[0] === "/regtoken.json") return handleAppRegtoken(req, res);
+  if (PROXY.actif && u.split("?")[0] === "/local_reg.json") return handleAppReg(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   if (u.startsWith("/local_lan/")) return handleLan(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   if (u.startsWith("/api/")) return handleApi(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   return handle(req, res);
@@ -4005,6 +4351,13 @@ createServer((req, res) => {
   console.log(`De'Longhi LAN server (custom${DEV ? ", dev/HMR" : ""}) sur http://0.0.0.0:${CFG.port}  — ${liste.length} machine${liste.length > 1 ? "s" : ""}`);
   for (const m of liste) {
     console.log(`  ${m.id}${m.label ? ` « ${m.label} »` : ""} : adresse ${m.ip ?? "à configurer"}, DSN ${m.dsn ?? "à découvrir"}, clé LAN ${m.lanKey.length ? `key_id ${m.lanKeyId}` : "absente"}`);
+  }
+  if (PROXY.actif) {
+    L("sys", `multiplexeur d'applications ACTIF : ce serveur répond à /regtoken.json et /local_reg.json comme le ferait la machine`);
+    if (CFG.port !== PORT_ATTENDU_PAR_APP) {
+      // Dit une fois, fort : sans cela on cherche longtemps pourquoi aucune application ne vient.
+      L("sys", `⚠ nous écoutons sur ${CFG.port}, or une application construit ses URL en http://<ip>/ — donc port ${PORT_ATTENDU_PAR_APP}, et nulle part ailleurs. Écouter sur ${PORT_ATTENDU_PAR_APP} (SERVER_PORT) ou rediriger, sinon aucune app ne nous trouvera.`);
+    }
   }
   const problemeServerIp = serverIpProblem();
   if (problemeServerIp) {
