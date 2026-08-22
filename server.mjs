@@ -1310,6 +1310,14 @@ function machinePourApp(dsn) {
  * supercherie, l'application ayant obtenu la même clé du cloud pour ce DSN.
  */
 async function ouvrirSessionApp(m, app) {
+  // ⚠️ **Un seul échange en vol par application**, même idiome que `app.sondeEnCours` et pour la
+  // même raison : deux échanges concurrents produisent deux flux AES dont un seul survit à
+  // `etablir`, tandis que l'application peut très bien retenir l'autre. Rien ne lève d'erreur —
+  // elle obtiendrait des octets plausibles et illisibles, et sa session « cesserait de répondre ».
+  // Le cas est atteignable : l'échange initial dure jusqu'à son délai (5 s mesurées sur un vrai
+  // téléphone) et une annonce peut tomber pendant ce temps — la voie `nouvelle` ne posant pas
+  // `relanceA`, le verrou de 15 s ne la couvrait pas.
+  app.echangeEnCours = true;
   try {
     const random1 = token(16);
     const time1 = String(Math.floor(Date.now() / 1000));
@@ -1324,6 +1332,8 @@ async function ouvrirSessionApp(m, app) {
     app.dernierMotif = "echecEchange";
     refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
     LA("out", `échange de clés échoué — ${e.message}`, app, m);
+  } finally {
+    app.echangeEnCours = false;
   }
 }
 
@@ -1733,6 +1743,7 @@ const DELAI_RELANCE_APP = 15_000;
 function reprendreSessionApp(m, app, motif = null) {
   // Jamais sur un flux vivant : c'est `relancerSessionApp` qui traite ce cas, et lui seul.
   if (app.etat === "etablie" && app.session) return false;
+  if (app.echangeEnCours) return false;
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return false;
   app.relanceA = maintenant;
@@ -1743,6 +1754,7 @@ function reprendreSessionApp(m, app, motif = null) {
 }
 
 function relancerSessionApp(m, app, motif = "flux illisible") {
+  if (app.echangeEnCours) return;
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
   app.relanceA = maintenant;
