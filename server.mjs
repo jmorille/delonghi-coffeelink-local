@@ -1737,11 +1737,34 @@ async function handleAppReg(req, res) {
     Date.now(),
   );
   app.machineId = m.id;
+  /**
+   * ⚠️ **Le protocole ne transporte AUCUNE identité d'application.** `LocalReg` du SDK a
+   * exactement cinq champs — `ip`, `key`, `notify`, `port`, `uri` — et `key` n'est renseigné qu'en
+   * appairage (clé publique d'un appareil en cours de configuration). Le `key_id` de l'échange de
+   * clés est celui de la MACHINE, donc identique pour toutes les applications qui lui parlent. Ni
+   * nom, ni identifiant d'instance, ni identifiant d'utilisateur.
+   *
+   * Le seul signal supplémentaire disponible est **hors protocole** : l'en-tête `User-Agent` que
+   * le client HTTP de l'application met sur ses propres requêtes. Il ne distingue pas deux
+   * instances l'une de l'autre — deux téléphones avec la même version portent le même — mais il
+   * distingue une *nature* de client : l'application officielle, un script, notre `faux-app.mjs`.
+   * C'est précisément ce que la moitié « surveillance des usurpations » de la page réclame, et
+   * cela ne coûte rien : l'en-tête est déjà là, on le jetait.
+   *
+   * Borné, et traité comme la donnée non fiable qu'il est : n'importe qui peut écrire ce qu'il
+   * veut dedans. Il documente, il n'authentifie pas.
+   */
+  const ua = String(req.headers["user-agent"] ?? "").slice(0, 120) || null;
+  if (ua && ua !== app.ua) {
+    const avant = app.ua;
+    app.ua = ua;
+    if (avant) LA("in", `client changé — ${avant} → ${ua}`, app, m);
+  }
   // 202, comme la machine : c'est ce que l'app attend d'un `local_reg` accepté.
   raw(res, JSON.stringify({}), 202);
 
   if (nouvelle) {
-    LA("in", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})`, app, m);
+    LA("in", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})${ua ? ` · client ${ua}` : " · client anonyme"}`, app, m);
     // L'échange de clés part APRÈS la réponse : l'application n'a pas encore fini de traiter son
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.

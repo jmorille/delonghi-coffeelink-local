@@ -91,6 +91,13 @@ export function annoncer(reg, { ip, port, uri, notify, keyId }, maintenant) {
     commandes: 0,
     /** Échecs de contact CONSÉCUTIFS. Remis à zéro par le moindre succès (voir `toucher`). */
     echecs: 0,
+    /**
+     * `User-Agent` du client, quand il en met un. **Hors protocole et non fiable** : `local_reg`
+     * ne transporte aucune identité (voir `handleAppReg`), et n'importe qui peut écrire ce qu'il
+     * veut dans cet en-tête. Il documente la NATURE du client — application officielle, script,
+     * notre faux-app — il n'authentifie personne et ne sépare pas deux instances identiques.
+     */
+    ua: null,
     dernierMotif: null,
   };
   reg.apps.set(cle, app);
@@ -191,6 +198,7 @@ export function vue(reg, maintenant) {
     port: a.port,
     etat: a.etat,
     keyId: a.keyId,
+    ua: a.ua ?? null,
     notify: a.notify,
     creeA: a.creeA,
     vueA: a.vueA,

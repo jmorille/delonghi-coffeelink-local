@@ -312,8 +312,28 @@ pas celle qu'on devine à la lecture des trames :
 |---|---|---|
 | **lecture** | `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA` | renvoie un `data_response` |
 | **lecture (monitor)** | `0x75`, `0x60`, `0x70` | pousse un datapoint `d302_monitor` — **pas** de `data_response` |
-| **action** | `0x83`, `0x84`, `0xA9`, `0xB9` | ne répond **rien** |
+| **action** | `0x83`, `0x84`, `0xB9` | ne répond **rien** |
+| **action acquittée** | `0xA9` | répond `D0 07 A9 F0 <profil> <statut> <crc>` |
 | **écriture** | `0x90`, `0xA5`, `0xAB`, `0xAD`, `0xBB` | ne répond **rien** non plus |
+
+> ⚠️ **`0xA9` ACQUITTE, et ce document affirmait le contraire.** Relevé deux fois, à deux sessions
+> distinctes, chaque fois environ une seconde après que la trame a été servie :
+>
+> ```
+> →  0d 06 a9 f0 01 d7 c0          demande : profil 1
+> ←  d0 07 a9 f0 01 00 3b 3c       réponse : profil 1, statut 00
+> ```
+>
+> La réponse reprend le profil demandé à l'octet 4 et porte un second octet à `00` — vu à `00`
+> dans les deux relevés, donc sa signification reste **inconnue** : ne pas l'appeler « statut »
+> ailleurs que par commodité tant qu'une valeur non nulle n'aura pas été observée.
+>
+> Conséquence pratique, et elle est coûteuse : une sélection de profil rangée parmi les actions
+> « sans réponse » est attendue par **fenêtre de présence**. Mesuré le 2026-08-22 — trame servie à
+> 16:48:16, acquittée à 16:48:17, tâche close à 16:49:31 : **quatre-vingts secondes** de présence
+> maintenue pour une commande confirmée en une. Pendant tout ce temps la file est occupée et le
+> keep-alive tourne à 2,5 s. La preuve d'exécution existe, elle n'était simplement pas lue.
+
 
 > ⚠️ **La ligne « monitor » a été séparée le 2026-08-22, et c'est une correction, pas une nuance.**
 > Ce document rangeait `0x75` avec les lectures qui renvoient un `data_response`. C'est faux :
