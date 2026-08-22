@@ -116,7 +116,19 @@ const serveur = createServer(async (req, res) => {
     } catch (e) {
       console.log(`  ← datapoint ILLISIBLE (${e.message}) — mauvais sens de clés ?`);
     }
-    return repondre(session ? session.encapsulate("{}") : "{}");
+    // ⚠️ **Corps VIDE, et surtout pas un `encapsulate("{}")`.** C'est ce que fait le vrai SDK :
+    // `AylaLanModule.handlePropertyUpdateRequest` rend `newFixedLengthResponse(getResponseCode(),
+    // MIME_JSON, "")`. Chiffrer une réponse ici avançait le flux AES sortant de la fausse app d'un
+    // message que le serveur, lui, ne déchiffrait jamais — il jette le corps de son POST, comme le
+    // protocole l'y autorise. Le flux entrant du serveur restait donc un message en arrière, et le
+    // PREMIER bloc du prochain `commands.json` sortait en charabia, la suite parfaitement lisible :
+    // en CBC, un chaînage faux ne salit que le bloc de tête, les suivants se recalent seuls sur le
+    // chiffré qui les précède dans le même message. D'où cette signature très reconnaissable,
+    // `…a":{}}` au bout d'octets illisibles — exactement celle qu'on avait vue avec la vraie
+    // application, mais pour une TOUTE AUTRE cause (deux sondes concurrentes, corrigée depuis).
+    // Une démonstration infidèle sur ce point précis fabriquait donc le symptôme qu'elle était
+    // censée aider à débusquer : le pire service qu'un banc d'essai puisse rendre.
+    return repondre("", 200);
   }
   repondre("{}", 404);
 });

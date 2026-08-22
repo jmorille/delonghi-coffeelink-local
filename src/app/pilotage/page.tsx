@@ -922,6 +922,33 @@ export default function Dashboard() {
                 ))}
               </dl>
             )}
+
+            {/* Le journal des applications, et non celui de la machine. La séparation est la
+                raison d'être du bloc : une application branchée bavarde — réannonces, sondes,
+                rediffusions d'état — et ce trafic, versé dans le journal principal, en chassait
+                en quelques secondes ce qu'on y cherche, à savoir ce que la cafetière a répondu.
+                Il vit ici, sous la liste qu'il raconte, plutôt que dans une section à lui : on
+                lit « qui est branché » puis « ce qu'ils ont dit » sans changer de regard. */}
+            <h3>{tapps("journalHeading")}</h3>
+            {!apps.journal?.length ? (
+              <p className="sub">{tapps("journalNone")}</p>
+            ) : (
+              <div className="log">
+                {apps.journal.map((e: any, i: number) => (
+                  <div key={e.n ?? i} className={e.dir}>
+                    [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
+                    {/* L'identifiant est une COLONNE, pas un préfixe de message : c'est ce qui
+                        permet de suivre un téléphone parmi trois. Pour un refus, il n'y a pas
+                        encore d'entrée au registre, et c'est l'adresse qui tient la place. */}
+                    {e.app ? ` · ${e.app}` : ""} · {e.msg}
+                    {/* Le serveur replie les lignes consécutives identiques (voir `LA()`), et une
+                        rediffusion d'état se répète toutes les 1 à 3 s pendant une préparation :
+                        sans ce compte, vingt envois se liraient comme un seul. */}
+                    {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>

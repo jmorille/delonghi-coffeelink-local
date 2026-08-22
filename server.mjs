@@ -167,6 +167,44 @@ function L(dir, msg, m = null) {
 }
 
 /**
+ * Le journal des APPLICATIONS — le second, et il est séparé pour une raison de lecture.
+ *
+ * Une application branchée bavarde : elle se réannonce, elle sonde, et nous lui rediffusons
+ * chaque état que la machine pousse. Versé dans le journal principal, ce trafic en chasse en
+ * quelques secondes ce qu'on vient y chercher — ce que la cafetière, elle, a répondu.
+ *
+ * **La frontière : le journal principal garde ce qui ATTEINT l'appareil, celui-ci garde la
+ * conversation avec les téléphones.** Une commande relayée paraît donc des deux côtés, sous
+ * deux angles : ici « a1 a demandé ceci », là-bas « la tâche part vers la machine ». Ce n'est
+ * pas une redite : la première ligne dit qui a voulu, la seconde dit ce qu'il en est advenu.
+ *
+ * Mêmes règles que `L()`, et pour les mêmes raisons : repli des lignes consécutives identiques
+ * — le compte survit dans `repetitions` et ne doit jamais se perdre au rendu — et `sseTouch()`,
+ * sans quoi la page ne saurait pas qu'il y a du neuf. Une différence : l'identifiant de
+ * l'application est une COLONNE, pas un préfixe de message, ce qui permet de suivre un
+ * téléphone parmi trois. `app` accepte une entrée du registre ou une simple adresse, parce que
+ * les refus arrivent avant qu'une entrée existe — et ce sont eux qu'on veut le plus voir.
+ */
+const LOG_APPS = [];
+let logAppSeq = 0;
+function LA(dir, msg, app = null, m = null) {
+  const qui = app?.id ?? app ?? null;
+  const tete = LOG_APPS[0];
+  if (tete && tete.msg === msg && tete.dir === dir && tete.app === qui) {
+    tete.repetitions = (tete.repetitions ?? 1) + 1;
+    tete.t = Date.now();
+    tete.n = ++logAppSeq;
+    sseTouch();
+    console.log(now(), "APP", `${qui ?? "?"} · ${msg} (×${tete.repetitions})`);
+    return;
+  }
+  LOG_APPS.unshift({ n: ++logAppSeq, t: Date.now(), dir, msg, app: qui, m: m?.id ?? null });
+  if (LOG_APPS.length > 200) LOG_APPS.pop();
+  sseTouch();
+  console.log(now(), "APP", `${qui ?? "?"} · ${msg}`);
+}
+
+/**
  * État d'exécution d'UNE machine. Tout ce qui était un singleton de processus vit ici : la
  * session chiffrée, le programme en cours, la file de lecture, le dernier monitor, le profil
  * actif. Deux cafetières ont deux sessions et deux files — les confondre enverrait la commande
@@ -1245,12 +1283,12 @@ async function ouvrirSessionApp(m, app) {
     });
     const session = makeLanSession({ lanKey: m.lanKey, random1, random2, time1, time2, role: "device" });
     etablir(PROXY.registre, app, session, Date.now());
-    L("out", `app ${app.id} (${app.ip}:${app.port}) : session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, m);
+    LA("out", `session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, app, m);
     armerSondeApp(m, app);
   } catch (e) {
     app.dernierMotif = "echecEchange";
     refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
-    L("out", `app ${app.id} (${app.ip}:${app.port}) : échange de clés échoué — ${e.message}`, m);
+    LA("out", `échange de clés échoué — ${e.message}`, app, m);
   }
 }
 
@@ -1312,7 +1350,7 @@ async function sonderAppSerialise(m, app) {
   try {
     clair = app.session.decapsulate(JSON.parse(rep.corps));
   } catch (e) {
-    L("in", `app ${app.id} : bloc de commandes illisible (${e.message})`, m);
+    LA("in", `bloc de commandes illisible (${e.message})`, app, m);
     return;
   }
   for (const intention of analyserCommandes(clair)) await executerPourApp(m, app, intention);
@@ -1337,12 +1375,12 @@ async function executerPourApp(m, app, intention) {
     case "vide":
       return;
     case "finSession":
-      L("in", `app ${app.id} : fin de session demandée`, m);
+      LA("in", "fin de session demandée", app, m);
       retirerApp(app, m, "départ");
       return;
     case "lecture": {
       app.commandes++;
-      L("in", `app ${app.id} → lecture ${intention.nom}`, m);
+      LA("in", `lecture ${intention.nom}`, app, m);
       startImport(m, [intention.nom], 30000, {
         label: `App ${app.id} · lecture ${intention.nom}`,
         rang: RANG.LECTURE,
@@ -1356,11 +1394,11 @@ async function executerPourApp(m, app, intention) {
       // écrirait autre chose se verrait ignorée plutôt que devinée : `m.send` est la propriété
       // qui porte les trames ECAM, et c'est la seule dont nous sachions ce qu'elle déclenche.
       if (intention.nom !== m.send) {
-        L("in", `app ${app.id} → écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)`, m);
+        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)`, app, m);
         return;
       }
       app.commandes++;
-      L("in", `app ${app.id} → ${describeFrame(intention.valeur)}`, m);
+      LA("in", describeFrame(intention.valeur), app, m);
       // Une commande relayée qui vise un profil DÉPLACE le profil actif de l'appareil, au même
       // titre que si nous l'avions envoyée nous-mêmes. On adopte donc la valeur ici — au moment de
       // la mise en file, comme le fait `/api/command` — sans quoi nos pages continueraient
@@ -1372,7 +1410,12 @@ async function executerPourApp(m, app, intention) {
         m.activeProfile = profil;
         m.activeProfileConfirmed = true;
         rememberActiveProfile(m);
+        // Des DEUX côtés, et c'est délibéré : le changement de profil actif est un état de
+        // l'APPAREIL, donc il appartient à la chronologie machine ; et c'est un tiers qui l'a
+        // décidé, donc il appartient aussi à celle des applications. Le retirer du journal
+        // principal ferait disparaître un changement d'état réel du journal qui le décrit.
         L("sys", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
+        LA("sys", `profil ${profil} imposé${avant && avant !== profil ? ` (était ${avant})` : ""}`, app, m);
       }
       startProgram(m, intention.valeur, `App ${app.id} · ${describeFrame(intention.valeur)}`, 75000, "monitor", {
         rang: RANG.COMMANDE,
@@ -1385,7 +1428,7 @@ async function executerPourApp(m, app, intention) {
       return;
     }
     default:
-      L("in", `app ${app.id} : demande non reconnue — ${JSON.stringify(intention).slice(0, 160)}`, m);
+      LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 160)}`, app, m);
   }
 }
 
@@ -1442,6 +1485,11 @@ function diffuserAuxApps(m, name, value) {
   const corps = paquetDatapoint(m.dsn ?? "", name, value);
   for (const app of cibles) {
     app.datapoints++;
+    // Le cœur du multiplexeur — une lecture réelle, N destinataires — n'était visible nulle
+    // part : ni au journal, ni ailleurs qu'en compteur cumulé. Il l'est ici, et le repli des
+    // lignes identiques suffit à contenir une préparation, où la machine pousse toutes les 1 à
+    // 3 secondes. C'est aussi la seule trace de ce qu'une application a REÇU de nous.
+    LA("out", `état rediffusé · ${name}`, app, m);
     pousserVersApp(m, app, corps).catch(() => {});
   }
 }
@@ -1470,7 +1518,7 @@ function constaterEchecApp(m, app) {
 function retirerApp(app, m = null, motif = "retirée") {
   desarmerSondeApp(app);
   oublier(PROXY.registre, app);
-  L("sys", `app ${app.id} (${app.ip}:${app.port}) : ${motif}`, m);
+  LA("sys", motif, app, m);
 }
 
 /** Balayage des applications muettes. Le même raisonnement que le coupe-circuit de la file. */
@@ -1478,7 +1526,7 @@ setInterval(() => {
   if (!PROXY.actif) return;
   for (const app of expirer(PROXY.registre, Date.now())) {
     desarmerSondeApp(app);
-    L("sys", `app ${app.id} (${app.ip}:${app.port}) : muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`);
+    LA("sys", `muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`, app);
   }
 }, 10000).unref?.();
 
@@ -1516,12 +1564,12 @@ async function handleAppRegtoken(req, res) {
     else await probeRegtoken(m).catch(() => {});            // premier appel : on n'a pas le choix
   }
   if (m.regtokenBrut) {
-    L("in", `app ${peerAddress(req)} : regtoken demandé, nous resservons celui de la machine (${m.dsn})`, m);
+    LA("in", `regtoken demandé, nous resservons celui de la machine (${m.dsn})`, peerAddress(req), m);
     return raw(res, m.regtokenBrut.body, 200, "text/json");
   }
   // Repli : la machine est injoignable et nous n'avons jamais vu sa réponse. On sert le minimum,
   // et on le DIT — une application qui refuserait ici doit être diagnosticable.
-  L("in", `app ${peerAddress(req)} : regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite`, m);
+  LA("in", "regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite", peerAddress(req), m);
   return raw(res, JSON.stringify({ registered: 1, registration_type: "AP-Mode", host_symname: m.dsn }), 200, "text/json");
 }
 
@@ -1562,12 +1610,12 @@ async function handleAppReg(req, res) {
     // Refus explicite plutôt que rattachement au hasard : relayer vers la mauvaise cafetière est
     // exactement le genre d'erreur qu'on ne rattrape pas après coup.
     refuser(PROXY.registre, { from, motif: "dsnInconnu", detail: dsn }, Date.now());
-    L("in", `app ${from} : enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`);
+    LA("in", `enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`, from);
     return raw(res, JSON.stringify({ error: "unknown dsn" }), 412);
   }
   if (!m.lanKey.length) {
     refuser(PROXY.registre, { from, motif: "sansCle", detail: m.id }, Date.now());
-    L("in", `app ${from} : enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, m);
+    LA("in", `enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, from, m);
     return raw(res, JSON.stringify({ error: "no key" }), 412);
   }
 
@@ -1581,7 +1629,7 @@ async function handleAppReg(req, res) {
   raw(res, JSON.stringify({}), 202);
 
   if (nouvelle) {
-    L("in", `app ${app.id} : ${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})`, m);
+    LA("in", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})`, app, m);
     // L'échange de clés part APRÈS la réponse : l'application n'a pas encore fini de traiter son
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.
@@ -3311,6 +3359,9 @@ async function handleApi(req, res) {
       portOk: CFG.port === PORT_ATTENDU_PAR_APP,
       ...v,
       apps: v.apps.map((a) => ({ ...a, machine: a.machineId ?? null })),
+      // Le journal des applications voyage avec la vue qui le décrit, sur l'endpoint que
+      // /pilotage interroge déjà : le tracer ne coûte pas une requête de plus.
+      journal: LOG_APPS.slice(0, 120),
     }));
   }
 

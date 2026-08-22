@@ -1226,6 +1226,43 @@ consecutive identical entries with a `×N` count, same rule as the journal. **No
 leaves `vueApps()`**: a session is derived from the LAN key, so "no endpoint returns the key"
 applies to what descends from it.
 
+**There are TWO journals, and the boundary is the point: the main one keeps what REACHES the
+appliance, `LOG_APPS` keeps the conversation with the phones.** A connected app is chatty — it
+re-announces, it polls, and every state the machine pushes is re-broadcast to each of them; poured
+into the main journal that traffic drives off screen, in seconds, the very lines one opens the page
+for, namely what the coffee machine answered. `LA()` is `L()`'s twin (same folding of consecutive
+identical lines — never drop the `repetitions` count when rendering — same `sseTouch()`, without
+which the page would not know there is anything new), with one difference: the app id is a
+**column**, not a message prefix, which is what lets you follow one phone among three. It accepts a
+registry entry *or* a bare address, because refusals happen before an entry exists — and those are
+the ones you most want to see. It travels on `GET /api/apps`, which `/pilotage` already polls, so
+tracing costs no extra request, and renders inside the same panel, under the list it narrates.
+
+One line is deliberately written to **both**: `app aN a imposé le profil P`. The active profile is
+a state of the *appliance*, so it belongs to the machine's chronology; and a third party decided
+it, so it belongs to the apps' one too. A relayed command therefore appears on both sides under two
+angles — "a1 asked for this" here, "the task leaves for the machine" there — which is not a
+duplicate: the first says who wanted it, the second says what became of it.
+
+Writing that journal is also what finally made the **state re-broadcast** visible: the very heart of
+the multiplexer — one real read, N recipients — was logged nowhere, surviving only as a cumulative
+counter. It is also the only trace of what an application RECEIVED from us.
+
+⚠️ **`scripts/faux-app.mjs` must stay faithful on the response bodies, and one line proves why.** It
+used to answer `datapoint.json` with an `encapsulate("{}")`, where the real SDK returns an **empty**
+body (`AylaLanModule.handlePropertyUpdateRequest` → `newFixedLengthResponse(getResponseCode(),
+MIME_JSON, "")`). That advanced the fake app's outbound AES stream by one message the server never
+decrypted — it discards that POST's body, as the protocol allows — so the server's inbound stream
+stayed one message behind and the **first block** of the next `commands.json` came out as garbage
+while the rest read perfectly: in CBC a wrong chaining value only dirties the leading block, the
+following ones re-align on the ciphertext preceding them inside the same message. Hence the very
+recognisable `…a":{}}` tail after unreadable bytes — **the exact signature seen with the real app,
+but from a completely different cause** (two concurrent polls, fixed since). A bench that is
+unfaithful on precisely one point manufactures the symptom it exists to catch; that is the worst
+service it can render. When a demo run shows a desync, check for a stray `faux-app.mjs` from an
+earlier run first — a process holding port 8888 from before an edit runs the OLD code, and the new
+one dies on `EADDRINUSE` while the old one keeps answering.
+
 **Two scripts prove the chain without hardware**, and they are the pattern to follow:
 `scripts/faux-app.mjs` plays a client, `scripts/fausse-machine.mjs` plays the appliance. Run
 together against a `PROXY_APPS=1` server they demonstrate the central claim — **one datapoint from
