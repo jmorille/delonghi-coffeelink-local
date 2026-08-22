@@ -96,7 +96,18 @@
     "beanSystem": "Bean Adapt : {name}",
     "beanSystemHint": "Configuration de grains active sur la machine (mouture {grinder}, température {temperature}, arôme {aroma}). C'est elle qui détermine cette tasse — ce n'est pas le nom de la boisson.",
     "counterValue": "{value} ({category})",
-    "counterHint": "Compteur de la machine pour la catégorie « {category} ». La machine ne compte PAS tasse par tasse : ce total couvre toutes les boissons de cette catégorie, pas seulement celle-ci. Seul le thé a son compteur propre."
+    "counterHint": "Compteur de la machine pour la catégorie « {category} ». La machine ne compte PAS tasse par tasse : ce total couvre toutes les boissons de cette catégorie, pas seulement celle-ci. Seul le thé a son compteur propre.",
+    "imageOf": "Image : {image}",
+    "imageUnknown": "Image : code {code} inconnu",
+    "imageChoose": "Changer l'image",
+    "imageHide": "Masquer les images",
+    "imageNote": "L'image appartient à l'emplacement perso, pas au profil : les cinq profils la partagent. La machine ne retient qu'un numéro de 0 à 19 dans la liste ci-dessous — c'est l'application qui choisit le dessin.",
+    "imagePick": "Choisir l'image {image}",
+    "imageCurrent": "image actuelle",
+    "imageSave": "Enregistrer l'image",
+    "imageConfirm": "Donner l'image « {image} » à « {beverage} » ?",
+    "imageConfirmWarning": "Écriture persistante sur la cafetière. La même trame porte le nom : il est réécrit à l'identique, « {name} ».",
+    "imageSent": "Image envoyée. Elle s'affichera quand la machine aura renvoyé le bloc de noms."
   },
   "power": {
     "machine": "Machine",
@@ -917,5 +928,26 @@
     "motif_sansSession": "requête chiffrée avant tout échange de clés",
     "motif_desactive": "multiplexeur éteint",
     "warning": "Ce serveur se présente à ces applications sous le numéro de série de la machine. Elles ne peuvent pas faire la différence — c'est le principe, et c'est aussi pourquoi tout ce qui se branche ici est listé."
+  },
+  "beverageImage": {
+    "cappuccino": "Cappuccino",
+    "espresso": "Espresso",
+    "latte_macchiato": "Latte macchiato",
+    "due_x_espresso_coffee": "Espresso ×2",
+    "caffe_latte": "Caffelatte",
+    "doppio_plus": "Doppio+",
+    "hot_milk": "Lait chaud",
+    "americano": "Americano",
+    "cappuccino_doppio_plus": "Cappuccino doppio+",
+    "regular": "Café",
+    "espresso_macchiato": "Espresso macchiato",
+    "flat_white": "Flat white",
+    "hot_water": "Eau chaude",
+    "cold_milk": "Lait froid",
+    "long_coffee": "Café long",
+    "steam": "Vapeur",
+    "ciocco": "Chocolat",
+    "cappuccino_reverse": "Cappuccino inversé",
+    "tea": "Thé"
   }
 }

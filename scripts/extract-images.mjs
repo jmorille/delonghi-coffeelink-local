@@ -45,10 +45,21 @@
  * stockée est donc un index 0-19 dans cette liste, pas un identifiant de ressource. L'ordre
  * compte, il est conservé tel quel.
  *
- * ⚠️ **Ce que ce script n'établit PAS** : que l'octet d'icône transporté dans le bloc de noms
- * (`0xAA` / `0xAB`, offset 20 de l'entrée de 21 octets — voir `profiles.mjs`) soit bien cet
- * index-là. C'est plausible et non vérifié. À confirmer en renommant une recette perso avec une
- * icône choisie, puis en relisant le bloc.
+ * ✅ **C'est bien cet index que transporte le bloc de noms** (`0xAA` / `0xAB`, offset 20 de
+ * l'entrée de 21 octets — voir `profiles.mjs`). Longtemps noté ici comme « plausible et non
+ * vérifié », avec une écriture sur l'appareil pour le confirmer. **L'écriture n'a pas été
+ * nécessaire** : le code de l'application le dit de bout en bout, et cette version-là est
+ * réfutable à bas coût.
+ *
+ *   1. `J()` ci-dessus : la case sélectionnée est celle dont la POSITION vaut `gVar.n()`.
+ *   2. `Q6.g.n()` rend `f6459b`, que le `toString` de la classe nomme `recipeImageIndex`.
+ *   3. `CreateBeverageViewModel.m0()`, cas `SET_NAME_ICON` : `f0(idBoisson, nom, gVar2.n())`.
+ *   4. `DeLonghiWifiConnectService.f0` journalise `"saveRecipeName … iconIndex:"` et appelle
+ *      `p097j6.d.f0`, qui pose `bArr[2] = 0xAB` puis `bArr[i12] = (byte) iArr[i13]` — le 21e
+ *      octet de l'entrée, donc l'offset 20.
+ *
+ * La règle de méthode est la même que pour la constante `0x37` : quand une hypothèse peut être
+ * réfutée en lisant, on lit avant d'écrire sur un appareil réel.
  *
  * ## Usage
  *

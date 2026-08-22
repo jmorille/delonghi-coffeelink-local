@@ -2338,7 +2338,11 @@ function readNames(store, kind) {
 function machineBeverageNames(store) {
   const out = {};
   for (const [slot, entry] of Object.entries(readNames(store, "customNames"))) {
-    if (entry?.name) out[229 + Number(slot)] = { name: entry.name, icon: entry.icon, prop: entry.prop, source: "recette perso" };
+    // L'EMPLACEMENT voyage avec l'entrée. C'est lui qu'attend `0xAB` (`V0(slot, slot, …)` dans
+    // l'app, `d.f0` ensuite), et le 229 qui le relie à l'identifiant de boisson est une constante
+    // de protocole : la recalculer côté client en ferait une seconde source de vérité, à
+    // diverger au premier modèle qui décale la plage.
+    if (entry?.name) out[229 + Number(slot)] = { slot: Number(slot), name: entry.name, icon: entry.icon, prop: entry.prop, source: "recette perso" };
   }
   return out;
 }
@@ -4016,7 +4020,23 @@ async function handleApi(req, res) {
         catalogLabel: b.label, // libellé générique conservé pour référence
         machineName: named?.name ?? null,
         machineNameProp: named?.prop ?? null,
+        /**
+         * **L'octet d'icône EST l'index 0-19 dans la liste du sélecteur de l'app** — vérifié de
+         * bout en bout dans son code, sans rien écrire sur l'appareil :
+         *
+         * 1. `CreateBeverageViewModel.J()` construit 20 images ; la sélectionnée est celle dont
+         *    la **position** vaut `gVar.n()`.
+         * 2. `Q6.g.n()` rend `f6459b`, que le `toString` de la classe nomme `recipeImageIndex`.
+         * 3. À la validation, `m0()` appelle `f0(idBoisson, nom, gVar2.n())`.
+         * 4. `DeLonghiWifiConnectService.f0` le journalise `"saveRecipeName … iconIndex:"` et le
+         *    passe à `p097j6.d.f0`, qui pose `bArr[2] = 0xAB` puis l'octet 20 de l'entrée.
+         *
+         * C'est exactement l'octet que `decodeNames` rend ici. Non nul pour les seules recettes
+         * perso : `machineBeverageNames` ne couvre qu'elles.
+         */
         icon: named?.icon ?? null,
+        /** Emplacement perso 1-6, ou `null`. C'est l'index qu'attend `POST /api/profiles/name`. */
+        customSlot: named?.slot ?? null,
         boundsProp,
         valuesProp,
         bounds,

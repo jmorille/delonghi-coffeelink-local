@@ -915,6 +915,33 @@ rather than defaulting to 0. The Striker 22-byte stride is deliberately not port
 at the wrong stride shifts every following name. Favourites are a **fixed** 19-byte frame, hence
 exactly 12 slots, padded with zeros; every id is checked against the model's catalog first.
 
+**That icon byte is an INDEX 0-19 into a list frozen in the app** — not a resource id, not a
+beverage id. Established without writing anything to the appliance, which is the point: `J()`
+marks the picker cell whose **position** equals `gVar.n()`; `Q6.g.n()` returns `f6459b`, which the
+class's own `toString` names `recipeImageIndex`; `m0()`'s `SET_NAME_ICON` case calls
+`f0(beverageId, name, gVar2.n())`; `DeLonghiWifiConnectService.f0` logs it as `iconIndex:` and
+hands it to `p097j6.d.f0`, which sets `bArr[2] = 0xAB` and drops it at offset 20 of the entry. The
+note that stood here for a while — "plausible, unverified, confirm by renaming a recipe on the
+machine" — planned a persistent write for something a read settles. Same rule as the `0x37`
+constant: **when the signal hypothesis is refutable by reading, read before you write to an
+appliance.** The list is in `beverage-images.json` (`choixRecettePerso`) and `doc/commandes-cafe.md`
+§ 8.1; its **order is the data**, and entries 12 and 18 are deliberately the same image
+(`hot_water`) because de-duplicating would shift every index after them.
+
+**Choosing that image lives on `/`, inside the opened card — not in the recipe editor.** The
+editor is titled "for profile N" and its write targets a profile; the image belongs to the
+**slot** and all five profiles share it, so putting the picker under that heading would have
+asserted something false. ⚠️ **Name and icon travel in the same 21-byte entry**, so an icon write
+necessarily rewrites the name: the confirmation says so and sends back the name exactly as read.
+Renaming stays `/profils`' gesture — it has the form for it, and duplicating it here would make
+two places for one act. The picker is a `radiogroup` and every cell carries the **name** of its
+drawing: twenty unlabelled thumbnails would leave the selection itself unannounced. Those names
+live in their own `beverageImage` namespace, keyed by the app's resource names, which are **not**
+our catalog slugs (`due_x_espresso_coffee` here is `2x_espresso` there) — serving them from
+`beverage` would fold two identifier spaces into one. The slot number comes from the server
+(`customSlot` on `/api/beverages`); the 229 that ties it to the beverage id is a protocol constant
+and has exactly one home.
+
 **`0x60` / `0x70` are probes, not features.** `getByteMonitorMode` builds three frames; the app's
 Wi-Fi service only ever sends `0x75`. `POST /api/monitormode` sends the other two and logs the raw
 answer with **no decoder** — inventing a structure for bytes never observed would produce plausible

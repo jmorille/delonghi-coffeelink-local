@@ -52,6 +52,16 @@ interface Beverage {
    * la boisson — le nom du grain n'est pas le nom de la tasse.
    */
   beanSystem: { index: number; name: string | null; grinder: number; temperature: number; aroma: number } | null;
+  /** Nom SAISI sur la machine, s'il y en a un. C'est lui que réécrit une écriture d'icône. */
+  machineName: string | null;
+  /**
+   * Index 0-19 de l'image, tel que la machine le stocke (octet 20 du bloc `0xAA`) — vérifié
+   * dans le code de l'app, voir le commentaire de `/api/beverages` côté serveur. Non nul pour
+   * les seules recettes perso nommées.
+   */
+  icon: number | null;
+  /** Emplacement perso 1-6. Le serveur le calcule ; ne pas le redériver de `id` ici. */
+  customSlot: number | null;
 }
 interface Status {
   /** Configuration du serveur. `lanKeySet` faux = aucun pilotage possible, il faut le dire. */
@@ -142,6 +152,7 @@ export default function Boissons() {
   const tEditor = useTranslations("editor");
   const tCat = useCategoryLabel();
   const bevLabel = useBeverageLabel();
+  const imageLabel = useImageLabel();
   const paramLabel = useParamLabel();
   const unitLabel = useUnitLabel();
   const [data, setData] = useState<Payload | null>(null);
@@ -647,6 +658,29 @@ export default function Boissons() {
     });
   };
 
+  /**
+   * Donne son image à une recette perso — `0xAB`, **persistant sur l'appareil**.
+   *
+   * L'emplacement vient du serveur (`customSlot`) et n'est pas redérivé de l'identifiant : le
+   * 229 qui les relie est une constante de protocole, elle n'a qu'une place.
+   *
+   * Le nom repart tel qu'il a été lu parce que la trame le porte dans la même entrée — la
+   * confirmation l'annonce plutôt que de laisser croire à une écriture d'icône seule.
+   */
+  const setBeverageIcon = (bev: Beverage, icon: number) => {
+    setAsk({
+      question: t("imageConfirm", { beverage: bevLabel(bev), image: imageLabel(IMAGES_PERSO[icon] ?? String(icon)) }),
+      warn: t("imageConfirmWarning", { name: bev.machineName ?? "" }),
+      onConfirm: () =>
+        commande(
+          bevScope(bev.id),
+          "/api/profiles/name",
+          { kind: "custom", index: bev.customSlot, name: bev.machineName ?? "", icon },
+          () => t("imageSent"),
+        ),
+    });
+  };
+
   const imported = data ? data.beverages.filter((b) => b.bounds || b.values).length : 0;
 
   // Le toggle marche/arrêt est rendu avant tout le reste : piloter la machine ne doit pas
@@ -752,6 +786,7 @@ export default function Boissons() {
                 onDispense={(params) => dispense(b, params)}
                 onWrite={(params) => writeToProfile(b, params)}
                 onImport={() => startImport("all", [b.id])}
+                onSetIcon={(icon) => setBeverageIcon(b, icon)}
               />
             ))}
           </div>
@@ -1096,9 +1131,37 @@ function profileLabel(profiles: ProfileInfo[], id: number): string {
  * cette table (voir l'en-tête du script d'extraction). Elles n'ont donc pas de vignette, ce qui
  * est correct et non un manque.
  */
-function VignetteBoisson({ id }: { id: number }) {
+/**
+ * **Les 20 images que l'application propose pour une recette perso, dans SON ordre.**
+ *
+ * L'ordre est la donnée : la machine ne retient qu'un index 0-19, pas un nom de dessin. Deux
+ * entrées portent la même image (12 et 18, `hot_water`) — c'est ainsi dans la liste de l'app,
+ * et dédoublonner décalerait tous les index suivants.
+ */
+const IMAGES_PERSO: string[] = IMAGES.choixRecettePerso;
+
+/**
+ * Le nom d'une image, dans son espace de noms à elle.
+ *
+ * Les clés sont les noms de ressources de l'app, qui ne sont **pas** nos slugs de catalogue
+ * (`due_x_espresso_coffee` d'un côté, `2x_espresso` de l'autre) : les servir depuis `beverage`
+ * mêlerait deux référentiels d'identifiants dans un seul espace. Repli sur la clé brute, même
+ * règle que `useCategoryLabel` — une image inconnue s'affiche, elle ne fait pas tomber la carte.
+ */
+function useImageLabel() {
+  const t = useTranslations("beverageImage");
+  return (fichier: string) => (t.has(fichier) ? t(fichier) : fichier);
+}
+
+function VignetteBoisson({ id, icon }: { id?: number; icon?: number | null }) {
   const [absente, setAbsente] = useState(false);
-  const fichier = (IMAGES.parId as Record<string, string>)[String(id)];
+  // La table par identifiant d'abord ; l'index d'icône ensuite, qui est le seul recours des
+  // recettes perso — elles ne figurent pas dans `parId`, leur dessin étant choisi, pas fixe.
+  // `id` est facultatif : le sélecteur ne montre que des index, et lui passer un identifiant
+  // sentinelle pour forcer cette branche aurait été une valeur inventée de plus à maintenir.
+  const fichier =
+    (id === undefined ? undefined : (IMAGES.parId as Record<string, string>)[String(id)]) ??
+    (icon !== null && icon !== undefined ? IMAGES_PERSO[icon] : undefined);
   if (!fichier || absente) return null;
   return (
     // `<img>` et non `next/image` : le fichier est statique, de taille connue, servi depuis
@@ -1116,6 +1179,103 @@ function VignetteBoisson({ id }: { id: number }) {
   );
 }
 
+/**
+ * **Choisir l'image d'une recette perso.**
+ *
+ * Elle vit dans la CARTE et non dans l'éditeur de recette, parce que ce ne sont pas les mêmes
+ * données : l'éditeur est titré « pour le profil N » et son écriture vise un profil, alors que
+ * l'image appartient à l'emplacement et que les cinq profils la partagent. La poser sous ce
+ * titre-là aurait affirmé quelque chose de faux.
+ *
+ * ⚠️ **La trame `0xAB` porte le nom ET l'icône dans la même entrée de 21 octets** : on ne peut
+ * pas écrire l'un sans réécrire l'autre. Le nom est donc renvoyé tel qu'il a été lu, et la
+ * confirmation le dit — le taire ferait d'une écriture double une écriture simple aux yeux du
+ * lecteur. Renommer reste le geste de `/profils`, qui a le formulaire pour ça ; le dupliquer ici
+ * ferait deux endroits pour un seul geste.
+ *
+ * Replié par défaut : vingt images, c'est plus haut que l'éditeur qu'on est venu ouvrir.
+ */
+function ChoixImage({
+  actuel,
+  busy,
+  working,
+  onChoose,
+}: {
+  /**
+   * L'index que porte la machine. Reçu **non nul** : le composant n'est monté que si la boisson
+   * a une entrée dans le bloc de noms, et une entrée en a toujours un. L'écrire dans le type
+   * évite d'avoir à inventer un code de repli pour un cas qui ne se produit pas.
+   */
+  actuel: number;
+  busy: boolean;
+  working: boolean;
+  onChoose: (icon: number) => void;
+}) {
+  const t = useTranslations("beverages");
+  const imageLabel = useImageLabel();
+  const [ouvert, setOuvert] = useState(false);
+  const [choix, setChoix] = useState<number>(actuel);
+  // Rien ne borne cet octet dans le protocole : la machine peut en principe en porter un que la
+  // liste de vingt ne couvre pas. On le dit alors, plutôt que d'afficher une image au hasard.
+  const courant = IMAGES_PERSO[actuel] ?? null;
+
+  return (
+    <div className="blocSuite">
+      <div className="row">
+        {/* Ce que la machine porte AUJOURD'HUI. Un octet hors des vingt n'est pas impossible —
+            rien dans le protocole ne le borne — et le dire vaut mieux que de n'afficher rien. */}
+        <span className="sub">
+          {courant ? t("imageOf", { image: imageLabel(courant) }) : t("imageUnknown", { code: actuel })}
+        </span>
+        <button
+          className={"iconBtn" + (ouvert ? " ouvert" : "")}
+          onClick={() => setOuvert(!ouvert)}
+          aria-expanded={ouvert}
+        >
+          <Icone nom="chevron" />
+          <span className="lbl">{ouvert ? t("imageHide") : t("imageChoose")}</span>
+        </button>
+      </div>
+
+      {ouvert && (
+        <>
+          <p className="chapeau">{t("imageNote")}</p>
+          {/* Un groupe de radios, pas vingt boutons : le choix est unique et exclusif, et c'est
+              ce que `radiogroup` fait entendre. Chaque option porte le NOM de son dessin —
+              sans quoi ce sont vingt cases sans étiquette, la sélection comprise. */}
+          <div className="grilleImages" role="radiogroup" aria-label={t("imageChoose")}>
+            {IMAGES_PERSO.map((fichier, i) => (
+              <button
+                key={i}
+                type="button"
+                role="radio"
+                aria-checked={choix === i}
+                className={"choixImage" + (choix === i ? " actif" : "")}
+                onClick={() => setChoix(i)}
+                aria-label={t("imagePick", { image: imageLabel(fichier) })}
+              >
+                <VignetteBoisson icon={i} />
+                <span className="lbl">{imageLabel(fichier)}</span>
+              </button>
+            ))}
+          </div>
+          <div className="row note">
+            <button
+              className="primary iconBtn"
+              disabled={busy || choix === actuel}
+              aria-busy={working || undefined}
+              onClick={() => onChoose(choix)}
+            >
+              <Icone nom="machine" />
+              <span className="lbl">{t("imageSave")}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BeverageCard({
   bev,
   profile,
@@ -1128,6 +1288,7 @@ function BeverageCard({
   onDispense,
   onWrite,
   onImport,
+  onSetIcon,
 }: {
   bev: Beverage;
   profile: number;
@@ -1141,6 +1302,8 @@ function BeverageCard({
   onDispense: (params?: RecipeParam[]) => void;
   onWrite: (params: RecipeParam[]) => void;
   onImport: () => void;
+  /** Écrit l'image de l'emplacement perso (`0xAB`). Absente des boissons du catalogue. */
+  onSetIcon: (icon: number) => void;
 }) {
   const t = useTranslations("beverages");
   const tc = useTranslations("common");
@@ -1175,7 +1338,7 @@ function BeverageCard({
           <div className="titreLigne">
           {/* La vignette d'abord : `.titreLigne` est déjà une rangée souple avec gouttière, elle
               gère donc l'alignement et le repli sans qu'on ait rien à ajouter. */}
-          <VignetteBoisson id={bev.id} />
+          <VignetteBoisson id={bev.id} icon={bev.icon} />
           {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
               au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
           <h3 className="cardTitle">{nom}</h3>
@@ -1278,6 +1441,14 @@ function BeverageCard({
               restent ici — c'est la carte qui les possede, et le panneau s'ouvre bien sous la
               barre puisqu'il est rendu juste apres l'editeur. Le libelle passe en `.lbl` comme
               les trois autres, sans quoi il ne se replierait pas avec eux en etroit. */}
+          {/* Avant l'éditeur, et seulement pour un emplacement perso NOMMÉ : `customSlot` n'est
+              rempli que là (la trame de noms ne couvre pas les boissons du catalogue, et une
+              écriture a besoin d'un nom à réécrire). L'identité de la recette — son dessin — se
+              lit avant ses valeurs pour un profil. */}
+          {bev.customSlot !== null && bev.icon !== null && (
+            <ChoixImage actuel={bev.icon} busy={busy} working={working} onChoose={onSetIcon} />
+          )}
+
           <RecipeEditor
             bev={bev}
             profile={profile}

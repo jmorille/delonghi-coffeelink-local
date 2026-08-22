@@ -1585,3 +1585,61 @@ Corollaire de méthode : cette adresse a été trouvée parce que le multiplexeu
 application officielle demande. Aucune relecture du code ne l'aurait signalée — nous ne cherchions
 pas, nous n'avions pas de raison de chercher.
 
+
+### 8.1. L'octet d'icône est un index dans la liste du sélecteur
+
+Chaque entrée de 21 octets d'un bloc de noms (`0xA4` / `0xAA` en lecture, `0xA5` / `0xAB` en
+écriture) finit par un octet d'icône, à l'offset 20. **Cet octet est un index de 0 à 19 dans une
+liste d'images figée dans l'application** — pas un identifiant de ressource, pas un identifiant de
+boisson.
+
+La chaîne se lit entièrement dans le binaire, sans rien écrire sur l'appareil :
+
+| étape | ce que fait le code |
+|---|---|
+| `CreateBeverageViewModel.J()` | construit 20 images ; la case cochée est celle dont la **position** vaut `gVar.n()` |
+| `Q6.g.n()` → `f6459b` | le `toString` de la classe le nomme `recipeImageIndex` |
+| `m0()`, cas `SET_NAME_ICON` | `f0(idBoisson, nom, gVar2.n())` |
+| `DeLonghiWifiConnectService.f0` | journalise `saveRecipeName … iconIndex:` |
+| `p097j6.d.f0` | `bArr[2] = 0xAB`, puis `bArr[i12] = (byte) iArr[i13]` — l'octet 20 de l'entrée |
+
+La liste, **dans son ordre**, qui est la donnée :
+
+```
+ 0 cappuccino              5 doppio_plus            10 espresso_macchiato    15 steam
+ 1 espresso                6 hot_milk               11 flat_white            16 ciocco
+ 2 latte_macchiato         7 americano              12 hot_water             17 cappuccino_reverse
+ 3 due_x_espresso_coffee   8 cappuccino_doppio_plus 13 cold_milk             18 hot_water
+ 4 caffe_latte             9 regular                14 long_coffee           19 tea
+```
+
+> ⚠️ **12 et 18 portent la même image** (`hot_water`). C'est ainsi dans la liste de l'application ;
+> dédoublonner décalerait tous les index suivants.
+
+> ⚠️ Ces noms sont les **ressources de l'app**, pas les slugs du catalogue ECAM :
+> `due_x_espresso_coffee` ici vaut `2x_espresso` là, `caffe_latte` vaut `caffelatte`,
+> `doppio_plus` vaut `doppio`. Deux espaces d'identifiants distincts, à ne pas fondre en un seul.
+
+Relevé sur la machine réelle, trois emplacements renommés depuis l'application :
+
+| emplacement | nom | octet | image |
+|---|---|---|---|
+| 1 | *(nom saisi)* | 6 | `hot_milk` |
+| 2 | *(nom saisi)* | 3 | `due_x_espresso_coffee` |
+| 3 | *(nom saisi)* | 14 | `long_coffee` |
+
+**Rien n'a été écrit sur l'appareil pour l'établir**, alors que la note précédente prévoyait de le
+faire. Même règle de méthode que pour la constante `0x37` (§ 14.5) : entre deux vérifications, on
+commence par celle qui se réfute en lisant.
+
+Écriture, telle que `lan-server` la produit (emplacement 3, nom « Ma recette », icône 6) :
+
+```
+0d 1c ab f0 03 03 | 00 4d 00 61 00 20 00 72 00 65 00 63 00 65 00 74 00 74 00 65 | 06 | 05 8c
+  ^len ^cmd ^flag   ^ 20 octets UTF-16BE, complétés de zéros                      ^icône ^crc
+         premier ^^ ^^ dernier
+```
+
+> ⚠️ **Le nom et l'icône sont dans la MÊME entrée** : on ne peut pas écrire l'un sans réécrire
+> l'autre. Toute interface qui ne propose que l'icône réécrit donc le nom, et doit le dire.
+
