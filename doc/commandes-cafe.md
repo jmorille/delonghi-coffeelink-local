@@ -1443,16 +1443,39 @@ Trois choix dans cette ligne, chacun pour une raison :
 
 L'enjeu n'est pas cosmétique. Ce marqueur existe pour faire ressortir ce que le référentiel ne
 connaît pas encore ; une valeur mal nommée y **fabrique une découverte qui n'existe pas**, et
-masque du même coup la seule information vraie — que cette valeur n'est pas une trame. Reste, elle,
-une vraie question ouverte — et la ligne ci-dessus n'en montre qu'une partie. `describeFrame()`
-retirait **quatre octets d'office** (l'horodatage d'une trame) : les douze affichés sont les douze
-survivants, **la valeur en faisait seize**, et les quatre derniers sont perdus pour cette capture.
-C'est ce rognage que la correction supprime, mais elle lui est postérieure.
+masque du même coup la seule information vraie — que cette valeur n'est pas une trame.
 
-> ⚠️ **Seize octets, c'est exactement un bloc AES**, et le § 7sexies de
-> `analyse-connexion-wifi.md` décrit précisément cette signature : en CBC, un message sauté ne
-> salit que les **16 premiers octets** du message suivant. L'hypothèse à écarter AVANT de chercher
-> une commande inconnue est donc que ce ne soit pas de l'applicatif du tout, mais un bloc de tête
-> sali — auquel cas l'information n'est pas dans ces octets, elle est **en amont** : un message qui
-> a disparu juste avant.
+Celle-ci a depuis été identifiée : c'est `p097j6.d.s0()`, une constante codée en dur de
+l'application — voir § 14.5. Ce qui rendait le marqueur juste, et ce qui suit ne l'était pas.
+
+#### La mauvaise piste, et pourquoi elle était plausible
+
+Douze octets affichés, quatre rognés : **seize, exactement un bloc AES**. Le § 7sexies de
+`analyse-connexion-wifi.md` décrit cette signature — en CBC, un message sauté ne salit que les
+16 premiers octets du suivant —, et une expiration de sonde a bel et bien été relevée sur la même
+session. L'hypothèse « ce ne sont pas des octets applicatifs, l'information est en amont » était
+donc raisonnable. **Elle était fausse**, et trois preuves indépendantes l'écartent :
+
+1. **le téléphone les journalise avant tout chiffrement** — un bloc CBC sali ne peut pas figurer
+   dans le log de l'émetteur :
+   ```
+   finalPacket size : 16
+   AylaDatapoint sent to SDK:  45 da 37 88 34 eb af ff ff fa 93 81
+   encodedPacket Rdo3iDTrr///+pOBaonS+A==
+   ```
+2. **le CRC est juste** : CRC-CCITT init `0x1D0F` sur les dix premiers octets donne `0x9381`,
+   soit les deux derniers. Une corruption ne forge pas un CRC De'Longhi ;
+3. **les octets sont dans le binaire**, à l'octet près, et identiques sur trois sessions séparées.
+
+> ⚠️ **Un CRC valide vaut mieux qu'une absence d'indice.** Chercher dans le journal ce qui aurait
+> pu manquer en amont aurait pu durer longtemps sans rien conclure ; vérifier le CRC des octets
+> qu'on a sous les yeux coûte trois lignes et tranche. Quand une hypothèse « c'est du bruit » et
+> une hypothèse « c'est du signal » s'affrontent, **c'est la seconde qui est réfutable la
+> première** — commencer par elle.
+
+Et le rognage se retourne en confirmation : le CRC ne tombe juste que si le découpage l'était.
+Les quatre octets retirés étaient l'horodatage que `Y1()` ajoute derrière **chaque** valeur —
+`finalPacket size : 16` = 12 + 4 — donc la ligne montrait la commande entière. Le rognage tombait
+juste, mais par coïncidence : il supposait une trame ECAM là où il n'y en avait pas, et ne rien
+retirer de ce qu'on ne sait pas lire reste la bonne règle.
 

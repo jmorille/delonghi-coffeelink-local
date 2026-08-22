@@ -1463,13 +1463,24 @@ fixed months earlier on the incoming side and never carried across. The filter n
 `octetsEcam()`, and both directions read it; `describeFrame()` answers `valeur non-trame` with the
 bytes **unstripped** (the 4 trailing bytes are timestamps only inside a frame) plus the original
 base64. The stake is the discovery signal itself: a mislabelled value **manufactures a finding that
-does not exist** and hides the one true fact, that this is not a frame. And the captured line shows
-only PART of the value: the same `describeFrame()` stripped four bytes as a timestamp, so the twelve
-printed are the survivors of **sixteen** — exactly one AES block, which is this file's own signature
-for a dirtied leading block in CBC. So the first hypothesis to rule out is not "an unknown De'Longhi
-command" but "not application bytes at all", in which case the information is **upstream**, in a
-message that vanished just before. Only once that is excluded does the value itself — sixteen
-non-ECAM bytes the official app wrote into `data_request` — become the open question.
+does not exist** and hides the one true fact, that this is not a frame. That value has since been
+identified — `p097j6.d.s0()`, a constant hardcoded in the app (`doc/commandes-cafe.md` § 14.5), sent
+once per Wi-Fi session; it is **named, not decoded**, and deliberately kept OUT of `ECAM_OPS`, since
+`0x37` is not a command byte.
+**The wrong hypothesis it produced is worth keeping, because it was the reasonable one.** Twelve
+bytes shown, four stripped: sixteen, exactly one AES block — this file's own signature for a
+dirtied leading block — and a probe timeout was indeed recorded on that same session. "Not
+application bytes at all, look upstream" was a sound reading, and it was false. Three independent
+proofs killed it: the phone logs the bytes **before encryption** (a dirtied CBC block cannot appear
+in the sender's own log), their CRC-CCITT/`0x1D0F` over bytes 0-9 equals bytes 10-11, and they sit
+verbatim in the binary, identical across three sessions. The method rule to carry forward: **when
+"it is noise" and "it is signal" compete, the signal hypothesis is the one that is refutable
+cheaply — test it first.** Verifying a CRC on the bytes in hand costs three lines; hunting a
+journal for what might have gone missing upstream can run for hours and conclude nothing. The
+stripping, incidentally, turned into the confirmation: the CRC only lands if the split was right,
+so the four removed bytes were the timestamp `Y1()` appends to **every** value (`finalPacket size :
+16` = 12 + 4). It was right by coincidence — it assumed an ECAM frame where there was none — and
+not stripping what you cannot read remains the rule.
 **A property whose value is not a frame no longer gets one invented — and that was misrouting, not
 just a bad label.** `handleProperty` read its command byte with `Buffer.from(value, "base64")[2]`,
 and that call **never throws**: it ignores what is not base64 and returns bytes that look like
