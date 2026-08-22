@@ -11,7 +11,7 @@
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
          echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
-import { analyserCommandes, estRefus } from "../src/lib/appproxy.mjs";
+import { analyserCommandes, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -260,5 +260,29 @@ test("seul un REFUS compte comme échec — un délai dépassé est un silence",
   vrai(!estRefus(new Error("délai dépassé")), "le message ne fait pas foi, seul le code compte");
 });
 
+test("206 porte une charge, exactement comme 200 — et c'est ce qui bloquait l'allumage", () => {
+  // ⚠️ La règle la plus chère de ce projet à ce jour. `AylaLanModule.getResponseCode()` rend
+  // `PARTIAL_CONTENT` dès qu'il RESTE des commandes en file, `OK` quand c'était la dernière :
+  // le statut annonce la suite, il ne qualifie pas le corps. Les deux portent le même bloc
+  // chiffré.
+  //
+  // N'accepter que le 200 jetait donc précisément les réponses qui transportaient une commande,
+  // et le jetait deux fois irréparablement : le SDK retire la commande de sa file au moment où
+  // il la CHIFFRE, sans réessai, et le message non déchiffré laisse notre flux AES un cran en
+  // arrière. Mesuré en direct : deux `HTTP 206 — non déchiffré`, puis le 200 suivant illisible.
+  vrai(porteUneCharge(206, '{"seq_no":3,"enc":"…"}'), "206 se déchiffre");
+  vrai(porteUneCharge(200, '{"seq_no":3,"enc":"…"}'), "200 aussi");
+  vrai(encoreDesCommandes(206), "206 veut dire : il en reste, reviens tout de suite");
+  vrai(!encoreDesCommandes(200), "200 veut dire : c'était la dernière");
+});
+
+test("ce qui ne porte rien de chiffré ne doit PAS être déchiffré", () => {
+  // Un corps vide n'avance aucun flux, et un 412 « pas de session » porte du texte en clair.
+  // Les déchiffrer ferait exactement le dégât qu'on vient de corriger, dans l'autre sens.
+  vrai(!porteUneCharge(200, ""), "corps vide");
+  vrai(!porteUneCharge(200, "   "), "corps blanc");
+  vrai(!porteUneCharge(412, '{"error":"no session"}'), "412 : erreur en clair");
+  vrai(!porteUneCharge(404, "Not found"), "404");
+});
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

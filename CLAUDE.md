@@ -1219,6 +1219,29 @@ makes N independent applications possible where the machine allows one.
   the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
   {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
   the only signal, and not answering leaves the app waiting then concluding failure.
+- ⚠️⚠️ **`206 Partial Content` is a NORMAL command response — dropping it is what stopped the
+  official app from turning the machine on.** `AylaLanModule.getResponseCode()` returns
+  `_pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK`: the status does not qualify the body,
+  it announces **what comes next**. `206` means "I have more queued", `200` means "that was the
+  last one", and both carry the same valid encrypted payload. A `rep.status !== 200` guard
+  therefore discards precisely the responses that carry a command, keeping only the last of a
+  batch — and the loss is irreparable twice over (the SDK already dropped the command when it
+  encrypted it; our stream is left a message behind). Measured: the app queues `0x84` and, one
+  millisecond later, a whole alarms batch, so the turn-on came back as `206` and went in the bin
+  with no journal line. `porteUneCharge`-style checks must accept **200 and 206**. And `206` must
+  be re-polled immediately, inside the existing probe lock — a ten-command batch served at probe
+  cadence takes twenty seconds to arrive, and the user just pressed a button.
+- ⚠️ **A "bloc illisible" means "exactly one message vanished just before" — not "the stream is
+  broken".** This file and `doc/` both claimed a one-message CBC offset "ne se rattrape pas". That
+  is false and it sent the investigation to the wrong place. In CBC, block *n* of a message chains
+  from ciphertext *n−1* of the **same** message; only the very first block depends on what came
+  before. So a skipped message dirties the **16 first bytes** of the next message read and nothing
+  else — the stream re-aligns by itself, whether one message was skipped or nine. That is the
+  `…a":{}}` signature: garbage stops dead at the first block, the JSON tail is intact.
+  `verif-lansession.mjs` pins both facts. The consequence that matters: a single unreadable block
+  is not a benign isolated glitch, it is the only visible trace of a command that evaporated —
+  look **upstream** for what ate the message, never at the block itself. The re-key behind it
+  repairs nothing that was lost; it only avoids the next dirtied block.
 - ⚠️ **An app's LAN command queue is AT-MOST-ONCE, and the app cannot tell.**
   `AylaLanModule.handleLanCommandRequest` removes the command from `_pendingLanCommands` the
   instant it **encrypts** it into the HTTP response — not when it is received, and there is no

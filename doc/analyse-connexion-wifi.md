@@ -949,7 +949,8 @@ l'entrée dans le registre.
 
 Le serveur sonde `commands.json` toutes les 2 s avec une échéance de 4 s. Si la requête **atteint**
 le téléphone et que la réponse se perd ensuite, l'application a produit et **chiffré** sa réponse :
-son flux sortant a avancé, le nôtre non. Un flux AES-CBC persistant ne se rattrape pas.
+son flux sortant a avancé, le nôtre non — et la commande qu'il portait est perdue, le SDK l'ayant
+retirée de sa file en la chiffrant.
 
 On le découvrait deux sondes plus tard, sous la forme d'un bloc illisible, sans qu'aucune ligne ne
 relie les deux événements. Désormais un `ETIMEDOUT` relance l'échange de clés tout de suite, et le
@@ -1036,4 +1037,63 @@ Deux enseignements de méthode :
 - **Le SDK Ayla est muet dans logcat.** Une capture complète du processus ne contient aucun tag
   `LanModule`, `CreateDPCommand` ou `AylaLog`. Ce qu'on peut observer du côté téléphone s'arrête
   au service De'Longhi ; tout le reste doit être instrumenté ici.
+
+
+### 7quinquies. `206 Partial Content` — la réponse qu'il ne fallait surtout pas jeter
+
+**C'est la cause de l'allumage qui n'arrivait jamais depuis l'application officielle**, et elle
+tient en une méthode du SDK (`AylaLanModule.getResponseCode`) :
+
+```java
+private Status getResponseCode() {
+    return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+}
+```
+
+> ⚠️ **Le statut ne qualifie pas le corps, il annonce la SUITE.** `206` veut dire « il me reste des
+> commandes en file », `200` « c'était la dernière ». Les deux portent la même charge chiffrée,
+> parfaitement valide.
+
+Un serveur qui ne traite que le `200` jette donc **exactement** les réponses qui transportent une
+commande, et n'en garde que la dernière d'un lot. Le coût est double et irréparable :
+
+1. la commande est perdue — le SDK l'a retirée de sa file au moment où il l'a **chiffrée**
+   (§ 7quater quater), sans réessai ;
+2. le message chiffré non déchiffré laisse notre flux AES-CBC un message en arrière.
+
+**Relevé de bout en bout.** L'application empile `0x84` (allumer) puis, une milliseconde plus tard,
+tout un lot d'alarmes (`startAlarmsBatch`). Dès qu'il y a deux commandes en file, la première
+revient en `206` — et partait à la poubelle sans une ligne de journal. Vu du téléphone,
+`AylaDatapoint sent to SDK: 0d 07 84 0f 02 01` puis `onCreateDatapointOk` ; vu du serveur,
+`commandes = 0` ; vue de la cafetière, aucun changement d'état sept minutes plus tard.
+
+Conséquence sur la cadence : `206` doit être **rebouclé tout de suite**, dans le même passage. Un
+lot de dix commandes servi au rythme de la sonde met vingt secondes à arriver, alors que
+l'utilisateur vient d'appuyer sur un bouton. L'enchaînement se fait à l'intérieur du verrou de
+sonde : jamais deux lectures concurrentes sur le même flux AES.
+
+### 7sexies. Ce qu'un « bloc illisible » veut dire au juste
+
+Ce document a longtemps affirmé qu'un flux AES-CBC persistant décalé d'un message « ne se rattrape
+pas ». **C'est faux, et le croire menait l'enquête au mauvais endroit.**
+
+En CBC, le bloc *n* d'un message se déchiffre avec le chiffré *n−1* du **même** message. Seul le
+tout premier bloc dépend de ce qui précédait. Donc, mesuré (`scripts/verif-lansession.mjs`, deux
+assertions) :
+
+| ce qu'on saute | ce qui est abîmé | ce qui suit |
+|---|---|---|
+| un message | les **16 premiers octets** du prochain message lu | parfaitement lisible |
+| n messages d'affilée | les 16 premiers octets du prochain message lu | parfaitement lisible |
+
+D'où la signature `…a":{}}` : le charabia s'arrête net au premier bloc et la queue du JSON reste
+mot pour mot. Et d'où la lecture correcte de la ligne de journal :
+
+> **Un bloc illisible ne dit pas « le flux est cassé ». Il dit « exactement un message a disparu
+> juste avant » — et ce message portait peut-être une commande, elle, définitivement perdue.**
+
+Un seul bloc illisible au journal n'est donc pas un incident isolé et bénin : c'est le seul indice
+visible d'une commande évaporée. C'est en **amont** qu'il faut chercher ce qui a mangé le message,
+jamais dans le bloc lui-même. Le nouvel échange de clés qu'on déclenche derrière ne répare rien de
+perdu — il évite seulement le bloc sali suivant.
 

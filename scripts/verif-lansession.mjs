@@ -142,5 +142,63 @@ test("la dérivation est bien un DOUBLE HMAC", () => {
   if (!derive(K, s).equals(attendu)) throw new Error("la dérivation n'est pas le double HMAC attendu");
 });
 
+console.log("\n— ce que coûte un message SAUTÉ, exactement —");
+
+// Les helpers existants suffisent : l'application chiffre dans le rôle « appareil » (c'est nous
+// qu'elle prend pour la cafetière), et nous la lisons dans le rôle « client ».
+const deuxBouts = () => { const p = paire(echange()); return [p.appareil, p.client]; };
+
+test("sauter un message n'en abîme QU'UN, puis le flux se recale seul", () => {
+  // ⚠️ Ce test dit le contraire de ce que ce projet a cru pendant des jours : un flux AES-CBC
+  // persistant décalé d'un message **se rattrape**. Le chaînage du bloc n d'un message vient du
+  // chiffré n-1 du MÊME message ; seul le tout premier bloc dépend de ce qui précédait. Donc un
+  // message sauté salit les 16 premiers octets du prochain message consommé, et rien d'autre.
+  //
+  // La conséquence pratique est ce qui rendait le diagnostic faux : **un seul « bloc illisible »
+  // au journal ne veut pas dire « un incident isolé », il veut dire « exactement un message a
+  // disparu juste avant ».
+  const [app, srv] = deuxBouts();
+  const msgs = [];
+  for (let i = 1; i <= 5; i++) msgs.push(app.encapsulate(JSON.stringify({ n: i })));
+  const lu = (i) => srv.decapsulate(JSON.parse(msgs[i]));
+
+  eq(lu(0), '{"seq_no":0,"data":{"n":1}}', "le premier message");
+  // On saute le deuxième — ce que faisait `rep.status !== 200` sur une réponse 206.
+  const abime = lu(2);
+  if (abime === '{"seq_no":2,"data":{"n":3}}') throw new Error("le saut n'a rien abîmé : le flux n'est pas persistant");
+  if (!abime.endsWith('"n":3}}')) throw new Error(`la QUEUE devrait rester lisible, obtenu ${JSON.stringify(abime)}`);
+  eq(lu(3), '{"seq_no":3,"data":{"n":4}}', "le message suivant est PARFAIT : le flux s'est recalé");
+  eq(lu(4), '{"seq_no":4,"data":{"n":5}}', "et le suivant aussi");
+});
+
+test("le charabia s'arrête au premier bloc, pas un octet de plus", () => {
+  // La signature qu'on lit au journal — des octets illisibles finissant proprement par `…a":{}}`
+  // — n'est pas une curiosité : c'est la mesure exacte du dégât. Un seul bloc AES, 16 octets.
+  //
+  // La référence n'est pas une chaîne écrite à la main : c'est le MÊME message lu par un second
+  // client resté aligné. Comparer à un JSON supposé testerait la forme de l'enveloppe, pas le
+  // chaînage — et se casserait au premier champ ajouté par `encapsulate`.
+  const kx = echange();
+  const app = makeLanSession({ ...kx, role: "device" });
+  const aligne = makeLanSession({ ...kx, role: "client" });
+  const decale = makeLanSession({ ...kx, role: "client" });
+
+  const charge = JSON.stringify({ remplissage: "x".repeat(200) });
+  const m = [app.encapsulate(charge), app.encapsulate(charge), app.encapsulate(charge)];
+
+  const sain = [0, 1, 2].map((i) => aligne.decapsulate(JSON.parse(m[i])))[2];
+  decale.decapsulate(JSON.parse(m[0]));                                    // le 1 est lu
+  const abime = decale.decapsulate(JSON.parse(m[2]));                      // le 2 est sauté
+
+  // Comparaison sur les CHAÎNES et non sur des octets : le charabia n'étant pas de l'UTF-8, il
+  // ressort en caractères de remplacement et la longueur en octets n'a plus de sens. Ce qui compte
+  // est ailleurs, et c'est exactement ce que montre le journal.
+  if (abime === sain) throw new Error("rien n'est abîmé : le flux n'est donc pas persistant");
+  if (!abime.endsWith(sain.slice(16))) {
+    throw new Error(`au-delà des 16 premiers octets tout doit être intact, obtenu …${JSON.stringify(abime.slice(-24))}`);
+  }
+  if (abime.slice(-24) !== sain.slice(-24)) throw new Error("la queue du message doit être lisible mot pour mot");
+});
+
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

@@ -61,7 +61,6 @@ if (!LAN_KEY) {
 }
 
 let session = null;
-let servi = false;
 let datapoints = 0;
 /**
  * L'ouverture de session de la VRAIE application : elle écrit `device_connected` avec un `id`,
@@ -73,8 +72,27 @@ let datapoints = 0;
  * commande. Un banc qui n'ouvre pas sa session comme l'original ne peut pas voir ce défaut-là.
  */
 const ID_PRESENCE = "faux-app-presence";
-let presenceServie = false;
 let accusePresence = false;
+
+/**
+ * La file que ce faux appareil sert, une commande par visite. `--lot N` en ajoute N de plus,
+ * pour reproduire ce que fait l'application officielle : elle empile la commande demandée puis,
+ * une milliseconde plus tard, tout un lot d'alarmes. C'est ce qui fait passer la PREMIÈRE en
+ * 206 — donc c'est ce qu'il faut savoir reproduire.
+ */
+const file = [
+  {
+    quoi: "device_connected (accusé demandé)",
+    charge: JSON.stringify({ properties: [{ property: {
+      base_type: "integer", name: "device_connected", value: Math.floor(Date.now() / 1000), id: ID_PRESENCE,
+    } }] }),
+  },
+  ...(aLire ? [{ quoi: `lecture ${aLire}`, charge: JSON.stringify({ cmds: [{ cmd: { cmd_id: 1, method: "GET", resource: `property.json?name=${aLire}`, data: "", uri: "/local_lan/property/datapoint.json" } }] }) }] : []),
+  ...Array.from({ length: Number(arg("lot", "0")) }, (_, i) => ({
+    quoi: `lot ${i + 1}`,
+    charge: JSON.stringify({ properties: [{ property: { base_type: "integer", name: "device_connected", value: i + 1 } }] }),
+  })),
+];
 
 /**
  * Le serveur HTTP que l'« appareil » va venir visiter. Les trois routes sont exactement celles
@@ -105,23 +123,20 @@ const serveur = createServer(async (req, res) => {
 
   if (url === "/local_lan/commands.json" && req.method === "GET") {
     if (!session) return repondre("{}", 412);
-    // La présence D'ABORD, comme l'application officielle : une seule fois, et on attend
-    // l'accusé. Le reste vient ensuite.
-    if (!presenceServie) {
-      presenceServie = true;
-      console.log("  → commande servie : device_connected (accusé demandé)");
-      const charge = JSON.stringify({ properties: [{ property: {
-        base_type: "integer", name: "device_connected", value: Math.floor(Date.now() / 1000), id: ID_PRESENCE,
-      } }] });
-      return repondre(session.encapsulate(charge));
-    }
-    if (aLire && !servi) {
-      servi = true;
-      console.log(`  → commande servie : lecture ${aLire}`);
-      const charge = JSON.stringify({ cmds: [{ cmd: { cmd_id: 1, method: "GET", resource: `property.json?name=${aLire}`, data: "", uri: "/local_lan/property/datapoint.json" } }] });
-      return repondre(session.encapsulate(charge));
-    }
-    return repondre(session.encapsulate("{}"));
+    // ⚠️ **Une commande à la fois, et le statut annonce la SUITE.** C'est la règle du SDK, et
+    // la reproduire est tout l'intérêt de ce banc :
+    //
+    //     getResponseCode() { return _pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK; }
+    //
+    // Donc **206 tant qu'il reste quelque chose après celle qu'on vient de servir**, 200 sur la
+    // dernière. Ce banc répondait 200 à tout coup : il ne pouvait donc pas attraper le défaut qui
+    // a empêché l'application officielle d'allumer la machine — le serveur jetait les 206, et
+    // avec eux la commande qu'ils transportaient. Une démonstration infidèle sur un point précis
+    // ne prouve rien sur ce point-là, et c'est le pire service qu'elle puisse rendre.
+    const suivante = file.shift();
+    if (!suivante) return repondre(session.encapsulate("{}"));
+    console.log(`  → commande servie : ${suivante.quoi}${file.length ? ` (206, il en reste ${file.length})` : " (200, dernière)"}`);
+    return repondre(session.encapsulate(suivante.charge), file.length > 0 ? 206 : 200);
   }
 
   if (url.includes("/property/datapoint") && req.method === "POST") {
@@ -179,7 +194,7 @@ serveur.listen(monPort, "0.0.0.0", async () => {
       ip: srvIp, port: Number(srvPort),
       path: `/local_reg.json${methode === "POST" ? `?dsn=${encodeURIComponent(dsn)}` : ""}`,
       method: methode,
-      body: JSON.stringify({ local_reg: { ip: monIp, port: monPort, uri: "/local_lan", notify: aLire && !servi ? 1 : 0 } }),
+      body: JSON.stringify({ local_reg: { ip: monIp, port: monPort, uri: "/local_lan", notify: file.length ? 1 : 0 } }),
     });
     return r.status;
   };
@@ -193,7 +208,10 @@ serveur.listen(monPort, "0.0.0.0", async () => {
     console.log(`\nBilan : session ${session ? "ÉTABLIE" : "JAMAIS OUVERTE"}, ${datapoints} datapoint(s) reçu(s).`);
     // Dit en toutes lettres, parce que c'est l'affirmation que ce banc sert à vérifier : sans cet
     // accusé, une vraie application se tait définitivement au lieu d'envoyer ses commandes.
-    console.log(`  device_connected : ${presenceServie ? "servi" : "jamais servi"}, accusé ${accusePresence ? "REÇU" : "JAMAIS REÇU — le serveur laisse l'application attendre"}.`);
+    console.log(`  device_connected : accusé ${accusePresence ? "REÇU" : "JAMAIS REÇU — le serveur laisse l'application attendre"}.`);
+    // La file VIDE est l'affirmation centrale quand on passe `--lot` : un serveur qui jette les
+    // 206 laisse ici des commandes non servies, et les perd toutes sauf la dernière.
+    console.log(`  file de commandes : ${file.length ? `${file.length} JAMAIS SERVIE(S) — le serveur jette-t-il les 206 ?` : "entièrement servie"}.`);
     if (session) {
       // Fin de session propre : c'est `DeleteSessionCommand` du SDK, et le serveur doit retirer
       // l'entrée du registre plutôt que d'attendre l'expiration.

@@ -57,6 +57,45 @@ export const PORT_ATTENDU_PAR_APP = 80;
  */
 export const REFUS_RESEAU = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
 
+/**
+ * **Les statuts qui portent une charge chiffrée : `200` ET `206`.**
+ *
+ * ⚠️ Le `206` n'est pas une curiosité, c'est le cœur du protocole côté application, et le lire
+ * dans le SDK décompilé est la seule façon de le savoir :
+ *
+ * ```java
+ * private Status getResponseCode() {
+ *     return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+ * }
+ * ```
+ *
+ * Autrement dit **`206` veut dire « il me reste des commandes en file »** et `200` « c'était la
+ * dernière ». Les deux réponses portent la MÊME charge chiffrée — le statut ne qualifie pas le
+ * corps, il annonce la suite.
+ *
+ * Ne traiter que le `200` avait donc l'effet exactement inverse de l'intention : on jetait
+ * précisément les réponses qui transportaient une commande. Et jeter est ici irréparable, deux
+ * fois — le SDK retire la commande de sa file au moment où il la **chiffre**, sans réessai (voir
+ * `handleLanCommandRequest`), et le message chiffré qu'on n'a pas déchiffré laisse notre flux
+ * AES-CBC un message en arrière, donc tout ce qui suit est illisible.
+ *
+ * Mesuré en direct sur l'application officielle : `sonde commands.json — HTTP 206, 300 o — non
+ * déchiffré`, puis un bloc illisible finissant par `…ta":{}}`, et un allumage que l'appareil n'a
+ * jamais reçu alors que le téléphone journalisait `AylaDatapoint sent to SDK: 0d 07 84 0f 02 01`.
+ */
+export const STATUTS_AVEC_CHARGE = new Set([200, 206]);
+
+/** Pur, donc prouvable sans réseau : cette réponse transporte-t-elle quelque chose à déchiffrer ? */
+export const porteUneCharge = (status, corps) =>
+  STATUTS_AVEC_CHARGE.has(Number(status)) && String(corps ?? "").trim().length > 0;
+
+/**
+ * `206` : l'application dit qu'il lui en reste. Y retourner tout de suite plutôt qu'au prochain
+ * tour de sonde — un lot de dix commandes mettrait vingt secondes à arriver alors que
+ * l'utilisateur vient d'appuyer sur un bouton.
+ */
+export const encoreDesCommandes = (status) => Number(status) === 206;
+
 /** Pur, donc prouvable sans réseau : cette erreur est-elle un refus, ou seulement un silence ? */
 export const estRefus = (err) => REFUS_RESEAU.has(err?.code);
 

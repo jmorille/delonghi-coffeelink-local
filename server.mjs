@@ -33,7 +33,8 @@ import { makeLanSession, token } from "./src/lib/lansession.mjs";
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
          cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
-         estRefus, PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
+         estRefus, porteUneCharge, encoreDesCommandes,
+         PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
 import { RANG, DELAIS, MAX_FILE, nouvelleFile, tache, pasLecture, pasTrame, enfiler, aServir,
@@ -1339,12 +1340,21 @@ function desarmerSondeApp(app) {
  * désynchronisé de quelques octets. Le symptôme est trompeur — il ressemble à une charge utile
  * inattendue alors que c'est notre propre concurrence qui a brouillé le déchiffrement.
  */
+/** Combien de blocs on accepte d'enchaîner sur un même passage. Voir `sonderApp`. */
+const MAX_BLOCS_ENCHAINES = 12;
+
 async function sonderApp(m, app) {
   if (app.etat !== "etablie" || !app.session) return;
   if (app.sondeEnCours) return;
   app.sondeEnCours = true;
   try {
-    await sonderAppSerialise(m, app);
+    // On enchaîne tant que l'application répond 206 (« il en reste »), sans jamais lâcher le
+    // verrou : deux sondes concurrentes déchiffreraient deux blocs du MÊME flux AES-CBC dans un
+    // ordre non garanti, ce qui est le défaut que ce verrou existe pour empêcher.
+    for (let i = 0; i < MAX_BLOCS_ENCHAINES; i++) {
+      if (app.etat !== "etablie" || !app.session) break;
+      if (!(await sonderAppSerialise(m, app))) break;
+    }
   } finally {
     app.sondeEnCours = false;
   }
@@ -1379,20 +1389,39 @@ async function sonderAppSerialise(m, app) {
     constaterEchecApp(m, app, e);
     // ⚠️ **Un délai dépassé n'est pas un silence : c'est un flux DOUTEUX.** La requête a pu
     // atteindre le téléphone, qui a alors produit ET CHIFFRÉ sa réponse — son flux sortant a
-    // avancé, le nôtre non, et rien ne le rattrapera jamais. On le découvrait deux sondes plus
-    // tard, sous la forme d'un bloc illisible, sans jamais faire le lien avec l'expiration qui
-    // l'avait causé. Rouvrir tout de suite ne coûte qu'un échange de clés, qui ne touche pas la
-    // cafetière ; le même verrou de 15 s qu'ailleurs empêche l'emballement si le téléphone est
-    // simplement lent.
+    // avancé, le nôtre non. Le dégât est BORNÉ — un message sauté n'abîme que les 16 premiers
+    // octets du prochain message lu, après quoi le flux se recale seul (`verif-lansession.mjs`
+    // le prouve) — mais ce qui ne revient pas, c'est la COMMANDE que ce message portait : le SDK
+    // l'a retirée de sa file en la chiffrant. Rouvrir ne répare donc rien de perdu ; cela évite
+    // seulement le bloc illisible qui suivrait, et cela ne coûte qu'un échange de clés, qui ne
+    // touche pas la cafetière. Le verrou de 15 s empêche l'emballement si le téléphone est lent.
     if (e?.code === "ETIMEDOUT") relancerSessionApp(m, app, "sonde expirée, réponse peut-être perdue");
-    return;
+    return false;
   }
-  if (rep.status !== 200 || !rep.corps.trim()) {
-    // ⚠️ Ce retour anticipé saute le déchiffrement. Si l'application avait tout de même produit
-    // un message chiffré, son flux a avancé et le nôtre non — le désaccord d'un message qui rend
-    // tout le reste illisible. Le dire est le minimum : c'était jusqu'ici une sortie muette.
+  // ⚠️⚠️ **`206` EST une réponse normale, et la jeter perdait la commande.** Relevé dans
+  // `AylaLanModule.getResponseCode()` :
+  //
+  //     return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+  //
+  // C'est-à-dire : **206 quand il RESTE des commandes après celle-ci**, 200 quand la file vient
+  // de se vider. Le corps est identique dans les deux cas — un bloc chiffré parfaitement valide.
+  // Notre test `!== 200` en faisait donc une erreur, et le silence coûtait double, parce que le
+  // SDK a déjà retiré la commande de sa file au moment où il l'a CHIFFRÉE (voir
+  // `handleLanCommandRequest`) : la commande est perdue **définitivement**, et notre flux a un
+  // message de retard.
+  //
+  // C'est exactement ce qui empêchait l'allumage depuis l'application officielle. Elle empile le
+  // `0x84` puis, une milliseconde plus tard, tout un lot d'alarmes : dès qu'il y a deux commandes
+  // en file, la première revient en 206 — et partait à la poubelle sans une ligne de journal.
+  // La règle vit dans `appproxy.mjs`, avec sa justification et sa preuve en CI. La redire ici
+  // ferait deux copies d'une règle de protocole, qui divergeraient au premier ajout sans rien
+  // lever — et celle-ci a coûté des jours.
+  if (!porteUneCharge(rep.status, rep.corps)) {
+    // Ce retour saute le déchiffrement, donc il peut encore perdre un message : le dire est le
+    // minimum. C'était jusqu'ici une sortie muette, et c'est ce qui a rendu le défaut ci-dessus
+    // invisible pendant des jours.
     noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — non déchiffré`);
-    return;
+    return false;
   }
   toucher(app, Date.now());
   let clair;
@@ -1401,15 +1430,20 @@ async function sonderAppSerialise(m, app) {
   } catch (e) {
     // Même cause que le cas `illisible` plus bas — un flux perdu — mais détectée un cran plus
     // tôt, quand c'est le déchiffrement lui-même qui refuse (remplissage invalide). On
-    // journalisait et on repartait sonder un flux qui ne redeviendrait jamais lisible.
+    // journalisait et on repartait sonder sans jamais rouvrir la session.
     noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — indéchiffrable`);
     LA("in", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
     relancerSessionApp(m, app, "déchiffrement refusé");
-    return;
+    return false;
   }
   const intentions = analyserCommandes(clair);
   noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — ${intentions.map((i) => i.type).join(", ")}`);
   for (const intention of intentions) await executerPourApp(m, app, intention);
+  // `206` dit « il en reste » : on repasse tout de suite au lieu d'attendre le prochain tour de
+  // sonde. Sans cela un lot de dix commandes met vingt secondes à arriver, alors que
+  // l'utilisateur, lui, vient d'appuyer sur un bouton. Borné pour ne pas transformer une
+  // application bavarde en boucle serrée : au-delà, la sonde périodique reprend la main.
+  return encoreDesCommandes(rep.status);
 }
 
 /**
@@ -1527,14 +1561,16 @@ async function executerPourApp(m, app, intention) {
     case "illisible":
       // Ce n'est PAS une charge inattendue, c'est notre flux qui est perdu — et `lansession.mjs`
       // le dit depuis toujours : « une désynchronisation force un nouvel échange de clés ». On ne
-      // le faisait pas. On journalisait « demande non reconnue » et on continuait de sonder un
-      // flux AES-CBC qui ne redeviendra jamais lisible, indéfiniment. Mesuré sur la vraie
-      // application : session ouverte à 16:11:14, illisible à 16:11:48, et rien n'en serait
-      // ressorti sans intervention manuelle.
+      // le faisait pas : on journalisait « demande non reconnue » et on repartait sonder.
       //
-      // La signature ne trompe pas : en CBC, un chaînage faux ne salit que le bloc de tête, la
-      // suite se recale seule sur le chiffré qui la précède — d'où ces octets illisibles finissant
-      // proprement par `…a":{}}`. Une charge réellement inattendue, elle, serait lisible.
+      // ⚠️ **Ce bloc-ci est un SYMPTÔME, pas la maladie, et la nuance a coûté des jours.** En CBC
+      // un chaînage faux ne salit que le bloc de tête — la suite se recale seule sur le chiffré
+      // qui la précède DANS le même message, d'où ces octets illisibles finissant proprement par
+      // `…a":{}}`. Et le message suivant, lui, est parfaitement lisible : le flux se répare tout
+      // seul (prouvé dans `verif-lansession.mjs`). Donc **un bloc illisible ne dit pas « le flux
+      // est cassé », il dit « exactement un message a disparu juste avant »** — et ce message-là
+      // portait peut-être une commande, définitivement perdue. C'est en amont qu'il faut
+      // chercher, pas ici : voir `porteUneCharge` et le `206`.
       // La charge illisible est CONSERVÉE : c'est la seule preuve de ce qui s'est passé, et la
       // signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, d'où
       // des octets illisibles finissant proprement par `…a":{}}`. Sans elle, « désynchronisé »
