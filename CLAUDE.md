@@ -293,7 +293,15 @@ POST returns as soon as `local_reg` is sent, and the *machine* pushes the value 
 meant re-downloading the whole list every 2 s to see one field change, and getting the timing wrong
 anyway. **The trigger is the log**: every meaningful state change in this server already goes through
 `L()`, so `sseTouch()` hooks there — no instrumenting twenty call sites and no forgetting the
-twenty-first. Coalesced over 250 ms (an import logs one line per property). `sseWatch()` covers the
+twenty-first. ⚠️ **That sentence was false in exactly one place, and it was the most visible one:
+the key exchange logged nothing.** `/local_lan/key_exchange.json` set `m.session` and returned, so
+opening a LAN session — the most structuring event of the link — was both untraceable in the journal
+and invisible to every subscriber: `/pilotage` kept showing "session LAN : en attente" while
+`/api/status` had answered `active: true` since the exchange. Reloading the page fixed the display,
+which made a real hole look like a browser quirk. It now logs one line (`session LAN
+établie/rouverte (key_id N)`), which floods nothing — a session opens once — and if it reopens in a
+loop that is precisely what one needs to see, folded with its count. The rule to keep: **a state
+change that writes no log line is a state change no browser will ever learn about.** Coalesced over 250 ms (an import logs one line per property). `sseWatch()` covers the
 one thing the log cannot say: a window that **expires** without the machine ever connecting writes no
 line, so without it the "lecture…" badge would hang forever; it runs only while something is open and
 stops after one final broadcast. `fenetreOuverte()` judges liveness on the **duration**, not on the

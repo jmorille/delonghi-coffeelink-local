@@ -1181,7 +1181,23 @@ async function handleLan(req, res) {
     // Mémorisé pour les deux autres endpoints, qui ne portent pas de `key_id`.
     m.peerIp = peerAddress(req);
     const t2 = Date.now();
+    const rouverte = !!m.session;
     m.session = makeSession(m, kx, String(t2));
+    // ⚠️ **La seule chose que ce serveur faisait sans l'écrire — et c'était la plus visible.**
+    //
+    // Deux conséquences, la seconde bien pire que la première. Le journal ne portait aucune
+    // trace de l'ouverture d'une session LAN : l'évènement le plus structurant de la liaison
+    // était le seul intraçable. Et surtout, `sseTouch()` est branché sur `L()` — c'est tout le
+    // principe : un changement d'état passe par le journal, donc les navigateurs l'apprennent.
+    // Ne rien journaliser ici, c'est ne rien pousser : `/pilotage` restait sur « session LAN :
+    // en attente » alors que `/api/status` répondait `active: true` depuis l'échange de clés.
+    // Un rechargement de page corrigeait l'affichage, ce qui faisait passer un vrai trou pour
+    // un caprice du navigateur.
+    //
+    // Aucun risque d'inonder le journal : une session s'ouvre une fois, pas toutes les deux
+    // secondes — et si elle se rouvre en boucle, c'est précisément ce qu'il faut voir. Le repli
+    // des lignes identiques de `L()` s'en charge, avec son compte.
+    L("in", `session LAN ${rouverte ? "rouverte" : "établie"} (key_id ${m.lanKeyId})`, m);
     return raw(res, JSON.stringify({ random_2: m.session.random2, time_2: t2 }));
   }
   const m = machineByPeer(req);
