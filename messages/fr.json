@@ -456,7 +456,7 @@
     "taskCancelAll": "Vider la file",
     "taskCancelAllConfirm": "Retirer les {count} tâche(s) en attente ? La tâche en cours est incluse. Rien n'est envoyé à la machine — elle cessera simplement de venir chercher du travail.",
     "taskCancelled": "{count} tâche(s) retirée(s) de la file.",
-    "taskMuteHint": "La machine n'est pas venue chercher la commande. En mode LAN c'est elle qui se connecte au serveur : vérifiez qu'elle est allumée, et que le trafic de son réseau vers l'adresse annoncée ci-dessus est permis.",
+    "taskMuteHint": "La machine n'est pas venue chercher la commande. En mode LAN c'est elle qui se connecte au serveur : vérifiez qu'elle est allumée, et que le trafic de son réseau vers l'adresse annoncée ci-dessus est permis. Troisième cause, mesurée et invisible autrement : la machine ne retient qu'UN interlocuteur local, donc une application De'Longhi ouverte sur le réseau prend le créneau et nous évince sans aucun signal. Si une application tourne, fermez-la — la reprise est automatique.",
     "readState": "Lire l'état",
     "readStateTitle": "Demande à la machine son état actuel : veille ou allumée, capteurs, alarmes. Une seule trame, aucune préparation, aucune écriture.",
     "readStateSent": "Demande d'état envoyée — la machine répond en quelques secondes.",
@@ -880,12 +880,40 @@
     "settingToggle": "Réglage {reglage} {actif, select, 1 {activé} other {désactivé}}",
     "monitorMode": "Mode moniteur {mode} (0x{hex})",
     "readOne": "Lecture {prop}",
-    "readMany": "Lecture de {count} propriétés"
+    "readMany": "Lecture de {count} propriétés",
+    "appWrite": "App {app} · commande",
+    "appRead": "App {app} · lecture {prop}"
   },
   "profilesWhat": {
     "names": "noms",
     "order": "ordre des favoris",
     "all": "tout",
     "custom": "recettes perso"
+  },
+  "apps": {
+    "heading": "Applications branchées",
+    "off": "Multiplexeur d'applications éteint.",
+    "offHint": "Allumé (PROXY_APPS=1), ce serveur répond aux applications De'Longhi comme le ferait la machine, et leur relaie l'état et les commandes. Il existe parce que la machine ne retient qu'UN interlocuteur local : une application ouverte sur le réseau prend le créneau et évince ce serveur sans le moindre signal.",
+    "portWarn": "Nous écoutons sur le port {port}, mais une application cherche l'appareil sur le port {attendu} et nulle part ailleurs : aucune ne nous trouvera tant que ce n'est pas corrigé (SERVER_PORT, ou une redirection).",
+    "none": "Aucune application branchée.",
+    "noneHint": "Une application s'annonce d'elle-même après avoir trouvé l'appareil. Tant qu'elle joint la vraie machine, elle n'a aucune raison de venir ici.",
+    "stateAnnounced": "annoncée",
+    "stateEstablished": "session établie",
+    "stateExpired": "expirée",
+    "machine": "pilote {machine}",
+    "traffic": "{datapoints} état(s) transmis · {commandes} commande(s) relayée(s)",
+    "seen": "vue il y a {age} s",
+    "refusHeading": "Demandes refusées",
+    "refusNone": "Aucune demande refusée.",
+    "refusLine": "{from} — {motif}",
+    "repeats": "×{count}",
+    "motif_dsnInconnu": "numéro de série demandé inconnu ici",
+    "motif_sansCle": "clé LAN de cette machine inconnue : aucune session ne pourrait être chiffrée",
+    "motif_echecEchange": "échange de clés échoué",
+    "motif_corpsIllisible": "annonce illisible",
+    "motif_cleInconnue": "identifiant de clé non attribué",
+    "motif_sansSession": "requête chiffrée avant tout échange de clés",
+    "motif_desactive": "multiplexeur éteint",
+    "warning": "Ce serveur se présente à ces applications sous le numéro de série de la machine. Elles ne peuvent pas faire la différence — c'est le principe, et c'est aussi pourquoi tout ce qui se branche ici est listé."
   }
 }

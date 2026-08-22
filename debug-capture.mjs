@@ -36,7 +36,10 @@ function makeSession(kx, time2) {
   const aSeed = (t) => Buffer.concat([R1, R2, T1, T2, tag(t)]);
   const dSeed = (t) => Buffer.concat([R2, R1, T2, T1, tag(t)]);
   const appSign = derive(LAN_KEY, aSeed(0x30)), appCrypto = derive(LAN_KEY, aSeed(0x31)), appIv = derive(LAN_KEY, aSeed(0x32)).subarray(0, 16);
-  const devSign = derive(LAN_KEY, dSeed(0x30)), devCrypto = derive(LAN_KEY, dSeed(0x31)), devIv = derive(LAN_KEY, dSeed(0x32)).subarray(0, 16);
+  // `_devSign` : dérivée pour que le triplet reste lisible en face de son symétrique « app », mais
+  // jamais utilisée — cet outil déchiffre ce que la machine envoie, il n'en vérifie pas la
+  // signature. Le préfixe `_` dit que l'absence d'usage est voulue.
+  const _devSign = derive(LAN_KEY, dSeed(0x30)), devCrypto = derive(LAN_KEY, dSeed(0x31)), devIv = derive(LAN_KEY, dSeed(0x32)).subarray(0, 16);
   const e = crypto.createCipheriv("aes-256-cbc", appCrypto, appIv); e.setAutoPadding(false);
   const d = crypto.createDecipheriv("aes-256-cbc", devCrypto, devIv); d.setAutoPadding(false);
   let seq = 0;
@@ -140,8 +143,10 @@ function handle(req, res, body) {
 
 // Phase 1 : servir "{}" (commande vide) pour tester si la machine déchiffre et
 // nous renvoie ses datapoints (monitor). Phase 2 (après 35s) : servir le turn-on.
-// Séquence de commandes servies (une par cycle commands.json) :
-const SEQ = ["read", "on", "read", "read", "read", "read"];
+// Séquence de commandes servies (une par cycle commands.json) : lecture, allumage, puis lectures.
+// Elle n'est pas décrite par une table — `servirCommande` la déroule sur `seqIdx`. Un tableau
+// `SEQ` traînait ici, jamais lu : il prétendait décrire la séquence sans la piloter, donc il
+// aurait menti dès la première modification du code d'à côté. Trouvé par ESLint.
 let seqIdx = 0;
 
 function postLocalReg(notify) {

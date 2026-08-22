@@ -258,7 +258,10 @@ function migrateSchema(fromVersion) {
     );
   } catch (e) {
     try { db.exec("ROLLBACK"); } catch {}
-    throw new Error(`migration du schéma v1 → v2 impossible (${e.message}) — la base est restée en v1`);
+    // `cause` attachée : c'est la SEULE opération de ce projet qui puisse détruire les données
+    // d'un utilisateur, et le message seul perdait la pile de l'erreur SQLite d'origine — donc
+    // précisément ce qu'on voudrait lire si elle échouait un jour chez quelqu'un.
+    throw new Error(`migration du schéma v1 → v2 impossible (${e.message}) — la base est restée en v1`, { cause: e });
   } finally {
     db.exec("PRAGMA foreign_keys = ON");
   }

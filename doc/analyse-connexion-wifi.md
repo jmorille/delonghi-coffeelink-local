@@ -546,6 +546,336 @@ fonctionnera une fois le `local_reg` établi.
 
 ---
 
+## 7ter. Test réel du 2026-08-22 : le créneau `local_reg` est UNIQUE
+
+**Manipulation.** lan-server tourne et pilote la machine normalement. On ouvre l'application
+officielle De'Longhi sur le même réseau, sans rien changer d'autre. Puis on la ferme.
+
+**Observation.**
+
+| Moment | Ce que fait lan-server | Ce que fait la machine |
+|---|---|---|
+| App fermée | `local_reg` toutes les 2,5 s, accepté (202) | se connecte à nous, commandes servies |
+| **App ouverte** | `local_reg` toujours accepté (202) | **ne se connecte plus à nous** |
+| App fermée, après un délai | inchangé | se reconnecte à nous, seule |
+
+Côté file de tâches, le symptôme est une tâche « Présence » à `0 sur 2`, repliée `×4`, motif
+« sans réponse » : le coupe-circuit muet la déclare absente au bout de 25 s.
+
+**Conclusion — trois faits, dont deux n'étaient pas acquis.**
+
+1. **Le module ne retient qu'UN interlocuteur local.** Cela se lisait dans l'APK — ressource au
+   singulier, POST puis PUT (`new AylaJsonRequest<>(z9 ? 2 : 1, …)` où `z9 = _isActive`), et un
+   `DeleteSessionCommand` qui fait `DELETE local_reg.json` — mais c'était une lecture, pas une
+   mesure. C'en est une maintenant. Le dernier qui s'annonce prend la place.
+2. **L'éviction ne produit AUCUN signal.** Notre `local_reg` continue de recevoir 202 : la machine
+   accepte l'annonce et ne s'y connecte simplement plus. Rien ne distingue donc, dans le journal,
+   « une application a pris le créneau » de « la machine est éteinte » ou « le retour réseau est
+   coupé ». C'est le piège de diagnostic de cette section, et il est cher : le motif « muette »
+   oriente aujourd'hui vers le chemin réseau, qui est le coupable habituel mais pas le seul.
+3. **La reprise est automatique.** Aucune action n'est nécessaire côté serveur : l'annonce
+   périodique reprend le créneau dès que l'app le libère. Il n'y a pas de bail à attendre côté
+   nous, et le `DELETE` explicite du SDK n'est pas la seule façon de rendre la place — l'abandon
+   suffit.
+
+C'est la prémisse du multiplexeur décrit dans `doc/spec-proxy-multi-app.md` : puisque le créneau
+est unique, faire cohabiter plusieurs applications suppose que quelqu'un le tienne pour tout le
+monde.
+
+## 7quater. Test réel du 2026-08-22 : le mDNS est un repli HORS LIGNE, pas une voie de découverte
+
+**Manipulation.** La cafetière est retirée du Wi-Fi (injoignable : 100 % de perte au ping, depuis le
+téléphone comme depuis le serveur). Le téléphone (IP_TELEPHONE) est branché en USB, débogage actif, et
+l'application officielle est ouverte. `adb logcat` tourne pendant toute la fenêtre.
+
+### Ce que l'application fait, littéralement
+
+```
+E/AylaAPI: com.android.volley.NoConnectionError: java.net.ConnectException:
+           Failed to connect to /IP_MACHINE:80
+           for http://IP_MACHINE/local_reg.json?dsn=AC000W0XXXXXXXX
+```
+
+Répété **toutes les 10 secondes**, sans dégressivité et sans abandon (observé sur plus de 100 s).
+
+Trois points du protocole, jusqu'ici seulement *lus* dans l'APK, sont maintenant **mesurés** :
+
+| Fait | Statut avant | Preuve |
+|---|---|---|
+| L'application vise le **port 80**, jamais un autre | inféré de `lanURL()` | `/IP_MACHINE:80` dans la trace |
+| Le premier enregistrement porte **`?dsn=`** | lu dans `sendLocalRegistration` | `?dsn=AC000W0XXXXXXXX` dans l'URL |
+| L'annonce est un **POST** vers `local_reg.json` | lu | idem |
+
+C'est le gabarit exact qu'un serveur qui se fait passer pour la machine doit servir.
+
+### Et surtout : le mDNS ne s'est JAMAIS déclenché
+
+Aucune requête multicast, aucune interrogation de `AC000W0XXXXXXXX.local`, aucun `NetThread` — sur toute
+la fenêtre. L'explication est dans le code, et elle est plus restrictive qu'on ne le croyait.
+
+`handleKeyExchangeError()` est bien appelé (la branche d'erreur de `sendLocalRegistration` y mène,
+vérifié), mais il arme le `NetThread` sous **deux** conditions cumulées :
+
+```java
+if (… && aylaDevice.getSessionManager().isCachedSession()) {
+    if ((error is NetworkError || error is TimeoutError) && _netThread == null) {
+        new NetThread(_mdnsListener, dsn + ".local").start();
+    }
+}
+```
+
+- **La classe d'erreur** est satisfaite : `AylaError.java` convertit un `NoConnectionError` de Volley
+  en `NetworkError` exactement (`if (volleyError instanceof NoConnectionError) return new
+  NetworkError(...)`), et le test est une égalité de classe, donc c'est bien le bon type.
+- **`isCachedSession()` ne l'est pas**, et c'est là que tout se joue. Ce drapeau vient de
+  `signInSuccessful(..., z9)`, et l'unique appelant qui passe `true` est
+  `CachedAuthProvider` — dans la **branche d'erreur** du rafraîchissement de jeton :
+
+```java
+// échec de POST users/refresh_token.json
+if (erreur != NetworkError && erreur != Timeout)      → didFailAuthentication
+else if (!allowOfflineUse || sessionName == null)     → didFailAuthentication
+else { AylaLog.d(LOG_TAG, "Starting LAN login");
+       didAuthenticate(_cachedCredentials, true); }   → isCachedSession() = true
+```
+
+**Conclusion : `isCachedSession()` signifie « le téléphone n'a pas pu joindre le cloud Ayla ».**
+C'est un mode hors ligne, pas un mode normal — et il est en plus effacé (`setCachedSession(false)`)
+dès que la première requête cloud aboutit.
+
+Donc **la découverte mDNS n'existe que lorsque le téléphone est coupé d'Internet.** Tant qu'il a le
+cloud, l'application ne cherchera jamais l'appareil ailleurs qu'à l'adresse que le cloud lui a
+donnée. C'était l'inverse de ce que la spécification du proxy supposait.
+
+### Ce que l'application fait à la place : elle bascule sur le cloud, sans le dire
+
+Pendant que les `local_reg` échouent, l'application affiche la machine comme **en ligne** :
+
+```
+D/YOLO: machinePos connection status: Online
+D/GoogleAnalyticsHelper: setMachineConnectionStatus Online ready
+D/DSS_LOGS: Create subscription url https://mdss-field-eu.aylanetworks.com/api/v1/subscriptions
+E/…DeLonghiWifiConnectService: onSingleChangeProperty data_request sameLan: false
+```
+
+`sameLan: false` est le marqueur : ces propriétés arrivent par le **flux cloud** (DSS), pas par le
+LAN. L'utilisateur ne voit aucune dégradation — ce qui explique qu'un conflit de créneau soit si
+difficile à diagnostiquer côté application aussi.
+
+### Conséquence pour le multiplexeur
+
+Le répondeur mDNS était l'étape 1 du découpage de `doc/spec-proxy-multi-app.md`. **Il ne sert à
+rien dans un usage normal**, et deux obstacles s'ajoutent au premier :
+
+1. le mDNS n'est armé que hors ligne (ci-dessus) ;
+2. la requête est du multicast lien-local : le téléphone est sur le segment de la machine, notre
+   serveur est ailleurs — elle ne nous atteindrait pas sans répéteur mDNS sur la passerelle.
+
+La seule voie qui fonctionne dans un usage normal est donc de **répondre à l'adresse que
+l'application interroge déjà**, c'est-à-dire de prendre la place de la machine au niveau réseau.
+Et ce n'est pas faisable par une règle de pare-feu : le téléphone et la machine étant sur le même
+/24, le trafic est commuté et ne traverse jamais la passerelle (vérifié : `ip route get
+IP_MACHINE` ne montre aucun `via`, et l'entrée ARP porte le MAC du module ESP32).
+
+### 7quater.1 « Rechercher ma machine à café » est du BLUETOOTH, pas du réseau
+
+Test complémentaire le même jour, dans les mêmes conditions (cafetière hors réseau, notre serveur
+répondant `{"host_symname":"<DSN>","registration_type":"Same-LAN"}` sur le port 80). L'application
+propose une recherche automatique d'appareil : elle n'a rien trouvé, et la trace dit pourquoi.
+
+```
+GoogleAnalyticsHelper  logEvent  pairing_user_search_machine_tapped
+                                 screen_name - PAIRING_SEARCH_OPTIONS_SCREEN
+SearchingViewModel     I'm scanning / scan
+b                      startEcamScan
+c                      scanLeDevice(true) — starting LE scan for 5 seconds
+BluetoothAdapter       startLeScan()          × 11
+DeLonghiWifiConnectService  Blufi: startBlufiScan / Start scan ble / onIntervalScanUpdate
+```
+
+**Aucune requête IP de toute la fenêtre.** Les seules lignes réseau sont les `local_reg` de fond
+qui continuent d'échouer vers `IP_MACHINE:80`, indépendantes de la recherche ; côté serveur,
+`/api/apps` reste à `apps: [], refus: []` — rien ne nous a jamais touchés.
+
+L'appairage passe donc par **BLE**, et notamment par **BluFi**, le protocole d'approvisionnement
+Wi-Fi d'Espressif par Bluetooth : c'est ainsi que le module ESP32 reçoit ses identifiants Wi-Fi.
+Aucun balayage de sous-réseau, aucun mDNS, aucune sonde `regtoken.json`.
+
+**Conséquence : cette fonction ne pourra jamais nous trouver**, et pas faute d'être crédibles — elle
+ne cherche pas là. L'application n'a que deux façons d'atteindre une machine :
+
+1. **l'adresse IP que le cloud lui a donnée** (`AylaDevice.getLanIp()`, utilisée telle quelle par
+   `lanURL()`), pour le pilotage ;
+2. **le BLE / BluFi**, pour l'appairage initial.
+
+Ni l'une ni l'autre n'est interceptable par un imposteur situé sur un autre segment IP. Cela ferme
+la dernière voie de découverte plausible et laisse une seule option au multiplexeur : **occuper
+l'adresse que l'application interroge déjà**, sur le segment où elle l'interroge.
+
+### 7quater.2 La réponse EXACTE de `/regtoken.json`, relevée sur la machine
+
+Mesurée le 2026-08-22 en interrogeant la vraie machine et notre imposteur côte à côte, à la même
+seconde. Elles ne se ressemblaient pas.
+
+```http
+GET /regtoken.json                       ← la MACHINE
+HTTP/1.1 200 OK
+Content-Type: text/json
+
+{"regtoken":"XXXXXX","registered":1,"registration_type":"AP-Mode","host_symname":"AC000W0XXXXXXXX"}
+```
+
+Quatre écarts avec ce que lan-server servait au départ, et chacun est une occasion pour une
+application de constater qu'elle ne parle pas à l'appareil :
+
+| | machine | notre première version |
+|---|---|---|
+| Type MIME | `text/json` | `application/json` |
+| `regtoken` | présent | absent |
+| `registered` | `1` | absent |
+| `registration_type` | `AP-Mode` | `Same-LAN` |
+
+`AP-Mode` alors que la machine est en fonctionnement normal sur le Wi-Fi domestique : la valeur ne
+décrit pas l'état courant, c'est une constante du firmware. La déduire aurait donné `Same-LAN`,
+c'est-à-dire faux.
+
+**Conséquence de méthode, plus large que ce cas.** On ne sait pas quel champ une application
+regarde, ni si elle en regarde un. Reconstituer la réponse revient donc à parier sur une liste de
+champs qu'on ne connaît pas. `handleAppRegtoken()` **ressert le corps brut de la machine**
+(`m.regtokenBrut`, rafraîchi au maximum toutes les 60 s parce qu'un jeton d'enregistrement périmé
+serait un écart de plus), et ne reconstruit un minimum que si la machine n'a jamais répondu — auquel
+cas il l'écrit dans le journal, pour qu'un refus reste diagnosticable.
+
+Ce relevé sert aussi de **discriminant de test** : tant que le client interrogé répond
+`registration_type: "AP-Mode"` avec un `regtoken`, c'est la machine ; s'il répond sans, c'est nous.
+C'est ainsi qu'a été constaté qu'une redirection réseau n'était pas encore active.
+
+## 7quinquies. Test réel du 2026-08-22 : l'application OFFICIELLE s'est branchée sur lan-server
+
+**C'est l'inférence la plus lourde de `doc/spec-proxy-multi-app.md` qui tombe** — celle qu'aucun
+test local ne pouvait fermer : *une application se contenterait-elle d'un pair qui n'est pas la
+machine ?* Oui.
+
+### Le montage
+
+Le mDNS étant hors d'atteinte (§7quater), on prend l'autre voie : **répondre à l'adresse que
+l'application interroge déjà.**
+
+```
+téléphone   IP_TELEPHONE   sur VLAN_TEL
+lan-server  IP_SERVEUR   sur VLAN_SERVEUR, PROXY_APPS=1, port 80
+cafetière   IP_MACHINE     sur son VLAN, EN LIGNE et pilotée par nous
+```
+
+Une seule règle sur le routeur, un **NAT 1:1 (BINAT)** sur l'interface du téléphone :
+
+| Champ | Valeur |
+|---|---|
+| Type | BINAT |
+| Réseau externe | `IP_MACHINE` (l'adresse que l'app compose) |
+| Source / interne | `IP_SERVEUR` (nous) |
+| Destination | `IP_TELEPHONE` (ce seul téléphone) |
+
+**Le BINAT plutôt qu'une simple redirection de port, et c'est le point de conception.** Il traduit
+dans les **deux** sens : à l'aller `→ IP_MACHINE` devient `→ IP_SERVEUR`, au retour notre
+`IP_SERVEUR` ressort en `IP_MACHINE`. Or c'est **nous** qui initions l'échange de clés vers
+l'application : avec une redirection seule, elle l'aurait reçu d'une adresse inattendue. Le champ
+*Destination* contient l'usurpation à un seul appareil ; le reste du réseau atteint la vraie machine.
+
+⚠️ **Prérequis non évident : le serveur doit être mono-domicilié.** Avec une patte sur le segment du
+téléphone, ses réponses partiraient en direct et court-circuiteraient la traduction — l'application
+recevrait des paquets d'une adresse à laquelle elle n'a rien demandé, et les jetterait. Le routage
+doit être symétrique, donc tout doit repasser par le routeur.
+
+### Le résultat, vu des deux côtés
+
+Journal du pare-feu :
+
+```
+igc5 in  binat  IP_TELEPHONE -> IP_MACHINE:80    « binat rule »
+igc4 out pass   IP_TELEPHONE -> IP_SERVEUR:80
+```
+
+Journal de lan-server :
+
+```
+in   app a1 : IP_TELEPHONE s'annonce pour AC000W0XXXXXXXX
+out  app a1 (IP_TELEPHONE:10275) : session établie, nous nous présentons comme AC000W0XXXXXXXX
+in   app a1 → écriture ignorée sur device_connected (seule data_request est relayée)
+in   app a1 → action · sélection de profil (0xa9) · trame 0d 06 a9 f0 01 …
+out  t3 · App a1 · action · sélection de profil (0xa9) …
+out  commande servie: App a1 · action · sélection de profil (0xa9) …
+in   data_response: d0 07 a9 f0 01 00 3b 3c …
+```
+
+Et l'application, dans sa propre journalisation :
+
+```
+DeLonghiWifiConnectService: onSingleChangeProperty data_request sameLan: true
+YOLO: sameLan HomeRecipeActivity: true
+```
+
+**`sameLan: true`.** L'application affirme elle-même être en session LAN — avec nous. La chaîne
+complète a fonctionné : annonce, échange de clés que **nous** avons initié, commande réelle émise
+par l'application, relayée par notre file, exécutée par la machine, et réponse remontée.
+
+### Trois défauts que seul le test réel pouvait révéler
+
+**1. Le délai tue.** Notre `/regtoken.json` sondait la vraie machine *avant* de répondre (jusqu'à
+4 s). Volley, côté application, abandonne avant : `TimeoutError for http://IP_MACHINE/local_reg.json`.
+Corrigé : une réponse en cache est servie immédiatement et rafraîchie en arrière-plan. Une réponse
+d'une minute d'âge vaut infiniment mieux qu'une réponse juste mais tardive — le jeton ne change pas
+d'une seconde à l'autre, alors qu'un délai dépassé fait conclure que l'appareil est absent.
+
+**2. La concurrence désynchronise le flux AES, sans lever d'erreur.** Observé une fois :
+
+```
+in  app a1 : demande non reconnue — {"type":"illisible","brut":"…\u001c'Y…k 3…\"ta\":{}}"}
+```
+
+Ces `"ta":{}}` à demi lisibles sont la signature d'un flux décalé de quelques octets. Cause : deux
+sondes de `commands.json` en vol en même temps (la périodique et celle déclenchée par
+`notify: 1`), déchiffrant sur le **même** flux persistant. Le symptôme est trompeur — il ressemble à
+une charge utile inattendue de l'application alors que c'est notre propre concurrence. Corrigé des
+deux côtés : une sonde à la fois par application, et les envois sortants sérialisés par une chaîne
+de promesses, le chiffrement ayant lieu **dans** le maillon pour que l'ordre de production soit
+l'ordre d'émission.
+
+C'est exactement le risque que `lansession.mjs` documente — *« une désynchronisation force un
+nouvel échange de clés »* — rencontré pour de vrai.
+
+**3. Le port d'écoute de l'application est ÉPHÉMÈRE.** Relevé en relançant
+l'application officielle : elle s'est réannoncée depuis un port différent, et comme l'identité d'une
+application est son couple `adresse:port` — tout ce que `local_reg` transporte —, le registre a
+tenu **deux** entrées pour un seul téléphone.
+
+```
+a1  IP_TELEPHONE:10275   établie   vue il y a  5 s   ← le lancement courant
+a2  IP_TELEPHONE:37067   établie   vue il y a 83 s   ← fantôme, port FERMÉ
+```
+
+La preuve est immédiate — une connexion sur l'ancien port est refusée tout de suite — mais rien ne
+l'exploitait : l'entrée survivait jusqu'au délai de silence (90 s), en affichant « session établie »
+sur un port mort. **Le silence et le refus ne sont pas la même information.** Un téléphone verrouillé
+se tait ; un port fermé répond, et il répond non.
+
+Corrigé par un décompte d'échecs **consécutifs** (`echouer()` dans `appregistry.mjs`, seuil 3) :
+à la cadence de sonde, l'entrée morte part en une douzaine de secondes, avec le motif *injoignable*
+au journal. Un seul contact réussi remet le compteur à zéro, pour qu'un téléphone en veille une
+seconde ne soit pas confondu avec un téléphone parti.
+
+⚠️ **Le raccourci à ne pas prendre : évincer sur la seule adresse.** Devant un doublon, la tentation
+est de dire « même téléphone, donc même application ». Ce serait supprimer la fonctionnalité :
+plusieurs applications sur un même appareil, et les deux clients de démonstration sur `127.0.0.1`,
+ne se distinguent que par leur port. C'est l'injoignabilité qui retire une entrée, jamais l'arrivée
+d'une voisine.
+
+### Ce qui reste à savoir
+
+L'essai a duré quelques minutes avec **une** application. Restent ouverts : la tenue dans la durée,
+le comportement à N applications simultanées contre une vraie machine, et ce que fait l'application
+officielle si elle reçoit un état qu'elle n'attendait pas.
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02

@@ -60,12 +60,18 @@ pnpm dev            # server.mjs with Next in dev/HMR mode, on 0.0.0.0:3000
 pnpm dev:next-only  # Next alone, no server.mjs — UI-only work (no machine I/O)
 pnpm build          # production build
 pnpm start          # production server (= node server.mjs)
-pnpm lint           # next lint
+pnpm lint           # eslint . — les .mjs SEULEMENT, voir eslint.config.mjs
 node_modules/.bin/tsc --noEmit   # typecheck (TypeScript 7)
 
 # Diagnostics: a standalone LAN-mode server on :3005 that logs VERBATIM everything the machine
 # sends — the tool for framing / keep-alive / key-exchange-sequence bugs.
 node --env-file=.env.local debug-capture.mjs
+
+# Multiplexer, end to end on the loopback, no machine and no phone (see its section below).
+PROXY_APPS=1 SERVER_PORT=3099 node server.mjs
+node scripts/faux-app.mjs --serveur 127.0.0.1:3099 --port 8888   # a client, read-only
+node scripts/faux-app.mjs --serveur 127.0.0.1:3099 --port 8890   # a second one
+node scripts/fausse-machine.mjs --serveur 127.0.0.1:3099         # pushes one state to both
 
 # Regenerate the extracted tables from the APK (do not hand-edit their JSON output).
 node scripts/extract-catalogs.mjs   # → src/lib/machine-catalogs.json
@@ -78,7 +84,7 @@ prompt by allowing them.
 
 **lan-server has no test suite.** Protocol changes are validated live against the real machine, not unit tests.
 CI (`.github/workflows/ci.yml`) therefore checks what can be checked without a machine: `tsc`,
-`node --check` on every `.mjs`, the message catalogue (invalid JSON or an angle bracket in a string),
+`node --check` on every `.mjs`, **ESLint on every `.mjs`**, the message catalogue (invalid JSON or an angle bracket in a string),
 **every literal translation key against its namespace** (`scripts/verif-messages.mjs`),
 `pnpm build`, the SQLite store's init/migration, and that the Docker image builds and answers
 `/api/status`. On a green push to `master`/`main` it then **publishes `ghcr.io/<repo>:edge`** — so a
@@ -87,6 +93,35 @@ Docker-less tarball. `packageManager` in `package.json` pins pnpm for corepack a
 
 (The sibling HA repo does have one, runnable with plain pytest and no Home Assistant install:
 `cd ../delonghi_coffeelink_ha && pytest tests/`, or a single file `pytest tests/test_monitor.py`.)
+
+**ESLint lints the `.mjs` files and ONLY those — that is where the hole was.** `tsconfig.json`
+includes only `**/*.ts` / `**/*.tsx`, so the 22 `.mjs` files — `server.mjs`, the one thing that
+runs, among them — were never seen by `tsc`; their whole net was `node --check`, which reads
+syntax and nothing else. Config in `eslint.config.mjs` (ESLint 10, flat), wired as `pnpm lint` and
+as a CI step. It found real defects on its first run, including `/api/beanadapt/save` silently
+dropping the `taskId`/`position` that every other queueing endpoint returns.
+
+⚠️ **Do not "complete" it by adding `typescript-eslint`.** It cannot work here, and the failure is
+structural rather than a version warning: this repo is on **TypeScript 7**, whose package no
+longer exports the classic compiler API (`require("typescript").createSourceFile` is `undefined` —
+the AST moved behind `typescript/unstable/ast`), while `typescript-eslint` declares
+`typescript: ">=4.8.4 <6.1.0"` right down to its canary. Installing it succeeds and the parse
+fails on the first line of TSX. The `.tsx` side is already covered by `tsc --noEmit`; when
+typescript-eslint supports TS 7, adding a `files` block for `.ts`/`.tsx` also unlocks
+`eslint-plugin-react-hooks`, which is worth having in a codebase this full of `useCallback` and
+ref-held callbacks.
+
+Two rules are deliberately relaxed, both documented at the site: `no-empty` allows an empty
+`catch` (13 occurrences, all meaning "best effort" — failing loudly there would be the real
+defect), and `no-useless-assignment` is off because the variables it flags are serialised into
+JSON, where `null` and `undefined` are not interchangeable.
+
+Historical note, so nobody re-diagnoses it: `"lint": "next lint"` was a `create-next-app`
+leftover that **never checked anything** — there was no ESLint in the repo at all, so even under
+Next 15 it would have dropped into its interactive setup wizard. Next 16 removed `next lint`, and
+since `dev` is the default command taking a `[directory]`, `next lint` was read as
+`next dev ./lint` — hence the baffling "Invalid project directory" error. Nothing regressed;
+nothing was linting.
 
 **A branch merged into `master` is deleted locally in the same breath.** `git merge --no-ff`, then
 `git branch -d <branch>` — **never `-D`**. From the moment the merge lands the commits live in
@@ -400,7 +435,9 @@ it reads as an isolated incident where there were two dozen.
 machine** — fourteen assertions over ordering (including the statistics sweep's back-of-queue rank
 and its suspend-and-resume), preemption-with-resume, merging, the cap, retry, window-as-success, the
 breaker, cancellation and the view. Plain `node scripts/verif-tasks.mjs`, no
-dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`. The scheduler is pure
+dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`,
+`scripts/verif-lansession.mjs` and `scripts/verif-apps.mjs` — four now, and the list only grows
+where a part was kept pure on purpose. The scheduler is pure
 (the instant is always a parameter, no I/O, no logging) precisely so this stays possible; keep it
 that way.
 
@@ -1101,6 +1138,104 @@ reference matrix verifies **9/9**. No cloud call.
   `0xBB`, 52 bytes - and **deletion is the same frame with `visible = 0`**. Index 0 is not a coffee
   profile but the machine's own on/off entry; index n >= 1 maps to beverage 199 + n.
 
+## Application multiplexer — lan-server plays the MACHINE
+
+**Measured 2026-08-22, and it is the premise of the whole feature: the machine keeps exactly ONE
+local peer.** Open the official De'Longhi app on the same network and our tasks start failing —
+`0 sur 2`, folded `×4`, motive "sans réponse". Our `local_reg` is still answered 202; the machine
+simply stops coming to us. Close the app and, after a delay, lan-server takes the slot back on its
+own. Full write-up in `doc/analyse-connexion-wifi.md` §7ter and `doc/spec-proxy-multi-app.md` §7.1.
+
+Two consequences beyond the feature itself. **The eviction is silent**, so "an app took the slot"
+and "the machine is off" produce the identical symptom — which is why `taskMuteHint` now names
+this third cause. And **the recovery is automatic**: nothing to restart.
+
+The multiplexer is the answer: since the slot is unique, someone must hold it for everyone. We
+already are that someone.
+
+**Off by default — `PROXY_APPS=1` turns it on**, and without it `/regtoken.json` and
+`/local_reg.json` do not exist on this server. Impersonating an appliance to third-party software
+is a deliberate gesture, not a side effect of an upgrade; it also guarantees an existing install
+behaves identically on this version.
+
+**Port 80 is not negotiable.** The SDK builds `http://<ip>/…` with **no port**, so an app looks
+for the appliance on 80 and nowhere else. Boot warns when `SERVER_PORT` is anything else, because
+the alternative is a long hunt for why nothing ever connects.
+
+**`src/lib/lansession.mjs` holds BOTH roles in one implementation** — it runs, `server.mjs`
+imports it. The key exchange derives four keys; `role` ("client" / "device") only picks which set
+encrypts outbound. Writing that derivation a second time for the proxy would have been the most
+predictable fault available. `makeSession()` in `server.mjs` is now a thin `role: "client"`
+wrapper, and the refactor was proven byte-for-byte neutral against the old inline code before
+being kept.
+
+**Getting the direction wrong raises NO error** — decryption yields plausible, unreadable bytes and
+the symptom is a session that "stops answering". Hence `scripts/verif-lansession.mjs`, whose
+central assertion is that *two sessions of the same role do not understand each other*.
+
+**The proxy terminates both sides; it never tunnels bytes.** Each session owns a persistent
+AES-CBC stream, so a ciphertext is meaningful only inside the stream it was produced in.
+Everything crossing is decrypted and re-encrypted, once per application — which is exactly what
+makes N independent applications possible where the machine allows one.
+
+- `src/lib/appregistry.mjs` — **pure**, no I/O, instant always a parameter (same discipline as
+  `tasks.mjs`, same reason: `scripts/verif-apps.mjs` runs in CI). An application's identity is its
+  **`ip:port`**, because that is all `local_reg` carries. `nouvelle` is what triggers a key
+  exchange and **a `PUT` must never trigger one** — that would replace the AES stream the app is
+  mid-read on, and look like a phone that "drops" every few seconds.
+  **An app's listening port is ephemeral** — the official app took a new one on relaunch, so the
+  registry legitimately held two entries for one phone, the older showing "session établie" on a
+  port that was already refusing connections. Silence and refusal are not the same information:
+  a locked phone goes quiet, a closed port answers no. `echouer()` counts **consecutive** failed
+  contacts (`SEUIL_ECHECS`, 3) and the entry is dropped in about a dozen seconds instead of the
+  90 s silence delay; any success resets it. ⚠️ **Never evict on the address alone** — several apps
+  on one phone, and the two demo clients on `127.0.0.1`, differ only by port, and telling them
+  apart is precisely what this multiplexer exists to do. Unreachability removes an entry, never
+  the arrival of a neighbour.
+- `src/lib/appproxy.mjs` — transport (`node:http`, explicit `Content-Length`, same lesson as
+  `local_reg`) plus `analyserCommandes()`, the pure part. The two payload shapes are **read out of
+  the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
+  {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
+  the only signal, and not answering leaves the app waiting then concluding failure.
+- `POST /local_reg.json` carries **`?dsn=`** on the first registration only (`!_isActive` branch).
+  It is the one moment the protocol says out loud which appliance the app believes it is talking
+  to, hence the only chance to refuse a request that is not ours. A `PUT` carries none, but always
+  follows a `POST`.
+- **App commands go through the same queue as everything else**, rank `COMMANDE`. An app request
+  is worth a UI request, no more; and the scheduler guarantees they do not collide — which the
+  machine's single slot emphatically does not. ⚠️ **A relayed write reaches a real appliance**: it
+  can start a preparation or persist a recipe. That is the point, and it is why every relay is
+  logged and why `/pilotage` lists who is connected.
+- Only `m.send` is relayed. An app writing anything else is **logged and ignored**, never guessed.
+- **A relayed frame that targets a profile sets `m.activeProfile`**, exactly as `/api/command`
+  does. This is not hypothetical: the *very first* command a real De'Longhi app relayed to us was
+  `0D 06 A9 F0 01` — a profile select. The app asserts its own current profile at session open,
+  taken from a phone-side preference defaulting to 1. Without it, a phone connecting silently moves
+  the appliance's active profile while our pages keep showing the old one — the failure this file's
+  "any new command that targets a profile must also set `m.activeProfile`" rule exists to prevent.
+  `profilVise()` reads it from both layouts: `0xA9` carries it plainly at byte 4, `0x83` encodes it
+  as `(profile << 2) | action` in the last byte before the CRC. The change is logged, because a
+  profile switch decided by a third party is precisely what one needs to be able to trace.
+
+**`/pilotage` gained an "Applications branchées" panel**, rendered **even when the multiplexer is
+off**: hiding it would make the feature invisible to anyone not reading the docs, and "no
+applications" is not the same information as "we are not looking". It lists connections *and*
+refusals (`dsnInconnu`, `sansCle`, `echecEchange`…), because that is the impersonation-monitoring
+half — without it, someone trying their luck on the LAN leaves no visible trace. Refusals fold on
+consecutive identical entries with a `×N` count, same rule as the journal. **No session ever
+leaves `vueApps()`**: a session is derived from the LAN key, so "no endpoint returns the key"
+applies to what descends from it.
+
+**Two scripts prove the chain without hardware**, and they are the pattern to follow:
+`scripts/faux-app.mjs` plays a client, `scripts/fausse-machine.mjs` plays the appliance. Run
+together against a `PROXY_APPS=1` server they demonstrate the central claim — **one datapoint from
+the machine, two applications served, each in its own stream** (verified). `faux-app` is
+deliberately read-only: it cannot build an ECAM frame and never will.
+
+**What is still NOT proven**, and no local test can close it: that a *real* De'Longhi app will
+accept us. It may check things our fake client does not. The mDNS responder (spec step 1) is also
+unwritten, so an app cannot yet find us by itself.
+
 ## Internationalisation
 
 **next-intl**, French only for now. `messages/fr.json` is the single catalog; `src/i18n/request.ts`
@@ -1122,6 +1257,16 @@ check: it accepts a key found in **any** namespace the name is bound to in that 
 binds `t` to both `power` and `editor`, and without scope analysis nothing says which applies), and
 it **cannot see the failure that motivated it** — a key requested inside a helper the translator was
 passed to. For that class, the guard is the comment on `fmtAge` naming the namespace it needs.
+
+**A third class it cannot see: a key that resolves but is handed the wrong *parameters*.** Reported
+from real use — `task.saveToProfile` ("Enregistrer {boisson} dans le profil {profil}") was built as
+`{ k, p: { profil }, ...bevRef(m, bev) }`, and `bevRef` returns **either** `{p}` **or** `{refs}`, so
+the spread silently wiped the whole `p` and with it `profil`. next-intl then threw
+`FORMATTING_ERROR` at render. What makes it nasty is that it fires **only on machines where a
+recipe was renamed**: everywhere else `bevRef` takes the `refs` branch and there is no collision, so
+it is invisible in testing. `taskLabel`'s catch keeps the page alive by falling back to the server
+label, which is exactly why it went unnoticed. Merge explicitly — `p: { …, ...(r.p ?? {}) },
+refs: r.refs` — the `dispense` branch already did it correctly and was the model for the fix.
 
 **Never put `<...>` in a message string.** next-intl reads angle brackets as rich-text tags, so a
 message like `0D 08 A2 0F <id> <qty>` fails to parse and the UI prints the raw key
