@@ -819,7 +819,7 @@ YOLO: sameLan HomeRecipeActivity: true
 complète a fonctionné : annonce, échange de clés que **nous** avons initié, commande réelle émise
 par l'application, relayée par notre file, exécutée par la machine, et réponse remontée.
 
-### Deux défauts que seul le test réel pouvait révéler
+### Trois défauts que seul le test réel pouvait révéler
 
 **1. Le délai tue.** Notre `/regtoken.json` sondait la vraie machine *avant* de répondre (jusqu'à
 4 s). Volley, côté application, abandonne avant : `TimeoutError for http://IP_MACHINE/local_reg.json`.
@@ -843,6 +843,32 @@ l'ordre d'émission.
 
 C'est exactement le risque que `lansession.mjs` documente — *« une désynchronisation force un
 nouvel échange de clés »* — rencontré pour de vrai.
+
+**3. Le port d'écoute de l'application est ÉPHÉMÈRE.** Relevé en relançant
+l'application officielle : elle s'est réannoncée depuis un port différent, et comme l'identité d'une
+application est son couple `adresse:port` — tout ce que `local_reg` transporte —, le registre a
+tenu **deux** entrées pour un seul téléphone.
+
+```
+a1  IP_TELEPHONE:10275   établie   vue il y a  5 s   ← le lancement courant
+a2  IP_TELEPHONE:37067   établie   vue il y a 83 s   ← fantôme, port FERMÉ
+```
+
+La preuve est immédiate — une connexion sur l'ancien port est refusée tout de suite — mais rien ne
+l'exploitait : l'entrée survivait jusqu'au délai de silence (90 s), en affichant « session établie »
+sur un port mort. **Le silence et le refus ne sont pas la même information.** Un téléphone verrouillé
+se tait ; un port fermé répond, et il répond non.
+
+Corrigé par un décompte d'échecs **consécutifs** (`echouer()` dans `appregistry.mjs`, seuil 3) :
+à la cadence de sonde, l'entrée morte part en une douzaine de secondes, avec le motif *injoignable*
+au journal. Un seul contact réussi remet le compteur à zéro, pour qu'un téléphone en veille une
+seconde ne soit pas confondu avec un téléphone parti.
+
+⚠️ **Le raccourci à ne pas prendre : évincer sur la seule adresse.** Devant un doublon, la tentation
+est de dire « même téléphone, donc même application ». Ce serait supprimer la fonctionnalité :
+plusieurs applications sur un même appareil, et les deux clients de démonstration sur `127.0.0.1`,
+ne se distinguent que par leur port. C'est l'injoignabilité qui retire une entrée, jamais l'arrivée
+d'une voisine.
 
 ### Ce qui reste à savoir
 

@@ -34,6 +34,20 @@ export const GARDE_REFUS = 20;
 /** Sans contact pendant ce délai, une application est considérée partie. */
 export const DELAI_APP_MUETTE = 90_000;
 
+/**
+ * Échecs consécutifs après lesquels une application est déclarée injoignable.
+ *
+ * Le silence et le refus ne sont pas la même information, et les confondre coûte cher. Une
+ * application relancée abandonne son port d'écoute : nos requêtes sont alors **refusées**
+ * immédiatement, ce qui est une preuve, pas une absence. Attendre `DELAI_APP_MUETTE` dans ce cas
+ * revient à afficher « session établie » pendant une minute et demie sur un port fermé — constaté
+ * en direct après un redémarrage de l'application officielle, avec deux entrées dont une morte.
+ *
+ * Trois échecs à la cadence de sonde valent une douzaine de secondes : assez pour absorber un
+ * téléphone qui se met en veille une seconde, trop peu pour laisser vivre un fantôme.
+ */
+export const SEUIL_ECHECS = 3;
+
 export function nouveauRegistre() {
   return { seq: 0, apps: new Map(), refus: [] };
 }
@@ -75,6 +89,8 @@ export function annoncer(reg, { ip, port, uri, notify, keyId }, maintenant) {
     /** Compteurs de trafic : ce que la page montre pour distinguer « branchée » de « active ». */
     datapoints: 0,
     commandes: 0,
+    /** Échecs de contact CONSÉCUTIFS. Remis à zéro par le moindre succès (voir `toucher`). */
+    echecs: 0,
     dernierMotif: null,
   };
   reg.apps.set(cle, app);
@@ -114,9 +130,29 @@ export function expirer(reg, maintenant, delai = DELAI_APP_MUETTE) {
   return partis;
 }
 
-/** Toute activité d'une application repousse son expiration. */
+/**
+ * Toute activité d'une application repousse son expiration — et efface ses échecs.
+ *
+ * Le compteur d'échecs est CONSÉCUTIF : un seul contact réussi annule ce qui précède. Un
+ * téléphone qui se met en veille une seconde entre deux sondes n'est pas un téléphone parti.
+ */
 export function toucher(app, maintenant) {
   app.vueA = maintenant;
+  app.echecs = 0;
+}
+
+/**
+ * Une tentative de contact vers l'application a échoué. Renvoie `true` quand elle a assez
+ * échoué de suite pour être déclarée injoignable — à l'appelant de la retirer et de le dire.
+ *
+ * Le port d'écoute d'une application est éphémère : elle en prend un nouveau à chaque
+ * lancement. L'ancienne entrée, elle, reste `etablie` jusqu'à `DELAI_APP_MUETTE`, alors même
+ * que son port est fermé et le refuse immédiatement. Compter les refus transforme cette preuve
+ * en retrait, au lieu d'attendre une minute et demie un silence déjà expliqué.
+ */
+export function echouer(app, seuil = SEUIL_ECHECS) {
+  app.echecs = (app.echecs ?? 0) + 1;
+  return app.echecs >= seuil;
 }
 
 /**

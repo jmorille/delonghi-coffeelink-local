@@ -24,7 +24,7 @@ import { decodeMonitor } from "./src/lib/monitor.mjs";
 import { makeLanSession, token } from "./src/lib/lansession.mjs";
 // Multiplexeur : lan-server joue la machine auprès de N applications. Voir doc/spec-proxy-multi-app.md.
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
-         cleApp, DELAI_APP_MUETTE } from "./src/lib/appregistry.mjs";
+         cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
          PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
@@ -1301,7 +1301,9 @@ async function sonderAppSerialise(m, app) {
     rep = await httpJson({ ip: app.ip, port: app.port, path: `${app.uri}/commands.json`, method: "GET", timeout: 4000 });
   } catch {
     // Une application qui ne répond plus n'est pas une erreur à journaliser toutes les deux
-    // secondes : c'est un téléphone verrouillé. `expirer()` s'en occupe, une fois.
+    // secondes : c'est un téléphone verrouillé — mais au bout de quelques refus d'affilée,
+    // c'est un port fermé, et l'entrée doit partir sans attendre `DELAI_APP_MUETTE`.
+    constaterEchecApp(m, app);
     return;
   }
   if (rep.status !== 200 || !rep.corps.trim()) return;
@@ -1413,6 +1415,7 @@ function pousserVersApp(m, app, corpsJson) {
       toucher(app, Date.now());
       return true;
     } catch {
+      constaterEchecApp(m, app);
       return false;
     }
   });
@@ -1441,6 +1444,26 @@ function diffuserAuxApps(m, name, value) {
     app.datapoints++;
     pousserVersApp(m, app, corps).catch(() => {});
   }
+}
+
+/**
+ * Un contact vers l'application a échoué : on compte, et on retire au bout de `SEUIL_ECHECS`.
+ *
+ * Constaté en direct : l'application officielle relancée prend un **nouveau port d'écoute**
+ * (`AylaHttpServer` n'en réserve aucun), et comme l'identité d'une application est son couple
+ * adresse:port, l'ancienne entrée reste dans le registre. Elle y affichait « session établie »
+ * pendant 90 s alors que son port refusait déjà toute connexion — deux applications sur la page
+ * pour un seul téléphone, dont une morte.
+ *
+ * ⚠️ **Ne jamais évincer sur la seule adresse.** Deux applications sur un même téléphone, ou les
+ * deux `faux-app.mjs` de la démonstration sur `127.0.0.1`, partagent une adresse et rien d'autre :
+ * les distinguer est exactement ce que ce multiplexeur existe pour faire. C'est l'injoignabilité
+ * qui retire une entrée, jamais l'arrivée d'une voisine.
+ */
+function constaterEchecApp(m, app) {
+  if (!PROXY.registre.apps.has(cleApp(app.ip, app.port))) return;
+  if (!echouer(app)) return;
+  retirerApp(app, m, `injoignable (${SEUIL_ECHECS} tentatives sans réponse), oubliée`);
 }
 
 /** Retire une application : sonde désarmée d'abord, sinon elle continuerait sur un objet oublié. */

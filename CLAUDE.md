@@ -1183,6 +1183,15 @@ makes N independent applications possible where the machine allows one.
   **`ip:port`**, because that is all `local_reg` carries. `nouvelle` is what triggers a key
   exchange and **a `PUT` must never trigger one** — that would replace the AES stream the app is
   mid-read on, and look like a phone that "drops" every few seconds.
+  **An app's listening port is ephemeral** — the official app took a new one on relaunch, so the
+  registry legitimately held two entries for one phone, the older showing "session établie" on a
+  port that was already refusing connections. Silence and refusal are not the same information:
+  a locked phone goes quiet, a closed port answers no. `echouer()` counts **consecutive** failed
+  contacts (`SEUIL_ECHECS`, 3) and the entry is dropped in about a dozen seconds instead of the
+  90 s silence delay; any success resets it. ⚠️ **Never evict on the address alone** — several apps
+  on one phone, and the two demo clients on `127.0.0.1`, differ only by port, and telling them
+  apart is precisely what this multiplexer exists to do. Unreachability removes an entry, never
+  the arrival of a neighbour.
 - `src/lib/appproxy.mjs` — transport (`node:http`, explicit `Content-Length`, same lesson as
   `local_reg`) plus `analyserCommandes()`, the pure part. The two payload shapes are **read out of
   the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":

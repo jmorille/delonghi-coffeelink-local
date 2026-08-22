@@ -10,7 +10,7 @@
  * Aucune dépendance : `node scripts/verif-apps.mjs`.
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
-         GARDE_REFUS, DELAI_APP_MUETTE } from "../src/lib/appregistry.mjs";
+         echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
 import { analyserCommandes } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
@@ -191,6 +191,44 @@ test("l'inconnu ressort NOMMÉ, il ne disparaît pas", () => {
   eq(analyserCommandes(JSON.stringify({ cmds: [{ cmd: { method: "PUT", resource: "autre.json" } }] }))[0].type, "inconnu", "commande inconnue");
   eq(analyserCommandes("pas du json")[0].type, "illisible", "corps illisible");
   eq(analyserCommandes("{}")[0].type, "vide", "bloc vide");
+});
+
+console.log("\n— l'injoignabilité : un port fermé est une preuve, pas un silence —");
+
+test("il faut SEUIL_ECHECS échecs d'affilée pour déclarer une application injoignable", () => {
+  const r = nouveauRegistre();
+  const { app } = annoncer(r, uneApp(10275), T0);
+  for (let i = 1; i < SEUIL_ECHECS; i++) vrai(!echouer(app), "pas encore au seuil");
+  vrai(echouer(app), "injoignable au seuil");
+});
+
+test("un seul succès efface les échecs — un téléphone en veille n'est pas un téléphone parti", () => {
+  const r = nouveauRegistre();
+  const { app } = annoncer(r, uneApp(10275), T0);
+  echouer(app); echouer(app);
+  toucher(app, T0 + 1000);
+  eq(app.echecs, 0, "compteur remis à zéro");
+  vrai(!echouer(app), "le décompte repart de zéro");
+});
+
+test("l'entrée d'un lancement précédent part BIEN avant DELAI_APP_MUETTE", () => {
+  // Le cas rapporté : l'application relancée prend un nouveau port, l'ancienne entrée reste
+  // « établie » et affiche une seconde application fantôme. À la cadence de sonde (2 s), le seuil
+  // tombe en une douzaine de secondes ; expirer() aurait mis une minute et demie.
+  vrai(SEUIL_ECHECS * 2000 < DELAI_APP_MUETTE / 4, "le seuil doit trancher bien avant l'expiration");
+});
+
+test("un même téléphone sur deux ports reste DEUX applications", () => {
+  // Garde-fou de conception : la tentation, devant un doublon, est d'évincer sur l'adresse.
+  // Ce serait détruire la fonctionnalité — les deux faux-app.mjs de la démonstration tournent
+  // sur 127.0.0.1, et deux applications sur un même téléphone partagent aussi une adresse.
+  const r = nouveauRegistre();
+  const { app: vieille } = annoncer(r, uneApp(37067), T0);
+  annoncer(r, uneApp(10275), T0 + 1000);
+  eq(r.apps.size, 2, "les deux coexistent, l'arrivée n'évince pas");
+  for (let i = 0; i < SEUIL_ECHECS; i++) echouer(vieille);
+  oublier(r, vieille);
+  eq([...r.apps.values()].map((a) => a.port), [10275], "seule l'injoignable est partie");
 });
 
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
