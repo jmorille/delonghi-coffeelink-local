@@ -54,7 +54,7 @@ export const MONITOR_SWITCHES = [
   { group: 0, bit: 5, name: "KNOB", label: "molette" },
   { group: 0, bit: 6, name: "WATER_LEVEL_LOW", label: "niveau d'eau bas" },
   { group: 0, bit: 7, name: "COFFEE_JUG", label: "verseuse" },
-  { group: 1, bit: 0, name: "IFD_CARAFFE", label: "carafe à lait (hors nettoyage)" },
+  { group: 1, bit: 0, name: "IFD_CARAFFE", label: "carafe à lait (mousse)" },
   { group: 1, bit: 1, name: "CIOCCO_TANK", label: "carafe à lait (nettoyage)" },
   { group: 1, bit: 2, name: "CLEAN_KNOB", label: "molette nettoyage" },
   { group: 1, bit: 5, name: "DOOR_OPENED", label: "porte ouverte" },
