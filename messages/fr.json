@@ -174,6 +174,7 @@
     "defaultsTitle": "Remet chaque réglage au défaut du modèle (ECAM 610.75.MB), pas à la valeur enregistrée du profil. Local : rien n'est envoyé à la machine avant « Préparer » ou « Écrire ».",
     "defaultsPartialTitle": "Remet chaque réglage au défaut du modèle. {count} paramètre(s) n'en ont pas d'utilisable (défaut hors bornes, jamais configuré) : leur valeur actuelle est conservée.",
     "paramDefault": "défaut {value}",
+    "paramDefaultBool": "défaut {on, select, 1 {activé} other {désactivé}}",
     "paramDefaultHint": "Valeur d'usine du modèle pour ce paramètre — cliquer pour la remettre.",
     "noParamDefault": "pas de défaut",
     "noParamDefaultHint": "Le modèle ne donne pas de défaut utilisable pour ce paramètre (hors bornes, jamais configuré) : à régler à la main."
@@ -531,7 +532,7 @@
     "PROGRAMABLE": "Programmable",
     "VISIBLE": "Visible",
     "VISIBLE_IN_PROGRAMMING": "Visible en programmation",
-    "INDEX_LENGTH": "Index de longueur",
+    "INDEX_LENGTH": "Index de calibre",
     "ACCESSORIO": "Accessoire",
     "PROG_TIME": "Programmation horaire",
     "ICED": "Glacé",
