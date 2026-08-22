@@ -75,7 +75,7 @@ implémentées.
 | L'app interroge `<DSN>.local` en mDNS, ports 5353 **et 10276** | APK décompilé (`NetThread`) | **lu, non observé** |
 | Ce chemin mDNS n'est emprunté qu'après un échec réseau/timeout | APK décompilé (`handleKeyExchangeError`) | **établi, et plus restrictif** : il faut EN PLUS que le téléphone soit coupé du cloud (§7quater) |
 | L'app accepterait une réponse mDNS venue d'un autre hôte | — | **sans objet** : le mDNS ne part jamais en usage normal (2026-08-22) |
-| Une app se contenterait d'un pair qui n'est pas la machine | — | ⚠️ **inféré** |
+| Une app se contenterait d'un pair qui n'est pas la machine | **PROUVÉ le 2026-08-22** : l'app officielle a ouvert une session avec lan-server et journalisé `sameLan: true` (§7quinquies) | **établi** |
 
 **Quatre lignes de ce tableau restent des inférences**, et elles portent le chemin mDNS et la
 crédulité de l'app — plus la prémisse. D'où la section 9.

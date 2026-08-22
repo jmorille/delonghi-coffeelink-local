@@ -1238,9 +1238,28 @@ function desarmerSondeApp(app) {
   PROXY.sondes.delete(app.id);
 }
 
-/** Une visite : on récupère au plus un bloc de commandes, on l'analyse, on l'exécute. */
+/**
+ * Une visite : on récupère au plus un bloc de commandes, on l'analyse, on l'exécute.
+ *
+ * ⚠️ **Une seule sonde à la fois par application.** Deux appels concurrents — la sonde périodique
+ * et celle déclenchée par un `notify: 1` — déchiffreraient deux blocs sur le MÊME flux AES-CBC
+ * persistant, dans un ordre non garanti. Constaté en direct avec la vraie application : une
+ * « demande non reconnue » portant des octets à demi lisibles (`…"ta":{}}`), signature d'un flux
+ * désynchronisé de quelques octets. Le symptôme est trompeur — il ressemble à une charge utile
+ * inattendue alors que c'est notre propre concurrence qui a brouillé le déchiffrement.
+ */
 async function sonderApp(m, app) {
   if (app.etat !== "etablie" || !app.session) return;
+  if (app.sondeEnCours) return;
+  app.sondeEnCours = true;
+  try {
+    await sonderAppSerialise(m, app);
+  } finally {
+    app.sondeEnCours = false;
+  }
+}
+
+async function sonderAppSerialise(m, app) {
   let rep;
   try {
     rep = await httpJson({ ip: app.ip, port: app.port, path: `${app.uri}/commands.json`, method: "GET", timeout: 4000 });
@@ -1319,19 +1338,38 @@ async function executerPourApp(m, app, intention) {
   }
 }
 
-/** Pousse un corps déjà sérialisé vers une application, chiffré dans SON flux. */
-async function pousserVersApp(m, app, corpsJson) {
-  if (app.etat !== "etablie" || !app.session) return false;
-  try {
-    await httpJson({
-      ip: app.ip, port: app.port, path: `${app.uri}/property/datapoint.json`,
-      method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
-    });
-    toucher(app, Date.now());
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * Pousse un corps déjà sérialisé vers une application, chiffré dans SON flux.
+ *
+ * ⚠️ **Sérialisé par application, et ce n'est pas une précaution de confort.** Le flux AES-CBC est
+ * persistant : le n-ième bloc chiffré ne se déchiffre que si les n-1 précédents l'ont été, dans
+ * l'ordre. Deux `pousserVersApp` concurrents — un datapoint rediffusé pendant qu'un accusé part —
+ * produiraient deux corps parfaitement chiffrés qui pourraient arriver dans le désordre, et
+ * l'application désynchroniserait son déchiffreur **sans lever la moindre erreur** : elle
+ * obtiendrait des octets plausibles et illisibles, et sa session « cesserait de répondre ».
+ *
+ * D'où la chaîne de promesses : le chiffrement ET l'envoi ont lieu dans le même maillon, donc
+ * l'ordre de production est aussi l'ordre d'émission.
+ */
+function pousserVersApp(m, app, corpsJson) {
+  if (app.etat !== "etablie" || !app.session) return Promise.resolve(false);
+  const suite = (app.chaine ?? Promise.resolve()).then(async () => {
+    // Re-vérifié DANS le maillon : la session a pu tomber pendant l'attente de notre tour.
+    if (app.etat !== "etablie" || !app.session) return false;
+    try {
+      await httpJson({
+        ip: app.ip, port: app.port, path: `${app.uri}/property/datapoint.json`,
+        method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
+      });
+      toucher(app, Date.now());
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  // La chaîne ne doit jamais rester rejetée, sinon tous les envois suivants seraient court-circuités.
+  app.chaine = suite.then(() => {}, () => {});
+  return suite;
 }
 
 /**
@@ -1394,8 +1432,17 @@ async function handleAppRegtoken(req, res) {
   //
   // Le cache est court : `regtoken` est un jeton d'enregistrement, servir une valeur périmée
   // serait un écart de plus.
+  // ⚠️ **On ne fait attendre l'application que si on n'a RIEN à lui servir.** La sonde vers la
+  // machine dure jusqu'à 4 s ; mesuré avec la vraie application, son client HTTP (Volley) abandonne
+  // avant cela et journalise `TimeoutError for http://<machine>/local_reg.json`. Une réponse d'une
+  // minute d'âge est infiniment préférable à une réponse juste mais arrivée trop tard : le jeton
+  // d'enregistrement ne change pas d'une seconde à l'autre, alors qu'un délai dépassé fait conclure
+  // à l'application que l'appareil est absent.
   const frais = m.regtokenBrut && Date.now() - m.regtokenBrut.at < 60_000;
-  if (!frais && m.ip) await probeRegtoken(m).catch(() => {});
+  if (!frais && m.ip) {
+    if (m.regtokenBrut) probeRegtoken(m).catch(() => {});   // rafraîchissement en arrière-plan
+    else await probeRegtoken(m).catch(() => {});            // premier appel : on n'a pas le choix
+  }
   if (m.regtokenBrut) {
     L("in", `app ${peerAddress(req)} : regtoken demandé, nous resservons celui de la machine (${m.dsn})`, m);
     return raw(res, m.regtokenBrut.body, 200, "text/json");

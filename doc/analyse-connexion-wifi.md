@@ -750,6 +750,106 @@ Ce relevé sert aussi de **discriminant de test** : tant que le client interrog�
 `registration_type: "AP-Mode"` avec un `regtoken`, c'est la machine ; s'il répond sans, c'est nous.
 C'est ainsi qu'a été constaté qu'une redirection réseau n'était pas encore active.
 
+## 7quinquies. Test réel du 2026-08-22 : l'application OFFICIELLE s'est branchée sur lan-server
+
+**C'est l'inférence la plus lourde de `doc/spec-proxy-multi-app.md` qui tombe** — celle qu'aucun
+test local ne pouvait fermer : *une application se contenterait-elle d'un pair qui n'est pas la
+machine ?* Oui.
+
+### Le montage
+
+Le mDNS étant hors d'atteinte (§7quater), on prend l'autre voie : **répondre à l'adresse que
+l'application interroge déjà.**
+
+```
+téléphone   IP_TELEPHONE   sur VLAN_TEL
+lan-server  IP_SERVEUR   sur VLAN_SERVEUR, PROXY_APPS=1, port 80
+cafetière   IP_MACHINE     sur son VLAN, EN LIGNE et pilotée par nous
+```
+
+Une seule règle sur le routeur, un **NAT 1:1 (BINAT)** sur l'interface du téléphone :
+
+| Champ | Valeur |
+|---|---|
+| Type | BINAT |
+| Réseau externe | `IP_MACHINE` (l'adresse que l'app compose) |
+| Source / interne | `IP_SERVEUR` (nous) |
+| Destination | `IP_TELEPHONE` (ce seul téléphone) |
+
+**Le BINAT plutôt qu'une simple redirection de port, et c'est le point de conception.** Il traduit
+dans les **deux** sens : à l'aller `→ IP_MACHINE` devient `→ IP_SERVEUR`, au retour notre
+`IP_SERVEUR` ressort en `IP_MACHINE`. Or c'est **nous** qui initions l'échange de clés vers
+l'application : avec une redirection seule, elle l'aurait reçu d'une adresse inattendue. Le champ
+*Destination* contient l'usurpation à un seul appareil ; le reste du réseau atteint la vraie machine.
+
+⚠️ **Prérequis non évident : le serveur doit être mono-domicilié.** Avec une patte sur le segment du
+téléphone, ses réponses partiraient en direct et court-circuiteraient la traduction — l'application
+recevrait des paquets d'une adresse à laquelle elle n'a rien demandé, et les jetterait. Le routage
+doit être symétrique, donc tout doit repasser par le routeur.
+
+### Le résultat, vu des deux côtés
+
+Journal du pare-feu :
+
+```
+igc5 in  binat  IP_TELEPHONE -> IP_MACHINE:80    « binat rule »
+igc4 out pass   IP_TELEPHONE -> IP_SERVEUR:80
+```
+
+Journal de lan-server :
+
+```
+in   app a1 : IP_TELEPHONE s'annonce pour AC000W0XXXXXXXX
+out  app a1 (IP_TELEPHONE:10275) : session établie, nous nous présentons comme AC000W0XXXXXXXX
+in   app a1 → écriture ignorée sur device_connected (seule data_request est relayée)
+in   app a1 → action · sélection de profil (0xa9) · trame 0d 06 a9 f0 01 …
+out  t3 · App a1 · action · sélection de profil (0xa9) …
+out  commande servie: App a1 · action · sélection de profil (0xa9) …
+in   data_response: d0 07 a9 f0 01 00 3b 3c …
+```
+
+Et l'application, dans sa propre journalisation :
+
+```
+DeLonghiWifiConnectService: onSingleChangeProperty data_request sameLan: true
+YOLO: sameLan HomeRecipeActivity: true
+```
+
+**`sameLan: true`.** L'application affirme elle-même être en session LAN — avec nous. La chaîne
+complète a fonctionné : annonce, échange de clés que **nous** avons initié, commande réelle émise
+par l'application, relayée par notre file, exécutée par la machine, et réponse remontée.
+
+### Deux défauts que seul le test réel pouvait révéler
+
+**1. Le délai tue.** Notre `/regtoken.json` sondait la vraie machine *avant* de répondre (jusqu'à
+4 s). Volley, côté application, abandonne avant : `TimeoutError for http://IP_MACHINE/local_reg.json`.
+Corrigé : une réponse en cache est servie immédiatement et rafraîchie en arrière-plan. Une réponse
+d'une minute d'âge vaut infiniment mieux qu'une réponse juste mais tardive — le jeton ne change pas
+d'une seconde à l'autre, alors qu'un délai dépassé fait conclure que l'appareil est absent.
+
+**2. La concurrence désynchronise le flux AES, sans lever d'erreur.** Observé une fois :
+
+```
+in  app a1 : demande non reconnue — {"type":"illisible","brut":"…\u001c'Y…k 3…\"ta\":{}}"}
+```
+
+Ces `"ta":{}}` à demi lisibles sont la signature d'un flux décalé de quelques octets. Cause : deux
+sondes de `commands.json` en vol en même temps (la périodique et celle déclenchée par
+`notify: 1`), déchiffrant sur le **même** flux persistant. Le symptôme est trompeur — il ressemble à
+une charge utile inattendue de l'application alors que c'est notre propre concurrence. Corrigé des
+deux côtés : une sonde à la fois par application, et les envois sortants sérialisés par une chaîne
+de promesses, le chiffrement ayant lieu **dans** le maillon pour que l'ordre de production soit
+l'ordre d'émission.
+
+C'est exactement le risque que `lansession.mjs` documente — *« une désynchronisation force un
+nouvel échange de clés »* — rencontré pour de vrai.
+
+### Ce qui reste à savoir
+
+L'essai a duré quelques minutes avec **une** application. Restent ouverts : la tenue dans la durée,
+le comportement à N applications simultanées contre une vraie machine, et ce que fait l'application
+officielle si elle reçoit un état qu'elle n'attendait pas.
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02
