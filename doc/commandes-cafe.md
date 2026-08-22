@@ -1296,9 +1296,48 @@ journalisent la réponse brute sans la décoder.
 
 ### 14.5 Restant non porté
 
-- `0xE8` — `getPacketForRefreshAppId`, trame fixe `0D 06 E8 F0 00 ED 7C <crc16>`, variante Striker.
-  En classic l'app envoie à la place un blob de 12 octets qui **ne commence pas par `0x0D`** (donc
-  pas une trame ECAM). Rôle non établi.
+- `0xE8` — trame fixe `0D 06 E8 F0 00 ED 7C <crc16>`, **variante Striker uniquement**. Le site
+  d'appel est `DeLonghiWifiConnectService.C()` :
+
+  ```java
+  public void C() {
+      byte[] bArrZ0 = p258z7.s.r() ? p097j6.d.z0() : p097j6.d.s0();   // r() == modèle « striker »
+      Y1(bArrZ0);
+  }
+  ```
+
+  **En classic, c'est donc `s0()` — et ce n'est pas une trame ECAM.** Identifiée :
+
+  ```java
+  public static byte[] s0() {
+      byte[] bArr = {69, -38, 55, -120, 52, -21, -81, -1, -1, -6, (byte)((I >> 8) & 255), (byte)(I & 255)};
+      int I9 = I(bArr);
+      return bArr;
+  }
+  ```
+
+  soit `45 DA 37 88 34 EB AF FF FF FA 93 81`, **codée en dur**, sans paramètre. Trois choses la
+  caractérisent, toutes vérifiées :
+
+  - **son CRC est valide.** `I()` est la routine CRC-CCITT d'initialisation `0x1D0F` employée par
+    toutes les trames ; sur les dix premiers octets elle rend `0x9381`, soit exactement les deux
+    derniers. Ce n'est donc pas du bruit : c'est un paquet De'Longhi, simplement **pas de la
+    famille ECAM** — l'octet 1 vaudrait une longueur de 218 pour un paquet de 12 octets.
+  - **elle part une fois par session**, à l'ouverture de l'écran d'accueil quand la connexion est
+    en Wi-Fi (`HomeRecipeActivity.onCreate()` → `B.f("WIFI")` → `C()`). Relevé dans un logcat
+    complet : **1 occurrence**, contre 7 `0D 06 A9 F0 01` (sélection de profil) et 5
+    `0D 07 84 0F 02 01` (allumage).
+  - **elle est rigoureusement constante** — octet pour octet sur trois sessions séparées
+    (14:20:54, 14:49:44, 18:48:56), seul l'horodatage 4 octets que `Y1()` ajoute derrière change.
+
+  Son **rôle reste non établi**, et rien ne le devine ici. Elle est seulement *nommée*, dans
+  `CONSTANTES_NON_ECAM` : laissée « inconnue », elle déclencherait le marqueur de découverte à
+  chaque session et finirait par masquer le prochain vrai inconnu. Elle n'entre pas dans
+  `ECAM_OPS` — `0x37` n'est pas un octet de commande, c'est l'octet qui se trouve là.
+
+  > Ce que le journal montrait avant identification : `commande NON IDENTIFIÉE (0x37) · trame
+  > 45 da 37 88 …`. C'est le cas d'école du § 15.1 — une valeur qui n'est pas une trame et à
+  > laquelle on attribuait une commande.
 - `0xA1` en LECTURE de paramètres : `d.r0(addr, qty)` choisit `0xA1` quand `qty > 4` et `0x95`
   sinon. On ne sait pas ce que la première forme change.
 

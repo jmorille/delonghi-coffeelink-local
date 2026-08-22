@@ -16,7 +16,7 @@
  * Aucune dépendance : `node scripts/verif-args.mjs`.
  */
 import {
-  ECAM_OPS, TWO, argumentsTrame, cleFusion, describeFrame, natureTrame, opReponse, octetsEcam, profilVise,
+  ECAM_OPS, TWO, argumentsTrame, cleFusion, describeFrame, natureTrame, opReponse, octetsEcam, constanteConnue, profilVise,
 } from "../src/lib/ecam-args.mjs";
 
 let ko = 0;
@@ -237,10 +237,12 @@ test("une valeur qui n'est pas une trame ne se voit PAS attribuer une commande",
   //
   // Le défaut avait déjà été corrigé dans le sens ENTRANT (`opReponse`) et pas dans le sens
   // SORTANT — où il compte davantage : c'est une valeur qu'on relaie à une VRAIE cafetière.
-  const brute = "Rdo3iDTrr///+pOB";
+  // On prend ici une valeur non-ECAM QUELCONQUE : celle du relevé est désormais identifiée (voir
+  // le test suivant), et s'en servir pour prouver le cas inconnu reviendrait à prouver le connu.
+  const brute = Buffer.from("37881d4ea9f0c204", "hex").toString("base64");
   eq(octetsEcam(brute), null, "l'en-tête n'est ni 0x0D ni 0xD0");
   vrai(describeFrame(brute).startsWith("valeur non-trame"), "elle est nommée pour ce qu'elle est");
-  vrai(describeFrame(brute).includes("45 da 37 88"), "les octets sont conservés");
+  vrai(describeFrame(brute).includes("37 88 1d 4e"), "les octets sont conservés");
   vrai(describeFrame(brute).includes(brute), "le base64 aussi — il se recolle dans un test");
   eq(profilVise(brute), null, "aucun profil n'en est tiré");
   // `Buffer.from(x, "base64")` ne lève jamais : un horodatage unix ressortait en « commande ».
@@ -291,6 +293,29 @@ test("la fusion ne prend que ce dont la répétition est sans effet", () => {
   vrai(cleFusion(b64([0x0d, 0x05, 0x37, 0x0f, 0x00, 0x00])) === null, "commande non identifiée : aucune clé");
   vrai(cleFusion("MTc4NzQwNzg3Ng==") === null, "une valeur non-trame : aucune clé");
   vrai(cleFusion(null) === null, "rien du tout : aucune clé");
+});
+test("la constante d'ouverture classic est reconnue, et n'est PAS une commande", () => {
+  // Identifiée dans l'APK : `DeLonghiWifiConnectService.C()` fait `s.r() ? d.z0() : d.s0()`,
+  // et `d.s0()` est douze octets codés en dur. Envoyée une fois par session, à l'ouverture de
+  // l'écran d'accueil en Wi-Fi — d'où l'unique occurrence relevée dans le logcat, à l'identique
+  // sur trois sessions, contre 7 sélections de profil et 5 allumages tous en 0x0D.
+  //
+  // Le CRC-CCITT 0x1D0F de ses dix premiers octets vaut 0x9381, soit ses deux derniers : c'est
+  // un vrai paquet De'Longhi, calculé par la même routine que toutes les trames. Ce n'est donc
+  // pas du bruit — et ce n'est pas non plus une trame ECAM.
+  const brut = Buffer.from("45da378834ebaffffffa9381", "hex");
+  eq(constanteConnue(brut)?.nom.includes("s0()"), true, "reconnue sur ses octets nus");
+  // Reçue, elle est suivie de l'horodatage 4 octets que l'app ajoute : la reconnaissance porte
+  // sur un PRÉFIXE, sans rien présumer de ce qui suit.
+  const recue = Buffer.concat([brut, Buffer.from("6a89d2f8", "hex")]);
+  eq(constanteConnue(recue) !== null, true, "reconnue avec son horodatage");
+  eq(describeFrame(recue.toString("base64")).includes("non-trame"), true, "dite non-trame");
+  eq(describeFrame(recue.toString("base64")).includes("45 da 37 88"), true, "octets conservés");
+  // ⚠️ Surtout pas dans ECAM_OPS : 0x37 n'est pas un octet de commande, c'est l'octet qui se
+  // trouve à cette position. L'y inscrire referait la fausse découverte qu'on vient de corriger.
+  eq(ECAM_OPS[0x37], undefined, "0x37 n'est pas une opération");
+  eq(constanteConnue(Buffer.from("0d07840f02015512", "hex")), null,
+     "une vraie trame n'est pas prise pour la constante");
 });
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

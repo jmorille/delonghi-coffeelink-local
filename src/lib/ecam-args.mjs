@@ -190,6 +190,43 @@ export function octetsEcam(valeur) {
   return buf;
 }
 
+/**
+ * **Les charges CONNUES qui ne sont pas des trames ECAM.**
+ *
+ * Il en existe : `it.delonghi.service.DeLonghiWifiConnectService.C()` fait
+ * `s.r() ? d.z0() : d.s0()` — une trame ECAM normale (`0D 06 E8 F0 00 …`) pour Striker, et pour
+ * les machines *classic* une constante de douze octets **codée en dur** qui ne commence pas par
+ * `0x0D`. Elle porte pourtant un CRC-CCITT `0x1D0F` valide sur ses dix premiers octets, calculé
+ * par la même routine que toutes les autres : c'est donc bien un paquet De'Longhi, simplement
+ * pas de la famille ECAM. Sa structure reste inconnue et **rien ici ne la devine** — on la
+ * reconnaît, on ne la décode pas.
+ *
+ * ⚠️ Elle N'ENTRE PAS dans `ECAM_OPS` : son troisième octet (`0x37`) n'est pas un octet de
+ * commande, et l'y inscrire referait exactement la fausse découverte qu'on vient de corriger.
+ *
+ * La nommer a un but précis : elle part **une fois par session**, à l'ouverture de l'écran
+ * d'accueil (`HomeRecipeActivity.onCreate()`, quand la connexion est en Wi-Fi). Laissée
+ * « inconnue », elle déclencherait le marqueur de découverte à chaque session et finirait par
+ * masquer le prochain vrai inconnu — ce que ce marqueur existe précisément pour éviter.
+ *
+ * La comparaison porte sur un PRÉFIXE : la valeur reçue est la constante suivie de
+ * l'horodatage 4 octets que l'application ajoute, et on ne présume rien de ce qui suit.
+ */
+export const CONSTANTES_NON_ECAM = [
+  {
+    octets: Buffer.from("45da378834ebaffffffa9381", "hex"),
+    nom: "constante d'ouverture de session (classic) — p097j6.d.s0()",
+  },
+];
+
+/** La constante connue dont `valeur` porte le préfixe, ou `null`. */
+export function constanteConnue(trame) {
+  for (const c of CONSTANTES_NON_ECAM) {
+    if (trame.length >= c.octets.length && trame.subarray(0, c.octets.length).equals(c.octets)) return c;
+  }
+  return null;
+}
+
 export function opTrame(ecamB64) {
   const buf = octetsEcam(ecamB64);
   // Une valeur qui n'est pas une trame le DIT, au lieu de se voir attribuer une commande. Elle
@@ -242,6 +279,10 @@ export function describeFrame(ecamB64, { octets = true } = {}) {
     // qui se recolle dans un test — c'est une valeur qu'on relaie à une VRAIE cafetière.
     if (nonTrame) {
       const brut = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+      // Connue : on la nomme, en disant qu'elle n'est pas une trame — les octets restent, ils
+      // sont la seule chose qu'on sache vraiment d'elle.
+      const connue = constanteConnue(trame);
+      if (connue) return `${connue.nom} · non-trame · ${brut}`;
       return `valeur non-trame · ${brut || "(vide)"} · b64 ${String(ecamB64 ?? "").slice(0, 64)}`;
     }
     const nom = op ? `${op.nature} · ${op.nom}` : "commande NON IDENTIFIÉE";
