@@ -1541,3 +1541,47 @@ bien `NOT_SET(255)` ailleurs (`mugSize`, § plus haut), ce qui rend « sans obje
 démontre pas. Pour `ACCESSORIO = 2`, rien. Ne pas gloser : c'est ainsi qu'une lecture devient un
 fait sans que personne ne l'ait vérifiée.
 
+
+### 10.1. Adresse 194 — le nombre de niveaux de température
+
+Relevée le 2026-08-22 à 19:51 : l'application officielle lit une adresse **hors de notre table**,
+juste avant d'ouvrir son écran de température.
+
+```
+0d 08 95 0f 00 c2 01 4e 1e        → 0x00C2 = 194, quantité 1
+```
+
+Son rôle se lit sans ambiguïté dans `MachineSettingsCoffeeTemperatureFragment.U()` :
+
+```java
+Log.d("TEST", "temperature size is " + num);
+if (num.intValue() > 3) { strArr = { VIEW_C12_TEMP_0, _1, _2, _3 }; }   // 4 niveaux
+else                    { strArr = { VIEW_C12_TEMP_0, _1, _2 };      }   // 3 niveaux
+```
+
+et la valeur est chargée avec un défaut explicite (`p018b7/d.java`) :
+
+```java
+if (parameter.a() == 194) {
+    this.f14715m.l(Integer.valueOf(((int) parameter.b()) > 0 ? (int) parameter.b() : 4));
+}
+```
+
+> **194 = le nombre de niveaux de température du café que la machine propose**, 3 ou 4, avec **4**
+> quand la lecture rend 0.
+
+⚠️ **Conséquence pour nous, et c'est un défaut latent.** `REGLAGES` fixe
+`{ addr: 61, cle: "temperature", min: 0, max: 3 }` en dur — quatre niveaux, quelle que soit la
+machine. Sur un modèle à trois niveaux, `/reglages` offrirait un quatrième choix qui n'existe pas,
+et l'écrirait. Le bon `max` est `lecture(194) − 1`, avec 3 par défaut.
+
+**Non implémenté à dessein** : cela suppose une lecture supplémentaire au chargement de la page, et
+`REGLAGES` gouverne aussi les ÉCRITURES — `0x90` écrit quatre octets à une adresse arbitraire dans
+la configuration d'un vrai appareil. Y ajouter 194 le rendrait inscriptible, ce que rien ne
+justifie : l'application ne fait que le lire. Si on l'implémente, ce doit être une entrée en
+**lecture seule**, distincte de la table des réglages modifiables.
+
+Corollaire de méthode : cette adresse a été trouvée parce que le multiplexeur journalise ce qu'une
+application officielle demande. Aucune relecture du code ne l'aurait signalée — nous ne cherchions
+pas, nous n'avions pas de raison de chercher.
+
