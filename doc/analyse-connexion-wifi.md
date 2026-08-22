@@ -1271,3 +1271,57 @@ lisait la requête sur une URL dont il avait lui-même retiré la query string. 
 § précédents — **un banc infidèle sur un seul point est aveugle exactement là**, et cette fois il
 accusait à tort.
 
+
+### 7nonies. Une commande relayée sans clé de fusion : l'application empile
+
+Relevé en usage réel, dans le panneau « Activité » :
+
+```
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+…six fois
+```
+
+Six tâches en attente pour une seule question. L'application officielle **impose son profil
+courant à chaque ouverture de session** — c'est la toute première commande qu'elle nous a jamais
+relayée — et elle en ouvre plusieurs. Chacune de ces six tâches allait redire à la cafetière ce
+que la précédente venait de lui dire.
+
+La cause est nue : la commande relayée appelait `startProgram` **sans `cle`**, et `enfiler` ne
+fusionne que sur `cle`.
+
+#### Ce qui peut fusionner, et ce qui ne doit surtout pas
+
+> ⚠️ **L'absence de clé est une décision, pas un oubli.** Demander deux cafés n'est pas demander
+> un café. Poser une clé sur tout aurait supprimé des commandes.
+
+La règle vit donc dans `cleFusion()`, côté `ecam-args.mjs`, parce que **l'idempotence est une
+propriété du protocole et non une politique de l'appelant** :
+
+| trame | clé | pourquoi |
+|---|---|---|
+| `0xA9` sélection de profil | `profil:<n>` | une affirmation d'état ; réaffirmer le même profil ne fait rien de plus |
+| `0x75` monitor | `presence` | le nom que la file emploie déjà — la demande d'une application et le bouton « Lire l'état » deviennent une tâche |
+| toute autre `lecture` | `lecture:<hex>` | demander deux fois la même chose, c'est la demander une fois |
+| `0x83` préparation, `0x84` marche/arrêt, écritures | **aucune** | l'effet se cumule, ou son idempotence n'est pas établie |
+| commande hors table, valeur non-trame | **aucune** | une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet |
+
+La nature vient d'`ECAM_OPS`, donc aucun site d'appel n'en décide et il n'existe pas de seconde
+table à tenir à jour.
+
+#### Trois points à ne pas regretter plus tard
+
+- **Les deux émetteurs lisent la même règle** — la commande relayée et `/api/command`. Une règle
+  par émetteur aurait fusionné d'un côté et pas de l'autre, pour la même trame.
+- **La fusion porte sur la tâche, jamais sur l'accusé.** `accuserSiDemande` part une fois par
+  demande, y compris pour celle qui vient de fusionner — et c'est exact : l'accusé porte le
+  transport, pas l'exécution.
+- **La fusion ne prend jamais la tâche en cours**, seulement celles en attente (`enfiler` :
+  « celle-là a déjà servi une partie de ses pas »). Le pire cas est donc deux exemplaires — celui
+  qui tourne et celui qui attend, lequel absorbe tous les suivants — jamais N.
+
+Limite assumée : les autres lectures **nommées** côté serveur (`checksums`, `bean:n`,
+`reglages95:…`) gardent leur clé propre, donc une même lecture demandée par une application et par
+une page fera toujours deux tâches. Pinné par `verif-args.mjs`.
+

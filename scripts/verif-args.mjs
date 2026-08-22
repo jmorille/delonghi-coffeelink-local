@@ -16,7 +16,7 @@
  * Aucune dépendance : `node scripts/verif-args.mjs`.
  */
 import {
-  ECAM_OPS, TWO, argumentsTrame, describeFrame, natureTrame, opReponse, octetsEcam, profilVise,
+  ECAM_OPS, TWO, argumentsTrame, cleFusion, describeFrame, natureTrame, opReponse, octetsEcam, profilVise,
 } from "../src/lib/ecam-args.mjs";
 
 let ko = 0;
@@ -25,6 +25,7 @@ const test = (nom, fn) => {
   catch (e) { ko++; console.log("  ÉCHEC", nom, "→", e.message); }
 };
 const eq = (a, b, quoi) => { if (a !== b) throw new Error(`${quoi}: ${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`); };
+const vrai = (x, quoi) => { if (!x) throw new Error(quoi); };
 
 // Les deux tables injectées, réduites à ce que les cas ci-dessous demandent.
 const PARAMS = {
@@ -259,6 +260,37 @@ test("une vraie trame traverse le garde-fou sans être touchée", () => {
   eq(!describeFrame(allumer).includes("55 12 00"), true, "l'horodatage est retiré d'une trame");
   const reponse = Buffer.from([0xd0, 0x08, 0xa2, 0x0f, 0, 0, 0, 0]).toString("base64");
   eq(octetsEcam(reponse) !== null, true, "en-tête 0xD0 accepté aussi — c'est le sens entrant");
+});
+test("la fusion ne prend que ce dont la répétition est sans effet", () => {
+  // ⚠️ Défaut constaté en usage réel : six « sélection de profil (0xa9) · profil 1 » identiques
+  // en file, chacune partant redire à la machine ce que la précédente venait de lui dire.
+  // L'application officielle impose son profil courant à chaque ouverture de session.
+  const horo = [0x11, 0x22, 0x33, 0x44];
+  const b64 = (o) => Buffer.from([...o, ...horo]).toString("base64");
+  const profil1 = b64([0x0d, 0x06, 0xa9, 0xf0, 0x01, 0x5f, 0x2a]);
+  const profil1bis = b64([0x0d, 0x06, 0xa9, 0xf0, 0x01, 0x5f, 0x2a]);
+  const profil3 = b64([0x0d, 0x06, 0xa9, 0xf0, 0x03, 0x11, 0x22]);
+  eq(cleFusion(profil1), "profil:1", "une sélection de profil porte le profil visé");
+  eq(cleFusion(profil1bis), cleFusion(profil1), "deux fois le même profil : une seule clé");
+  vrai(cleFusion(profil3) !== cleFusion(profil1), "deux profils différents ne fusionnent pas");
+
+  // Une LECTURE répétée est la même lecture. `0x75` porte le nom que la file emploie déjà
+  // partout pour cet état-là, sans quoi la demande d'une application et celle du bouton
+  // « Lire l'état » feraient deux tâches pour une seule question.
+  eq(cleFusion(b64([0x0d, 0x05, 0x75, 0x0f, 0xda, 0x25])), "presence", "le monitor rejoint la présence");
+
+  // ⚠️ **L'absence de clé est une décision, pas un oubli** : demander deux cafés n'est pas
+  // demander un café. Une préparation, un arrêt, un allumage gardent chacun leur ligne.
+  vrai(cleFusion(b64([0x0d, 0x12, 0x83, 0xf0, 0x01, 0x01, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x11, 0x22])) === null,
+       "une préparation ne fusionne jamais");
+  vrai(cleFusion(b64([0x0d, 0x07, 0x84, 0x0f, 0x02, 0x01, 0x55, 0x12])) === null,
+       "marche / arrêt non plus : son idempotence n'est pas établie");
+
+  // Et une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet : la fusionner
+  // supprimerait une commande sur une supposition. Même règle pour ce qui n'est pas une trame.
+  vrai(cleFusion(b64([0x0d, 0x05, 0x37, 0x0f, 0x00, 0x00])) === null, "commande non identifiée : aucune clé");
+  vrai(cleFusion("MTc4NzQwNzg3Ng==") === null, "une valeur non-trame : aucune clé");
+  vrai(cleFusion(null) === null, "rien du tout : aucune clé");
 });
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

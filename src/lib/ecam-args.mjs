@@ -321,47 +321,6 @@ export function cleFusion(ecamB64) {
 }
 
 /**
- * **La clé de fusion d'une trame, ou `null` quand il n'y en a pas.**
- *
- * Deux tâches de même `cle` encore en attente n'en font qu'une (`enfiler` dans `tasks.mjs`).
- * Encore faut-il qu'une clé existe — et **l'absence de clé est une décision, pas un oubli** :
- * demander deux cafés n'est pas demander un café, donc une préparation garde sa ligne. C'est
- * la frontière que `cle` trace déjà partout ailleurs dans ce serveur.
- *
- * On ne fusionne donc que ce dont la répétition est **démontrablement** sans effet :
- *
- * - `0xA9` **sélection de profil** — une affirmation d'état. Réaffirmer le même profil est
- *   idempotent, ce que `server.mjs` dit déjà par ailleurs en réservant `sustain: "profile"` à
- *   ce cas précis. C'est le défaut constaté en usage réel : une application officielle impose
- *   son profil à chaque ouverture de session, et six « sélection de profil · profil 1 »
- *   identiques s'empilaient dans la file, chacune allant redire à la machine ce que la
- *   précédente venait de lui dire.
- * - une **lecture** — demander deux fois la même chose, c'est la demander une fois. La nature
- *   vient d'`ECAM_OPS`, donc aucun appelant n'en décide et il n'y a pas de seconde table.
- *
- * Tout le reste rend `null` : une action, une écriture, et **surtout** une commande absente de
- * la table. Une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet ; la
- * fusionner reviendrait à supprimer une commande sur une supposition.
- *
- * ⚠️ Deux limites à connaître. `0x75` rend `"presence"` — le nom que la file emploie déjà
- * partout pour cette lecture-là — mais les autres lectures nommées côté serveur
- * (`checksums`, `bean:n`, `reglages95:…`) gardent leur clé propre : une même lecture demandée
- * par une application et par une page fera donc deux tâches, comme aujourd'hui. Et la fusion
- * ne prend jamais la tâche **en cours**, seulement celles en attente : le pire cas est deux
- * exemplaires, pas N.
- */
-export function cleFusion(ecamB64) {
-  try {
-    const { cmd, op, trame } = opTrame(ecamB64);
-    if (!op) return null;
-    if (cmd === 0xa9) return `profil:${trame[4] ?? "?"}`;
-    if (cmd === 0x75) return "presence";
-    if (op.nature === "lecture") return `lecture:${trame.toString("hex")}`;
-    return null;
-  } catch { return null; }
-}
-
-/**
  * **L'opération que porte une trame ENTRANTE** — une réponse de la machine, ou la valeur d'une
  * propriété Ayla rediffusée à une application.
  *

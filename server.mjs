@@ -1618,8 +1618,23 @@ async function executerPourApp(m, app, intention) {
       // journal : c'est le même texte, produit par la même table, et deux formulations pour une
       // même trame se contrediraient à la première évolution du protocole.
       const decrite = decrireCommande(m, intention.valeur, { octets: false });
+      /**
+       * ⚠️ **Sans clé de fusion, une application empile.** Constaté en usage réel : six
+       * « sélection de profil (0xa9) · profil 1 » identiques en file, chacune partant redire à
+       * la machine ce que la précédente venait de lui dire. L'application officielle impose son
+       * profil courant à chaque ouverture de session, et elle en ouvre plusieurs.
+       *
+       * La clé vient de `cleFusion`, donc du protocole et non d'ici : ce qui se fusionne est ce
+       * dont la répétition est démontrablement sans effet. Une préparation, elle, rend `null` et
+       * garde sa ligne — demander deux cafés n'est pas demander un café.
+       *
+       * La fusion porte sur la TÂCHE, jamais sur l'accusé : `accuserSiDemande` part juste après,
+       * une fois par demande. L'application dont la tâche a fusionné reçoit son accusé quand
+       * même, ce qui est exact — il porte le transport, pas l'exécution.
+       */
       startProgram(m, intention.valeur, `App ${app.id} · ${decrite}`, 75000, "monitor", {
         rang: RANG.COMMANDE,
+        cle: cleFusion(intention.valeur),
         meta: { app: app.id },
         i18n: { k: "appWrite", p: { app: app.id, commande: decrite } },
       });
@@ -3939,7 +3954,11 @@ async function handleApi(req, res) {
      * de boisson. Le drapeau ne connaît que ce que CE serveur a mis en file : une boisson lancée au
      * panneau de la machine reste invisible, comme avant la file.
      */
-    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, i18n: cleLibelle, meta: b.action === "dispense" ? { dispense: true } : null });
+    // Même règle que pour une commande relayée par une application, et c'est le point : deux
+    // sélections du même profil n'en font qu'une, qu'elles viennent d'un téléphone, de deux
+    // onglets, ou d'un téléphone et d'un onglet. Une règle par émetteur aurait fusionné ici et
+    // pas là, pour la même trame.
+    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, cle: cleFusion(ecamB64), i18n: cleLibelle, meta: b.action === "dispense" ? { dispense: true } : null });
     // La file de lecture est écoulée quand aucun programme n'est actif : elle s'enchaîne donc
     // naturellement après la fenêtre du programme ci-dessus.
     if (refreshOrderFor) {
