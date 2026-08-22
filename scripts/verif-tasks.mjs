@@ -157,6 +157,19 @@ test("la vue distingue en cours, en attente et terminées", () => {
   eq(v.attente.map((t) => t.label), ["Autre"], "en attente");
 });
 
+test("la clé de traduction du libellé traverse la vue", () => {
+  const f = nouvelleFile();
+  // Le serveur envoie un identifiant, le client traduit : si `vue()` laisse tomber `i18n`, le
+  // panneau « Activité » retombe silencieusement sur le français du serveur et personne ne le voit.
+  enfiler(f, tache({ label: "Boissons · profil 2", rang: RANG.LECTURE, pas: [pasLecture("a")], i18n: { k: "beverages", p: { profil: 2 } } }), 0);
+  enfiler(f, tache({ label: "Allumer", rang: RANG.COMMANDE, pas: [pasLecture("b")] }), 0);
+  const v = vue(f);
+  const tout = [v.encours, ...v.attente].filter(Boolean);
+  eq(tout.find((t) => t.label.startsWith("Boissons")).i18n, { k: "beverages", p: { profil: 2 } }, "clé transmise");
+  // Sans clé, le champ vaut null — c'est ce qui déclenche le repli sur le libellé du serveur.
+  eq(tout.find((t) => t.label === "Allumer").i18n, null, "absence de clé explicite");
+});
+
 console.log("");
 console.log("— repli des terminées —");
 // Cas reel signale sur /pilotage : un coupe-circuit annule toute la file d'un coup, donc cinq

@@ -93,10 +93,21 @@ export function pasTrame(nom, b64, { attente = "fenetre", ms = DELAIS.reponse, s
  * ouverts ne doivent pas produire trois présences. Null = jamais fusionnable (toute commande qui
  * agit : demander deux cafés n'est pas demander un café).
  */
-export function tache({ label, rang = RANG.LECTURE, pas, cle = null, meta = null, genre = "lecture" }) {
+export function tache({ label, rang = RANG.LECTURE, pas, cle = null, meta = null, genre = "lecture", i18n = null }) {
   return {
     id: null,
     label,
+    /**
+     * **La clé de traduction du libellé, et ses paramètres** — `{ k, p }`, `k` dans l'espace
+     * `task` du catalogue. `label` reste : c'est le texte du journal du terminal, et le repli du
+     * client quand la clé manque. Même règle que partout ailleurs ici — le serveur envoie un
+     * identifiant, le client traduit, et un catalogue incomplet dégrade au lieu de casser.
+     *
+     * Ce champ existe parce que les libellés de tâches sont la derniere chose que le serveur
+     * envoyait en français pour affichage direct : trois endroits du panneau « Activité » les
+     * rendaient bruts.
+     */
+    i18n,
     rang,
     cle,
     /**
@@ -165,6 +176,7 @@ export function vue(file) {
     pasCourant: t.etat === "encours" ? (t.pas[t.i]?.nom ?? null) : null,
     repris: t.pas.filter((p) => p.repris).length,
     motif: t.motif,
+    i18n: t.i18n ?? null,
     repetitions: t.repetitions ?? 1,
     creeA: t.creeA,
     demarreA: t.demarreA,

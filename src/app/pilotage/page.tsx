@@ -6,7 +6,7 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import ConfirmSettings from "../ConfirmSettings";
 import { cleAnnonce, echecAnnonce } from "../register";
-import { AGE_PERIME, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel } from "../machineState";
+import { AGE_PERIME, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel, taskLabel } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
 
@@ -34,7 +34,30 @@ export default function Dashboard() {
   const tc = useTranslations("common");
   const ta = useTranslations("alarm");
   const tsens = useTranslations("sensor");
+  const ttask = useTranslations("task");
+  const tbev = useTranslations("beverage");
+  const tset = useTranslations("settings");
+  const tpw = useTranslations("profilesWhat");
   const tconf = useTranslations("confirmations");
+  /**
+   * **Le nom d'une tâche, dit par nous et non par le serveur.** Les libellés de tâches étaient la
+   * dernière chose que le serveur envoyait en français pour affichage direct, et ce panneau était
+   * l'endroit où ça se voyait.
+   *
+   * `deref` résout les identifiants imbriqués dans leur propre espace — un slug de boisson, une
+   * clé de réglage, la famille lue d'un import de profils. Sans lui il faudrait recopier ces
+   * traductions dans l'espace `task`, et deux copies d'un même libellé divergent toujours.
+   */
+  const nomTache = useCallback(
+    (tache: { label?: string; i18n?: any }) =>
+      taskLabel(tache, ttask as any, (ns, cle) => {
+        if (ns === "beverage") return tbev.has(cle) ? tbev(cle as any) : cle;
+        if (ns === "setting") return tset.has(`label_${cle}`) ? tset(`label_${cle}` as any) : cle;
+        if (ns === "profilesWhat") return tpw.has(cle) ? tpw(cle as any) : cle;
+        return cle;
+      }),
+    [ttask, tbev, tset, tpw],
+  );
   const [status, setStatus] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   /**
@@ -629,7 +652,7 @@ export default function Dashboard() {
                         colonne de gauche est bornée à 13 rem, donc « Balayage des grains 0–5 »
                         suivi d'une pastille repliait et la pastille retombait sous le nom, où elle
                         ressemblait à un deuxième libellé. */}
-                    <dt className="k">{encours.label}</dt>
+                    <dt className="k">{nomTache(encours)}</dt>
                     <dd className="titreLigne">
                       <Rang n={encours.rang} />
                       <span className="pill on">{t("taskProgress", { faits: encours.faits, total: encours.total })}</span>
@@ -652,7 +675,7 @@ export default function Dashboard() {
                 <dl className="kvListe">
                   {attente.map((tache) => (
                     <div className="kv" key={tache.id}>
-                      <dt className="k">{tache.label}</dt>
+                      <dt className="k">{nomTache(tache)}</dt>
                       <dd className="titreLigne etire">
                         <Rang n={tache.rang} />
                         <span className="sub">{t("taskSteps", { count: tache.total })}</span>
@@ -689,7 +712,7 @@ export default function Dashboard() {
                 <dl className="kvListe">
                   {finies.map((tache) => (
                     <div className="kv" key={tache.id}>
-                      <dt className="k">{tache.label}</dt>
+                      <dt className="k">{nomTache(tache)}</dt>
                       <dd className="titreLigne">
                         <span className={"pill " + (tache.etat === "faite" ? "on" : "off")}>
                           {t(("state_" + tache.etat) as any)}

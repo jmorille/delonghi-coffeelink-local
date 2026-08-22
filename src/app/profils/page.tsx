@@ -5,10 +5,16 @@ import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
+import { useBeverageLabel } from "../../i18n/labels";
 
 interface OrderEntry {
   id: number;
+  /** Identifiant de la boisson au catalogue : c'est LUI qui se traduit. */
+  slug: string | null;
+  /** Libellé français du serveur, gardé en repli quand le catalogue ne connaît pas le slug. */
   label: string | null;
+  /** Nom SAISI sur la machine. Donnée utilisateur : il prime, et il ne se traduit jamais. */
+  machineName: string | null;
 }
 interface Profile {
   id: number;
@@ -106,6 +112,18 @@ function Editeur({
 
 export default function Profils() {
   const t = useTranslations("profiles");
+  /**
+   * **Le nom d'une boisson de l'ordre des favoris, comme partout ailleurs.** Cette page rendait le
+   * `label` du serveur tel quel — seule page à ne pas passer par le helper. Elle contournait donc
+   * aussi les noms saisis sur la machine, et affichait « Recette perso 1 » là où `/` affichait
+   * « Lacteso » : la divergence que `machineBeverageNames` avait été écrit pour supprimer,
+   * reproduite ici dans l'autre sens.
+   */
+  const bevLabel = useBeverageLabel();
+  const nomBoisson = (o: OrderEntry) =>
+    o.slug
+      ? bevLabel({ slug: o.slug, machineName: o.machineName, label: o.label ?? undefined })
+      : (o.machineName ?? o.label ?? `#${o.id}`);
   const tc = useTranslations("common");
   const [data, setData] = useState<Payload | null>(null);
   const [scope, setScope] = useState<Scope>("all");
@@ -376,7 +394,7 @@ export default function Profils() {
                   </div>
                   <div className="legende">
                     {p.order
-                      ? t("orderSummary", { count: p.order.length, list: p.order.map((o) => o.label ?? `#${o.id}`).join(" · ") })
+                      ? t("orderSummary", { count: p.order.length, list: p.order.map(nomBoisson).join(" · ") })
                       : t("orderNotRead")}
                   </div>
                   {p.source && (
@@ -443,7 +461,7 @@ export default function Profils() {
                       <ol className="listeFavoris">
                         {favoris.ids.map((id, i) => (
                           <li key={`${id}-${i}`}>
-                            <span>{p.order!.find((o) => o.id === id)?.label ?? `#${id}`}</span>
+                            <span>{(() => { const o = p.order!.find((x) => x.id === id); return o ? nomBoisson(o) : `#${id}`; })()}</span>
                             <span className="row">
                               <button className="mini discret" disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</button>
                               <button className="mini discret" disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</button>
@@ -498,7 +516,7 @@ export default function Profils() {
                     <td>{c.name ?? <span className="sub">{t("unnamed")}</span>}</td>
                     <td className="num">{c.icon ?? tc("dash")}</td>
                     <td className="num">{c.beverageId}</td>
-                    <td>
+                    <td className="titreLigne">
                       <button
                         className="discret iconBtn iconSeul"
                         disabled={busy}
@@ -508,6 +526,23 @@ export default function Profils() {
                       >
                         <Icone nom="modifier" />
                       </button>
+                      {/* **Le nom se change ici, la RECETTE se change sur `/`.** Un emplacement perso
+                          est une boisson du catalogue (id 229+n) : son éditeur borné par le modèle,
+                          avec les valeurs enregistrées du profil, « Préparer » et « Écrire dans le
+                          profil », existe déjà là-bas. En remonter une copie ici donnerait deux
+                          endroits pour le même geste, et celui-ci serait le moins complet — la faute
+                          que la carte boissons de `/pilotage` a déjà coûtée. On adresse la carte
+                          plutôt que de la dupliquer.
+                          Le lien n'emporte PAS le profil : l'activer enverrait un `0xA9` à la
+                          machine, et une navigation ne doit rien envoyer. */}
+                      <a
+                        className="discret iconBtn iconSeul"
+                        href={`/#b${c.beverageId}`}
+                        aria-label={t("editRecipe", { n: c.slot })}
+                        title={t("editRecipeTitle")}
+                      >
+                        <Icone nom="reglages" />
+                      </a>
                     </td>
                   </tr>
                 ))}

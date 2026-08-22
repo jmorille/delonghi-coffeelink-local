@@ -47,6 +47,48 @@ export function sensorLabel(sw: { name: string; label?: string }, t: HasTranslat
 export type HasTranslator = Translator & { has: (key: string) => boolean };
 
 /**
+ * Ce que le serveur joint à une tâche pour qu'on puisse la nommer nous-mêmes : une clé de l'espace
+ * `task`, des paramètres simples, et des **références** vers d'autres espaces du catalogue.
+ *
+ * Les références existent parce qu'un libellé de tâche contient parfois un identifiant qui a déjà
+ * sa traduction ailleurs — le slug d'une boisson, la clé d'un réglage. Les passer en clair
+ * ramènerait le français du serveur dans la chaîne, ce que ce mécanisme est censé supprimer. Elles
+ * sont un champ séparé et non un préfixe dans la valeur : un nom SAISI sur la machine (« Lacteso »)
+ * est un paramètre simple, et rien ne doit pouvoir le prendre pour un identifiant à traduire.
+ */
+export type TaskI18n = {
+  k: string;
+  p?: Record<string, string | number>;
+  refs?: Record<string, { ns: string; cle: string }>;
+} | null;
+
+/**
+ * Le libellé d'une tâche, traduit, avec repli sur le texte du serveur.
+ *
+ * `deref` résout les références vers les autres espaces ; sans lui — ou sans la clé — on affiche
+ * l'identifiant, ce qui reste plus honnête qu'une chaîne serveur figée. Le repli global reste le
+ * `label` français : une tâche ajoutée au serveur sans clé de catalogue s'affiche comme avant,
+ * elle ne disparaît pas et ne montre pas `task.beanScan`.
+ */
+export function taskLabel(
+  tache: { label?: string; i18n?: TaskI18n },
+  t: HasTranslator,
+  deref?: (ns: string, cle: string) => string,
+): string {
+  const i = tache.i18n;
+  if (!i?.k || !t.has(i.k)) return tache.label ?? "";
+  const params: Record<string, string | number> = { ...(i.p ?? {}) };
+  for (const [nom, r] of Object.entries(i.refs ?? {})) params[nom] = deref ? deref(r.ns, r.cle) : r.cle;
+  try {
+    return t(i.k, params);
+  } catch {
+    // Un paramètre manquant fait lever next-intl. Mieux vaut le libellé du serveur qu'une page
+    // blanche : le panneau « Activité » est précisément ce qu'on regarde quand ça va mal.
+    return tache.label ?? i.k;
+  }
+}
+
+/**
  * **L'étape d'une préparation en cours.** Le serveur envoie une clé de protocole (`etapeCle`,
  * dérivée du couple fonction/étape des octets 9-10 du monitor) ou `null` quand le couple observé
  * n'est nommé ni par la table de l'app ni par nos relevés. `null` n'est pas une erreur : cinq
