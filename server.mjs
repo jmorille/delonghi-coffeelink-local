@@ -1068,11 +1068,14 @@ function ensureKeepalive(m) {
 }
 
 // --- réponse brute (compatible ESP32) ---
-function raw(res, bodyStr, status = 200) {
+function raw(res, bodyStr, status = 200, type = "application/json") {
   // PAS de "Connection: close" : l'ESP32 enchaîne key_exchange → commands.json sur la
   // même connexion keep-alive ; fermer casse la séquence. Content-Length explicite suffit.
+  //
+  // `type` n'existe que pour le multiplexeur : la vraie machine répond `text/json` sur
+  // `/regtoken.json`, et se faire passer pour elle veut dire lui ressembler jusque-là.
   const buf = Buffer.from(bodyStr, "utf8");
-  res.writeHead(status, { "Content-Type": "application/json", "Content-Length": buf.length });
+  res.writeHead(status, { "Content-Type": type, "Content-Length": buf.length });
   res.end(buf);
 }
 function readBody(req) { return new Promise((r) => { const c = []; req.on("data", (x) => c.push(x)); req.on("end", () => r(Buffer.concat(c))); }); }
@@ -1374,14 +1377,33 @@ setInterval(() => {
  * première que touche quiconque cherche à savoir qui répond ici. Nous rendons la même forme, avec
  * le vrai DSN : c'est ce qui nous fait passer pour l'appareil.
  */
-function handleAppRegtoken(req, res) {
+async function handleAppRegtoken(req, res) {
   const m = defaultMachine();
   if (!m?.dsn) {
     refuser(PROXY.registre, { from: peerAddress(req), motif: "dsnInconnu" }, Date.now());
     return raw(res, JSON.stringify({ error: "no dsn" }), 404);
   }
-  L("in", `app ${peerAddress(req)} : regtoken demandé, nous répondons ${m.dsn}`, m);
-  return raw(res, JSON.stringify({ host_symname: m.dsn, registration_type: "Same-LAN" }));
+  // On RESSERT la réponse de la vraie machine plutôt que d'en fabriquer une.
+  //
+  // Comparées côte à côte le 2026-08-22, les deux différaient sur quatre points : la machine
+  // renvoie `text/json` et non `application/json`, et son corps porte `regtoken` et `registered`
+  // en plus, avec `registration_type: "AP-Mode"` là où nous inventions `"Same-LAN"`. Chacun de ces
+  // écarts est une occasion, pour une application, de constater qu'elle ne parle pas à l'appareil
+  // — et nous n'avons aucun moyen de savoir lequel elle regarde. Copier est donc la seule
+  // stratégie défendable ; deviner ne l'est pas.
+  //
+  // Le cache est court : `regtoken` est un jeton d'enregistrement, servir une valeur périmée
+  // serait un écart de plus.
+  const frais = m.regtokenBrut && Date.now() - m.regtokenBrut.at < 60_000;
+  if (!frais && m.ip) await probeRegtoken(m).catch(() => {});
+  if (m.regtokenBrut) {
+    L("in", `app ${peerAddress(req)} : regtoken demandé, nous resservons celui de la machine (${m.dsn})`, m);
+    return raw(res, m.regtokenBrut.body, 200, "text/json");
+  }
+  // Repli : la machine est injoignable et nous n'avons jamais vu sa réponse. On sert le minimum,
+  // et on le DIT — une application qui refuserait ici doit être diagnosticable.
+  L("in", `app ${peerAddress(req)} : regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite`, m);
+  return raw(res, JSON.stringify({ registered: 1, registration_type: "AP-Mode", host_symname: m.dsn }), 200, "text/json");
 }
 
 /**
@@ -1925,7 +1947,13 @@ async function probeRegtoken(m) {
         const body = Buffer.concat(c).toString("utf8");
         let parsed = null;
         try { parsed = JSON.parse(body); } catch {}
-        resolve({ host, ip: t.ip, reachable: true, status: res.statusCode, regtoken: parsed, at: Date.now() });
+        // Le corps BRUT est gardé, pas seulement l'objet : le multiplexeur le ressert tel quel aux
+        // applications (voir `handleAppRegtoken`). Mesuré le 2026-08-22, la vraie machine répond
+        // `{"regtoken":…,"registered":1,"registration_type":"AP-Mode","host_symname":…}` en
+        // `text/json` — quatre champs et un type MIME que notre version inventée n'avait pas.
+        // Reconstruire cette réponse, c'est se donner une chance de plus de se trahir.
+        if (parsed) m.regtokenBrut = { body, at: Date.now() };
+        resolve({ host, ip: t.ip, reachable: true, status: res.statusCode, regtoken: parsed, raw: body, at: Date.now() });
       });
     });
     r.on("error", (e) => resolve({ host, ip: t.ip, reachable: false, error: e.message, at: Date.now() }));
@@ -4351,7 +4379,7 @@ createServer((req, res) => {
   }
   // Les deux endpoints que sert une VRAIE machine à un client local. Ils n'existent que si le
   // multiplexeur est allumé : voir PROXY, et la raison pour laquelle il est éteint par défaut.
-  if (PROXY.actif && u.split("?")[0] === "/regtoken.json") return handleAppRegtoken(req, res);
+  if (PROXY.actif && u.split("?")[0] === "/regtoken.json") return handleAppRegtoken(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   if (PROXY.actif && u.split("?")[0] === "/local_reg.json") return handleAppReg(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   if (u.startsWith("/local_lan/")) return handleLan(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));
   if (u.startsWith("/api/")) return handleApi(req, res).catch((e) => raw(res, JSON.stringify({ error: e.message }), 500));

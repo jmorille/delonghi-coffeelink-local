@@ -712,6 +712,44 @@ Ni l'une ni l'autre n'est interceptable par un imposteur situé sur un autre seg
 la dernière voie de découverte plausible et laisse une seule option au multiplexeur : **occuper
 l'adresse que l'application interroge déjà**, sur le segment où elle l'interroge.
 
+### 7quater.2 La réponse EXACTE de `/regtoken.json`, relevée sur la machine
+
+Mesurée le 2026-08-22 en interrogeant la vraie machine et notre imposteur côte à côte, à la même
+seconde. Elles ne se ressemblaient pas.
+
+```http
+GET /regtoken.json                       ← la MACHINE
+HTTP/1.1 200 OK
+Content-Type: text/json
+
+{"regtoken":"XXXXXX","registered":1,"registration_type":"AP-Mode","host_symname":"AC000W0XXXXXXXX"}
+```
+
+Quatre écarts avec ce que lan-server servait au départ, et chacun est une occasion pour une
+application de constater qu'elle ne parle pas à l'appareil :
+
+| | machine | notre première version |
+|---|---|---|
+| Type MIME | `text/json` | `application/json` |
+| `regtoken` | présent | absent |
+| `registered` | `1` | absent |
+| `registration_type` | `AP-Mode` | `Same-LAN` |
+
+`AP-Mode` alors que la machine est en fonctionnement normal sur le Wi-Fi domestique : la valeur ne
+décrit pas l'état courant, c'est une constante du firmware. La déduire aurait donné `Same-LAN`,
+c'est-à-dire faux.
+
+**Conséquence de méthode, plus large que ce cas.** On ne sait pas quel champ une application
+regarde, ni si elle en regarde un. Reconstituer la réponse revient donc à parier sur une liste de
+champs qu'on ne connaît pas. `handleAppRegtoken()` **ressert le corps brut de la machine**
+(`m.regtokenBrut`, rafraîchi au maximum toutes les 60 s parce qu'un jeton d'enregistrement périmé
+serait un écart de plus), et ne reconstruit un minimum que si la machine n'a jamais répondu — auquel
+cas il l'écrit dans le journal, pour qu'un refus reste diagnosticable.
+
+Ce relevé sert aussi de **discriminant de test** : tant que le client interrogé répond
+`registration_type: "AP-Mode"` avec un `regtoken`, c'est la machine ; s'il répond sans, c'est nous.
+C'est ainsi qu'a été constaté qu'une redirection réseau n'était pas encore active.
+
 ## 8. Points ouverts
 
 ### Résolus par la capture logcat du 2026-08-19 18:02
