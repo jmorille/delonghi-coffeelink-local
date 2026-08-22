@@ -28,7 +28,7 @@ Analyse réalisée le 2026-08-19 à partir de :
 | Fabricant du module | **Espressif Inc.** (ESP32) | OUI de la MAC |
 | VLAN | VLAN IoT `VLAN_IOT/24`, iface `IFACE_IOT` | pare-feu du réseau |
 | **DSN Ayla** | **`AC000W0XXXXXXXX`** | `/regtoken.json` + logcat `DSN:` |
-| Nom machine (app) | `D1705596` | logcat `Wifi Machine found` |
+| Nom machine (app) | `D17055XX` | logcat `Wifi Machine found` |
 | Jeton d'enregistrement | `9f3340` | `GET /regtoken.json` |
 | Enregistré au cloud | oui (`registered: 1`) | `GET /regtoken.json` |
 | Mode d'appairage utilisé | `AP-Mode` (donc pas de BLE) | `GET /regtoken.json` |

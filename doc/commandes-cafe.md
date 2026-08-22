@@ -1171,7 +1171,7 @@ d0 1b a1 0f 00 cd  32 31 37 30 35 35 …  00 c3 6f
                    ^  ^^^^^^^^^^^^^^
                    │  « 17055 » = les 5 caractères qui donnent le modèle
                    └─ série[0], hors clé
-→ nom « D1705596 »  →  clé 17055  →  product_code 0132217055  →  ECAM 610.75.MB (PD_SOUL)
+→ nom « D17055XX »  →  clé 17055  →  product_code 0132217055  →  ECAM 610.75.MB (PD_SOUL)
 ```
 
 `0xA1` n'a **pas** de décodeur générique dans le serveur : cette propriété est routée par son
