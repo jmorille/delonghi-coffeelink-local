@@ -26,7 +26,7 @@ import { makeLanSession, token } from "./src/lib/lansession.mjs";
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
          cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
-         PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
+         estRefus, PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
 import { RANG, DELAIS, MAX_FILE, nouvelleFile, tache, pasLecture, pasTrame, enfiler, aServir,
@@ -992,17 +992,22 @@ function describeFrame(ecamB64) {
  * une ligne de journal ; la coupe est DITE plutôt que silencieuse.
  */
 function chargeBrute(valeur, max = 120) {
-  const b64 = String(valeur ?? "");
-  if (!b64) return "charge vide";
-  let hex;
-  try {
-    const buf = Buffer.from(b64, "base64");
-    hex = buf.subarray(0, max).toString("hex").replace(/(..)/g, "$1 ").trim();
-    if (buf.length > max) hex += ` … (+${buf.length - max} octets)`;
-  } catch {
-    return `charge non décodable · b64 ${b64.slice(0, max)}`;
-  }
-  return `brut ${hex} · b64 ${b64.length > max ? `${b64.slice(0, max)}…` : b64}`;
+  const v = String(valeur ?? "");
+  if (!v) return "charge vide";
+  const coupe = (s) => (s.length > max ? `${s.slice(0, max)}…` : s);
+  // ⚠️ Tester AVANT de décoder, parce que `Buffer.from(x, "base64")` ne lève jamais : il ignore
+  // silencieusement ce qui n'est pas du base64 et rend des octets qui ont l'air de quelque chose.
+  // Relevé en direct sur la vraie application, qui écrit `device_connected = 1787407876` — un
+  // horodatage unix en clair — et que cette fonction affichait « brut d7 bf 3b e3 4e fc ef ».
+  // Sept octets inventés là où la valeur était lisible telle quelle : le contraire exact de ce
+  // qu'un journal de rétro-ingénierie doit faire. Toutes les propriétés Ayla ne portent pas du
+  // base64 ; celle qui porte les trames ECAM, oui, et c'est ce qui rendait le piège invisible.
+  const semblebase64 = v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
+  if (!semblebase64) return `valeur ${coupe(v)}`;
+  const buf = Buffer.from(v, "base64");
+  let hex = buf.subarray(0, max).toString("hex").replace(/(..)/g, "$1 ").trim();
+  if (buf.length > max) hex += ` … (+${buf.length - max} octets)`;
+  return `brut ${hex} · b64 ${coupe(v)}`;
 }
 
 /**
@@ -1366,11 +1371,11 @@ async function sonderAppSerialise(m, app) {
   let rep;
   try {
     rep = await httpJson({ ip: app.ip, port: app.port, path: `${app.uri}/commands.json`, method: "GET", timeout: 4000 });
-  } catch {
+  } catch (e) {
     // Une application qui ne répond plus n'est pas une erreur à journaliser toutes les deux
-    // secondes : c'est un téléphone verrouillé — mais au bout de quelques refus d'affilée,
+    // secondes : c'est un téléphone verrouillé — mais au bout de quelques REFUS d'affilée,
     // c'est un port fermé, et l'entrée doit partir sans attendre `DELAI_APP_MUETTE`.
-    constaterEchecApp(m, app);
+    constaterEchecApp(m, app, e);
     return;
   }
   if (rep.status !== 200 || !rep.corps.trim()) return;
@@ -1461,12 +1466,51 @@ async function executerPourApp(m, app, intention) {
       if (intention.ackId) await pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
       return;
     }
+    case "illisible":
+      // Ce n'est PAS une charge inattendue, c'est notre flux qui est perdu — et `lansession.mjs`
+      // le dit depuis toujours : « une désynchronisation force un nouvel échange de clés ». On ne
+      // le faisait pas. On journalisait « demande non reconnue » et on continuait de sonder un
+      // flux AES-CBC qui ne redeviendra jamais lisible, indéfiniment. Mesuré sur la vraie
+      // application : session ouverte à 16:11:14, illisible à 16:11:48, et rien n'en serait
+      // ressorti sans intervention manuelle.
+      //
+      // La signature ne trompe pas : en CBC, un chaînage faux ne salit que le bloc de tête, la
+      // suite se recale seule sur le chiffré qui la précède — d'où ces octets illisibles finissant
+      // proprement par `…a":{}}`. Une charge réellement inattendue, elle, serait lisible.
+      relancerSessionApp(m, app);
+      return;
     default:
       // 400 et non 160 : cette ligne est le seul endroit où une demande que nous ne savons pas
       // interpréter laisse une trace, et une demande tronquée à 160 caractères ne s'analyse pas.
       // C'est de la matière de rétro-ingénierie, pas un accusé de réception.
       LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 400)}`, app, m);
   }
+}
+
+/** Deux relances rapprochées ne répareraient rien : la seconde casserait le flux que la première vient d'ouvrir. */
+const DELAI_RELANCE_APP = 15_000;
+
+/**
+ * Refait l'échange de clés avec une application dont le flux est irrécupérable.
+ *
+ * Une seule cause connue à ce jour, et elle est de notre côté : un message que l'application a
+ * chiffré et que nous n'avons jamais déchiffré. Une sonde `commands.json` qui atteint le téléphone
+ * puis expire côté serveur suffit — la réponse a été produite, donc le flux sortant de
+ * l'application a avancé, et le nôtre non. C'est la même mécanique que le défaut de
+ * `scripts/faux-app.mjs`, à ceci près qu'ici personne n'est fautif : le réseau a le droit de perdre
+ * une réponse.
+ *
+ * Rouvrir est donc la seule issue, et c'est sans risque pour l'appareil : un échange de clés ne
+ * touche pas la cafetière, il ne recrée que le chiffrement entre l'application et nous.
+ */
+function relancerSessionApp(m, app) {
+  const maintenant = Date.now();
+  if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
+  app.relanceA = maintenant;
+  LA("sys", "flux illisible — désynchronisé sans retour, nouvel échange de clés", app, m);
+  app.session = null;
+  app.etat = "annoncee";
+  ouvrirSessionApp(m, app).catch(() => {});
 }
 
 /**
@@ -1494,8 +1538,8 @@ function pousserVersApp(m, app, corpsJson) {
       });
       toucher(app, Date.now());
       return true;
-    } catch {
-      constaterEchecApp(m, app);
+    } catch (e) {
+      constaterEchecApp(m, app, e);
       return false;
     }
   });
@@ -1545,10 +1589,17 @@ function diffuserAuxApps(m, name, value) {
  * les distinguer est exactement ce que ce multiplexeur existe pour faire. C'est l'injoignabilité
  * qui retire une entrée, jamais l'arrivée d'une voisine.
  */
-function constaterEchecApp(m, app) {
+function constaterEchecApp(m, app, err = null) {
   if (!PROXY.registre.apps.has(cleApp(app.ip, app.port))) return;
+  // ⚠️ **Seul un REFUS compte.** C'était la justification de tout ce mécanisme — « le silence et le
+  // refus ne sont pas la même information » — et le code les confondait quand même, parce qu'un
+  // délai dépassé et un `ECONNREFUSED` arrivaient ici sous la même forme. Résultat mesuré sur la
+  // vraie application : évincée en 16 s après trois délais dépassés, revenue 9 s plus tard sur le
+  // MÊME port d'écoute — elle n'était jamais partie, elle s'était tue. Un téléphone qui verrouille
+  // son écran fait exactement cela. Le silence retombe donc sur `DELAI_APP_MUETTE`, sa règle.
+  if (!estRefus(err)) return;
   if (!echouer(app)) return;
-  retirerApp(app, m, `injoignable (${SEUIL_ECHECS} tentatives sans réponse), oubliée`);
+  retirerApp(app, m, `injoignable (${SEUIL_ECHECS} refus de connexion, ${err.code}), oubliée`);
 }
 
 /** Retire une application : sonde désarmée d'abord, sinon elle continuerait sur un objet oublié. */

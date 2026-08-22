@@ -11,7 +11,7 @@
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
          echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
-import { analyserCommandes } from "../src/lib/appproxy.mjs";
+import { analyserCommandes, estRefus } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -229,6 +229,17 @@ test("un même téléphone sur deux ports reste DEUX applications", () => {
   for (let i = 0; i < SEUIL_ECHECS; i++) echouer(vieille);
   oublier(r, vieille);
   eq([...r.apps.values()].map((a) => a.port), [10275], "seule l'injoignable est partie");
+});
+
+test("seul un REFUS compte comme échec — un délai dépassé est un silence", () => {
+  // La justification de toute l'éviction rapide, et le code la contredisait : un délai dépassé
+  // et un ECONNREFUSED arrivaient au même endroit sous la même forme. Mesuré sur la vraie
+  // application — évincée en 16 s après trois délais, revenue 9 s plus tard sur le MÊME port.
+  vrai(estRefus({ code: "ECONNREFUSED" }), "un port fermé est une preuve");
+  vrai(estRefus({ code: "EHOSTUNREACH" }), "un hôte injoignable aussi");
+  vrai(!estRefus({ code: "ETIMEDOUT" }), "un délai dépassé ne prouve rien : téléphone verrouillé");
+  vrai(!estRefus(null), "pas d'erreur, pas de refus");
+  vrai(!estRefus(new Error("délai dépassé")), "le message ne fait pas foi, seul le code compte");
 });
 
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");

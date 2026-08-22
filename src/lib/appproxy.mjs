@@ -46,6 +46,20 @@ export const PORT_ATTENDU_PAR_APP = 80;
  * HTTP embarqué du SDK Android (NanoHTTPD) est aussi économe que celui de l'ESP32. `fetch`/undici
  * ajoute un `transfer-encoding` et des en-têtes que rien n'oblige ces serveurs à accepter.
  */
+/**
+ * Les codes réseau qui PROUVENT qu'il n'y a plus personne à l'écoute. `ETIMEDOUT` n'en est pas.
+ *
+ * La distinction est la justification même de l'éviction rapide : un port fermé répond non, et
+ * c'est un fait sur l'application ; un silence ne dit rien, le téléphone peut être verrouillé. Les
+ * confondre — ce que faisait le code, faute de code d'erreur porté jusqu'à l'appelant — évinçait en
+ * une douzaine de secondes une application qui s'était seulement tue. Mesuré sur la vraie
+ * application : sortie du registre en 16 s, revenue 9 s plus tard sur le MÊME port d'écoute.
+ */
+export const REFUS_RESEAU = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
+
+/** Pur, donc prouvable sans réseau : cette erreur est-elle un refus, ou seulement un silence ? */
+export const estRefus = (err) => REFUS_RESEAU.has(err?.code);
+
 export function httpJson({ ip, port, path, method = "POST", body = null, timeout = 5000 }) {
   return new Promise((resolve, reject) => {
     const buf = body == null ? null : Buffer.from(body, "utf8");
@@ -67,7 +81,17 @@ export function httpJson({ ip, port, path, method = "POST", body = null, timeout
         res.on("end", () => resolve({ status: res.statusCode, corps: Buffer.concat(morceaux).toString("utf8") }));
       },
     );
-    req.on("timeout", () => req.destroy(new Error("délai dépassé")));
+    // Le code d'erreur est PORTÉ, pas seulement le message : un délai dépassé et un refus de
+    // connexion n'ont pas la même valeur de preuve. Un port fermé répond non — c'est un fait sur
+    // l'application. Un silence ne dit rien : le téléphone peut être verrouillé. Sans ce code,
+    // l'appelant ne peut que les confondre, et l'éviction rapide conçue pour les refus frappait
+    // aussi les silences (constaté : une application déclarée injoignable en 16 s, revenue sur le
+    // MÊME port 9 s plus tard — elle n'était jamais partie).
+    req.on("timeout", () => {
+      const e = new Error("délai dépassé");
+      e.code = "ETIMEDOUT";
+      req.destroy(e);
+    });
     req.on("error", reject);
     if (buf) req.write(buf);
     req.end();
