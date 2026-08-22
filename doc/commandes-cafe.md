@@ -302,6 +302,38 @@ pour `beverageId = 200` (sauf `checkValues`).
 | Lire un monitor | réponse `D0 12 75 0F …` | 0x75 |
 | Lire le numéro de série (et donc le modèle) | réponse `D0 1B A1 0F …` | 0xA1 — voir § 13 |
 
+### 5.1 Quelles trames RÉPONDENT — et ce que « pas de réponse » implique
+
+Fait opérationnel absent des premières versions de ce document, alors que tout l'ordonnancement du
+serveur repose dessus. **Trois natures, mais seulement deux comportements** — et la frontière n'est
+pas celle qu'on devine à la lecture des trames :
+
+| famille | commandes | la machine… |
+|---|---|---|
+| **lecture** | `0x75`, `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA`, `0x60`, `0x70` | renvoie un `data_response` |
+| **action** | `0x83`, `0x84`, `0xA9`, `0xB9` | ne répond **rien** |
+| **écriture** | `0x90`, `0xA5`, `0xAB`, `0xAD`, `0xBB` | ne répond **rien** non plus |
+
+Les deux dernières familles se distinguent par ce qu'elles laissent derrière (une écriture est
+persistante dans l'appareil), pas par leur comportement en réponse : **aucune des deux n'accuse
+réception**.
+
+⚠️ **Conséquence à ne pas manquer : pour une trame qui n'a rien à répondre, un délai atteint est un
+SUCCÈS, pas une panne.** Le seul acquittement dont on dispose est indirect — la machine est venue
+chercher la commande dans `commands.json`. Une durée d'attente n'est donc pas une échéance d'échec
+mais une **durée de présence soutenue** : on continue d'annoncer `local_reg` pendant ce temps, et on
+conclut positivement quand il expire. Traiter ces trames comme les lectures ferait échouer toute
+écriture réussie. Inversement, une lecture s'achève **quand sa réponse arrive**, à la vitesse de la
+machine, et non quand un chronomètre le décide.
+
+Une trame illisible est comptée comme une action : c'est le choix prudent, il fait tenir la présence
+au lieu d'attendre une réponse qui ne viendra peut-être jamais.
+
+Ce tableau couvre les trames que **ce serveur émet**. `0xA4`, `0xAA`, `0xA8` et `0xA1` n'y figurent
+pas alors qu'ils apparaissent au § 5 : ce sont des octets de commande qu'on **décode en réponse**,
+les données correspondantes étant obtenues par lecture de propriétés Ayla (§ 6.4) plutôt qu'en
+envoyant la trame.
+
 ⚠️ **Allumage / extinction : ne pas inverser.** `turnMachineOn` = `m0()` = `… 02 01`,
 `turnMachineOff` = `l0()` = `… 01 01` (vérifié dans `DeLonghiWifiConnectService` et confirmé
 en conditions réelles). Une version antérieure de ce tableau les donnait dans l'autre sens.
@@ -368,8 +400,26 @@ numéro = offsetBase + (profileId − 1) × 21          offsetBase = 39 pour l'e
 → profil 2 : d060_2_rec_espresso … d080_2_rec_brew_over_ice
 ```
 
-Perso : `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06`. Bean System :
-`d160_1_bs_recipe_01`. (Relevés pour le profil 1 ; l'incrément par profil reste à confirmer.)
+**Les deux familles particulières ne suivent PAS ce pas de 21**, et elles ne le suivent pas de deux
+façons différentes — c'est `p258z7/z.java` qui le dit, pas une supposition :
+
+- **Bean System** — `t(profileId, template)` : `i10 = (profileId − 1) × 6`, puis
+  `bs_recipe_01 + 160`. Donc `d160_1_bs_recipe_01`, `d166_2_bs_recipe_01`, `d172_3_…`
+  ⚠️ Ce pas de 6 **manquait** : une version antérieure du code rendait `d160_{p}_bs_recipe_01` pour
+  tous les profils, c'est-à-dire un nom qui n'existe pas pour p ≥ 2. La lecture répondait vide et
+  était classée « absente sur ce modèle » — la recette Bean Adapt des profils 2 à 5 était donc
+  illisible, sans que rien ne le signale. Un nom faux ne produit pas d'erreur ici, il produit du
+  silence.
+- **Recettes perso** — `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06`, **profil 1 en dur**. Ce
+  n'est pas un raccourci : l'app écrit ces noms littéralement (`C1("d200_1_cstm_recipe_01")`) et
+  n'a aucune fonction qui les construise avec un profil variable, contrairement aux deux cas
+  ci-dessus. Demander `d200_2_cstm_recipe_01` serait **inventer un nom**.
+
+⚠️ **Piège d'interprétation qui en découle.** Comme ces six propriétés sont les mêmes quel que soit
+le profil demandé, elles apparaissent « lues » pour les cinq profils dès qu'elles l'ont été une
+fois. Relevé sur cette machine : profil 2 affiche 6 boissons avec valeurs enregistrées — ce sont
+exactement les six recettes perso, et aucune boisson standard. Ne pas en conclure que les profils
+2 à 5 ont été lus.
 
 ### 6.3 Paramètres sur 2 octets
 
@@ -691,19 +741,37 @@ Résolu depuis la 1re version : les **échelles réelles** (§ 6.1 — café en 
 0..5), la **liste des paramètres 2 octets** (§ 6.3), les **identifiants de boisson** (§ 2) et
 le **sens allumage/extinction** (§ 5).
 
+**Résolu depuis, sur la machine (relevés des 2026-08-19 → 2026-08-22)** :
+
+- **Import réel** — les bornes remontent : **28 boissons sur 28** ont leurs quads min/déf/max en
+  cache. Le décodeur n'est plus validé sur une trame mais sur le catalogue entier.
+- **Lectures en veille** — oui. Mieux : une préparation **complète** a été enregistrée avec l'octet
+  d'état à `0x04` de bout en bout, sans qu'aucune commande d'allumage soit passée (§ 11.2). L'octet
+  d'état ne dit pas si la machine répond.
+- **profileId courant** — tranché, et **négativement** : il n'est pas lisible, voir § 11.4. Le forcer
+  côté client n'est pas un pis-aller en attendant mieux, c'est la seule option disponible. (Cette
+  entrée contredisait § 11.4 dans le même document.)
+- **Noms des recettes perso et des profils** — lus : **5 noms de profils sur 5** avec leurs icônes,
+  **5 ordres de favoris**, **6 noms de recettes perso sur 6**. Le pas de 21 octets est confirmé
+  (§ 8.2) ; le parser `K0()` à 22 octets est bien le chemin Striker, et n'a pas lieu d'être ici.
+- **Trame « lancer espresso » de bout en bout** — faite, sous surveillance, le 2026-08-22 : quatre
+  préparations réelles (espresso, espresso macchiato, lait chaud, second espresso), dont la
+  progression décodée est en § 11.5 et les trames archivées dans `scripts/captures/`.
+
 Reste ouvert :
 
-- **Import réel** : lancer `POST /api/beverages/import` machine réveillée et vérifier que les
-  21 propriétés de bornes remontent bien (le décodeur est validé sur une trame, pas encore sur
-  les 21). Vérifier au passage si la machine répond aux lectures **en veille**.
-- **Propriétés par profil 2..5** : la formule `offsetBase + (profileId − 1) × 21` est déduite du
-  code, seulement observée pour le profil 1.
-- **profileId courant** : lire sur la machine avant d'émettre une préparation (on force 1).
-- **Noms des recettes perso et des profils** : `0xAA` / `0xA4`, chaînes UTF-16BE de 20 octets,
-  pas de 22 octets sur cette machine (parser `K0()`).
+- **Propriétés par profil 2..5** : toujours **non vérifié**, malgré les apparences. La formule
+  `offsetBase + (profileId − 1) × 21` produit bien `d060_2_rec_espresso`, `d081_3_…`, `d102_4_…`,
+  `d123_5_…`, mais **aucune boisson standard n'a jamais répondu pour p ≥ 2** : les six valeurs qui
+  s'affichent pour ces profils sont les recettes perso, dont le nom fixe le profil à 1 (§ 6.2).
+  Lire une seule boisson du profil 2 suffirait à clore le point.
 - **Comportement du `checkValues`** (bit 0x80 sur le mode) : à tester prudemment.
-- Valider une trame « lancer espresso » de bout en bout, machine sous surveillance, avant
-  d'automatiser.
+- **Arrêt d'une préparation** (§ 1.5) : la trame est construite et passe par la file, mais elle n'a
+  jamais été déclenchée sur une boisson réellement en cours d'écoulement.
+- **Effet réel d'`INDEX_LENGTH`** (§ 4) : le paramètre part bien dans la trame, ses bornes sont
+  connues (0–4), mais ce qu'il change dans la tasse n'a pas été observé.
+- **Filtre `E0()` non appliqué** (§ 4) : décider si l'on s'aligne sur l'app, qui n'envoie jamais
+  `PROGRAMABLE(24)`, `VISIBLE(25)` ni `VISIBLE_IN_PROGRAMMING(26)` dans une trame `0x83`.
 
 ### 11.5 Progression d'une préparation (octets 9, 10, 11)
 
