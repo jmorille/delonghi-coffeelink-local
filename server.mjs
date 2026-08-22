@@ -22,7 +22,7 @@ import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from
 // (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
 // commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
 import {
-  TWO, argumentsTrame as argsEcam, cleFusion, describeFrame, hexCmd,
+  TWO, argumentsTrame as argsEcam, cleFusion, constanteConnue, describeFrame, hexCmd,
   natureTrame, opReponse, opTrame, profilVise,
 } from "./src/lib/ecam-args.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
@@ -1840,10 +1840,33 @@ function libelleEtat(m, name, value) {
   const r = opReponse(value);
   const parts = [name];
   parts.push(nom ?? "PROPRIÉTÉ NON IDENTIFIÉE");
-  if (r) parts.push(r.op ? `${r.op.nom} (${hexCmd(r.cmd)})` : `commande ${hexCmd(r.cmd)} NON IDENTIFIÉE`);
+  /**
+   * ⚠️ **Une valeur qui n'est pas une trame doit le DIRE, ici comme ailleurs.**
+   *
+   * Ce branchement ne connaissait qu'`opReponse`. Quand il rendait `null` — valeur non-ECAM —
+   * la ligne s'arrêtait au nom de la propriété : `état rediffusé · data_request · commande`,
+   * relevé en direct. Ni ce que c'est, ni ses octets, puisque `chargeBrute` n'était joint que
+   * si `r` existait avec une opération inconnue. Le pire des deux, et sur la seule valeur qui
+   * méritait qu'on la garde.
+   *
+   * Le cas n'est pas théorique : `s0()` est écrite dans `data_request`, donc relayée, donc
+   * réémise par la machine et rediffusée ici. Elle était **nommée à l'aller** (`describeFrame`)
+   * et **anonyme au retour** — une table lue dans un seul sens est une table qui ment dans
+   * l'autre, c'est la leçon que ce fichier répète ailleurs à propos des copies de tables.
+   */
+  if (r) {
+    parts.push(r.op ? `${r.op.nom} (${hexCmd(r.cmd)})` : `commande ${hexCmd(r.cmd)} NON IDENTIFIÉE`);
+  } else {
+    const brut = Buffer.from(String(value ?? "").replace(/\s+/g, ""), "base64");
+    const connue = constanteConnue(brut);
+    parts.push(connue ? `${connue.nom} · non-trame` : "valeur non-trame");
+  }
   // Les octets ne sont joints que sur de l'inconnu : ailleurs ils feraient une ligne de deux cents
-  // caractères qui répète ce que le journal machine décode déjà, mieux.
-  if (!nom || (r && !r.op)) parts.push(chargeBrute(value, 64));
+  // caractères qui répète ce que le journal machine décode déjà, mieux. Une valeur non-trame que
+  // l'on ne sait pas nommer en fait partie — c'est même le cas type, la seule trace qu'on aura
+  // d'un paquet que l'application officielle est seule au monde à produire.
+  const inconnue = !r && !constanteConnue(Buffer.from(String(value ?? "").replace(/\s+/g, ""), "base64"));
+  if (!nom || (r && !r.op) || inconnue) parts.push(chargeBrute(value, 64));
   return parts.join(" · ");
 }
 function diffuserAuxApps(m, name, value) {
