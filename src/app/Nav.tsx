@@ -43,6 +43,10 @@ const ENTRIES = [
   { href: "/pilotage", key: "dashboard", needsMachine: true },
   { href: "/recipes", key: "recipes", needsMachine: true },
   { href: "/statistiques", key: "stats", needsMachine: true },
+  // Les réglages de l'APPAREIL (dureté de l'eau, arrêt auto, bip…), à ne pas confondre avec la
+  // configuration du serveur, qui vit dans /machines. Ils exigent une session chiffrée, donc les
+  // deux prérequis.
+  { href: "/reglages", key: "settings", needsMachine: true },
   { href: "/machines", key: "machines", needsMachine: false },
   { href: "/systeme", key: "system", needsMachine: false },
 ] as const;

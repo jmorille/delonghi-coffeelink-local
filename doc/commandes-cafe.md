@@ -273,7 +273,11 @@ pour `beverageId = 200` (sauf `checkValues`).
 | Lire un Bean System | `0D 06 BA F0 <index> <crc>` | 0xBA |
 | Sélectionner un Bean System | `0D 06 B9 F0 <id> <crc>` | 0xB9 |
 | Envoyer un profil | `0D 06 A9 F0 <id> <crc>` | 0xA9 |
-| Écrire un paramètre | `0D 0B 90 <flag> …` | 0x90 |
+| Lire un réglage machine | `0D 08 95 <flag> <addrHi> <addrLo> <qty> <crc>` | 0x95 — voir § 14.1 |
+| Écrire un réglage machine | `0D 0B 90 <flag> <addrHi> <addrLo> <valeur 32 bits> <crc>` | 0x90 — voir § 14.1 |
+| Écrire les noms de profils | `0D <len> A5 F0 <premier> <dernier> …` | 0xA5 — voir § 14.2 |
+| Écrire les noms de recettes perso | `0D <len> AB F0 <premier> <dernier> …` | 0xAB — voir § 14.2 |
+| Écrire l'ordre des favoris | `0D 12 AD F0 <profil> <12 ids> <crc>` | 0xAD — voir § 14.3 |
 | Sauver/supprimer Bean System | `0D 33 BB F0 …` (52 o) | 0xBB — voir `bean-adapt.md` |
 | Lire un monitor | réponse `D0 12 75 0F …` | 0x75 |
 | Lire le numéro de série (et donc le modèle) | réponse `D0 1B A1 0F …` | 0xA1 — voir § 13 |
@@ -517,7 +521,7 @@ la trame complète décodée du base64), et confirmé sur la machine.
 octet 4        état machine
 octets 5, 6    CAPTEURS — champ de bits 16 bits ; octet = 5 + groupe, bit = position
 octets 7,8,12,13  alarmes — champ de bits 32 bits (7 | 8<<8 | 12<<16 | 13<<24)
-octets 9,10,11    compteurs/divers (accesseurs f(), e(), d() de l app)
+octets 9,10,11    PROGRESSION — fonction, étape, pourcentage (§ 11.5)
 ```
 
 > ⚠️ Les octets 5-6 étaient nommés « progress » dans les premières versions de ce projet.
@@ -553,6 +557,16 @@ octets 9,10,11    compteurs/divers (accesseurs f(), e(), d() de l app)
 Le serveur raisonne donc « **éveillée sauf 0x04** » plutôt que sur une liste blanche d'états
 allumés : une version précédente n'acceptait que `0x00` et affichait « état inconnu » alors que la
 machine était bel et bien prête.
+
+
+> ⚠️ **`0x04` ne veut PAS dire « la machine ne fait rien ».** Relevé le 2026-08-22 : un espresso
+> complet — mouture, infusion, écoulement jusqu'à 100 % — s'est déroulé avec `état=0x04` sur ses
+> **49 trames**, sans qu'aucune commande d'allumage ne soit passée par le serveur. La même boisson
+> avait été enregistrée plus tôt le même jour à `0x02` de bout en bout. L'octet 4 décrit donc l'état
+> de l'interface de la machine, pas son activité : **c'est la progression (octets 9-11, § 11.5) qui
+> dit si quelque chose est en cours**, et elle prime. L'accueil affichait sans cela son interrupteur
+> sur « éteint » juste au-dessus d'une barre annonçant « Écoulement du café — 84 % ».
+> Capture de référence : `scripts/captures/espresso-veille.json`.
 
 ### 11.3 Alarmes (octets 7, 8, 12, 13)
 
@@ -618,6 +632,133 @@ Reste ouvert :
 - **Comportement du `checkValues`** (bit 0x80 sur le mode) : à tester prudemment.
 - Valider une trame « lancer espresso » de bout en bout, machine sous surveillance, avant
   d'automatiser.
+
+### 11.5 Progression d'une préparation (octets 9, 10, 11)
+
+**Élucidé et mesuré sur la machine le 2026-08-22**, sur trois préparations réelles. Les trois
+octets sont journalisés mot pour mot par l'app dans `BrewBeveragesViewModel.P()` :
+
+```java
+"BEVERAGE DISPENSING FLOW : Fun OnGoing: " + monitorData.f()
+                          + " Exe Prog: " + monitorData.e()
+                          + " Percent : " + monitorData.d()
+```
+
+Pour un monitor de **mode 2** (la réponse `0x75`, la seule que le service Wi-Fi demande),
+`MonitorDataV2` lit `f()` à l'octet **9**, `e()` à l'octet **10**, `d()` à l'octet **11**.
+
+| Octet | Nom dans l'app | Contenu |
+|---:|---|---|
+| 9 | `FunctionOngoing` | la **phase** en cours |
+| 10 | `ExecutionProgress` | l'étape à l'intérieur de la phase |
+| 11 | `Percent` | pourcentage 0-100 de la boisson **entière** |
+
+#### Fonctions relevées
+
+| Valeur | Sens | Certitude |
+|---|---|---|
+| 0 | veille | l'app en fait son prédicat `n()` |
+| 5 | chauffe | table de l'app, non observée ici |
+| 7 | **café** | confirmé — espresso et macchiato |
+| 10 | **boisson lactée** | confirmé — macchiato et lait chaud |
+| 11 | eau chaude | table de l'app, non observée |
+| 16, 17 | écoulement café / lait | table de l'app, non observées |
+
+#### Étapes relevées, fonction 7 (café)
+
+| `e` | Sens | Source |
+|---:|---|---|
+| 0 | **repos** | l'app en fait son prédicat `o()` : `f==7 && e==0` |
+| 4 | mouture | app (`disp_grinding`) + observé |
+| 5, 6 | non nommées — l'octet 5 (capteurs) y montre `MOTOR_UP`/`MOTOR_DOWN` | observées |
+| 7 | chauffe de l'eau | app (`disp_water_heating`) |
+| 8 | infusion | app (`icn_infusion_bean`) + observé |
+| 9, 10 | non nommées | observées |
+| 11 | écoulement du café | app (`disp_coffee_delivery`) + observé |
+| 13, 14 | terminé | app (`icn_dispensing_complete`) + observées |
+
+#### Étapes relevées, fonction 10 (lait)
+
+| `e` | Sens | Source |
+|---:|---|---|
+| 1 | chauffe | app (`disp_water_heating`) + observé |
+| 2 | mouture | app (`disp_grinding`) |
+| 3, 5 | non nommées | observées |
+| 4 | écoulement du lait | app (`disp_milk_delivery`) + observé |
+| 7 | mouture | app (`disp_grinding`) |
+
+**Cinq valeurs d'étape observées ne sont nommées par personne** — ni par la table de l'app, ni par
+nos relevés. L'app y garde simplement l'illustration précédente ; le serveur les rend `null` et
+l'interface dit « préparation en cours ». Leur inventer un nom serait une affirmation de plus que
+ce qu'on sait.
+
+#### Les trois relevés
+
+Espresso (café seul) — 34,5 s de la commande au 100 % :
+
+```
++4,3 s   f=7  e=4   0 %   mouture
++11,1    f=7  e=6   0 %   octet 5 → 0x04 puis 0x06 : moteur de l'infuseur
++17,0    f=7  e=8   5 %   infusion — le pourcentage démarre
++23,4    f=7  e=11 17 %   écoulement
++28,5    f=7  e=11 68 %
++34,5    f=7  e=14 100 %  terminé
++39,1    f=7  e=0   0 %   repos
+```
+
+Espresso macchiato (lait puis café) — 41 s :
+
+```
++4,2 s   f=10 e=1   0 %   chauffe
++11,8    f=10 e=4   4 %   écoulement du lait
++15,2    f=10 e=5  38 %   fin du lait
++17,5    f=7  e=4  40 %   BASCULE sur le café — le pourcentage NE REPART PAS de zéro
++35,4    f=7  e=11 53 %
++41,1    f=7  e=13 100 %
+```
+
+Lait chaud 50 ml (lait seul) — 18 s :
+
+```
++4,6 s   f=10 e=1   0 %
++12,1    f=10 e=4  22 %
++15,5    f=10 e=5  90 %   ← dernier pourcentage publié
++17,7    f=7  e=0   0 %   repos
+```
+
+#### Trois conséquences, dont une qui casse l'implémentation naïve
+
+1. **La fonction est la PHASE, pas le type de boisson.** Un macchiato passe de 10 à 7 en cours de
+   route. Une interface qui lirait la fonction une seule fois se tromperait à la moitié.
+2. **Le pourcentage couvre la boisson entière** et ne se remet pas à zéro au changement de phase :
+   le lait mène à 38, le café **reprend à 40**. C'est donc une barre unique, sans recollage.
+3. ⚠️ **Le 100 % n'est pas garanti.** Le lait chaud s'est arrêté à 90 % puis est retombé
+   directement au repos. L'écart entre les deux relevés était de 2,2 s, donc une trame à 100 % a
+   pu être manquée — mais on ne peut pas s'en remettre à une trame qu'on n'a pas vue.
+   **Le seul signal de fin fiable est le retour à `f=7, e=0`**, vérifié aux trois préparations, y
+   compris celle qui n'a jamais quitté `f=10` : c'est l'état de repos **global** de la machine,
+   pas la fin de la fonction café.
+
+#### Aucune durée n'existe
+
+Ni durée écoulée, ni durée restante, dans aucune des trois trames monitor. Le seul champ temporel
+du protocole est l'horodatage de 4 octets en queue de trame, une horloge. L'app officielle n'affiche
+d'ailleurs pas de temps : une barre de pourcentage et le nom de l'étape. Le « depuis N s » de
+l'accueil est **mesuré par le serveur**, et l'interface le dit.
+
+#### Effet de bord relevé
+
+À l'instant où le lait commence à couler, l'octet 8 passe à `0x40` — **bit d'alarme 14,
+`CLEAN_KNOB`** — et il **reste actif après la préparation** : la machine réclame le nettoyage de la
+carafe. Vérifié en direct (`alarmBits = 0x4008`, soit filtre à eau + molette de nettoyage).
+
+#### Où c'est implémenté
+
+`src/lib/monitor.mjs` (`decodeMonitor`, `MONITOR_ETAPES`) — extrait de `server.mjs` parce que le
+décodage est **pur**, ce qui rend `scripts/verif-monitor.mjs` possible : il rejoue les trois
+captures ci-dessus (`scripts/captures/*.json`) et vérifie notamment que le lait chaud ne publie
+jamais 100 %. C'est, avec l'ordonnanceur de tâches, la seule partie du protocole prouvable sans
+l'appareil, et les deux tournent en CI.
 
 ## 12. Statistiques d'utilisation — `0xA2` (lecture de paramètres machine)
 
@@ -852,3 +993,114 @@ catalogue : il faudrait rendre cette arithmétique dérivée du modèle, et non 
 La table constructeur contient **117 machines**, dont **30 non-Bluetooth** — les seules capables
 de LAN mode — en quatre familles : `PD_SOUL` (5 modèles, 28 recettes), `PD_SOUL_BETTER` (5, 22),
 `STRIKER_BEST` (7, 48) et `STRIKER_GOOD` (13, 0 recette déclarée).
+
+---
+
+## 14. Écritures et réglages — `0x90`, `0x95`, `0xA5`, `0xAB`, `0xAD`
+
+Relevé en extrayant les 23 constructeurs de trames de `p097j6/d.java` (les noms lisibles ont
+survécu à l'obfuscation dans les appels `Log`) puis en croisant avec ce que
+`DeLonghiWifiConnectService` envoie réellement. **L'application envoie 13 trames par Wi-Fi.**
+Celles décrites ici en complétaient la moitié manquante : elles étaient toutes des ÉCRITURES, plus
+la lecture symétrique des réglages.
+
+### 14.1 Réglages machine — `0x95` (lecture) / `0x90` (écriture)
+
+```
+Lecture   0D 08 95 <flag> <addrHi> <addrLo> <qty> <crc16>          (9 octets)
+Écriture  0D 0B 90 <flag> <addrHi> <addrLo> <v31..24> <v23..16> <v15..8> <v7..0> <crc16>   (12 o)
+```
+
+`flag` = `0x0F` si l'adresse est < 1000, `0xF0` sinon (règle recopiée de l'app ; toutes les
+adresses connues sont sous 1000).
+
+**Réponse `0x95`** — format DIFFÉRENT de `0xA2`, ne pas les confondre :
+
+```
+octet 1     len
+octets 4-5  adresse du PREMIER réglage (16 bits)
+octets 6…   n × 4 octets de valeur, adresses CONSÉCUTIVES ; n = (len − 7) / 4
+```
+
+L'identifiant n'est donc **pas** répété devant chaque valeur, contrairement à `0xA2`. Confondre
+les deux formats décale chaque valeur d'un cran : des réglages plausibles et faux.
+
+**Adresses connues** (relevées dans `p018b7/d.java`, le view-model de l'écran « réglages » :
+chaque écran appelle `readParameter(addr, 1)` puis `writeParameter(addr, valeur)`) :
+
+| Adresse | Réglage | Propriété Ayla équivalente (classic / Striker) |
+|---|---|---|
+| 50 | dureté de l'eau | `d283_mchn_sett_water` / `d283_mach_sett_water_hard` |
+| 61 | température du café | `d281_mchn_sett_temp` / `d281_mach_sett_temperature` |
+| 62 | arrêt automatique | `d282_mchn_sett_aoff` / `d282_mach_sett_auto_off` |
+| 63 | **champ de bits** (voir ci-dessous) | `d284_mchn_sett_user_conf` / `d284_mach_sett_user_conf` |
+| 64 | démarrage automatique — heures | — |
+| 65 | démarrage automatique — minutes | — |
+| 194 | inconnu (lu par l'app, jamais écrit) | — |
+| 210 | code PIN (valeur encodée) | — |
+
+**Ces réglages existent donc AUSSI comme propriétés Ayla.** L'app choisit la propriété quand la
+machine est jointe par le cloud et la trame sinon (`p018b7/d.X()` fait exactement ce test pour la
+dureté de l'eau). Les deux chemins sont utilisables en LAN ; le serveur demande les deux.
+
+**Adresse 63 — champ de bits** (`p018b7/d.f0()`, et `Parameter.f()/g()` qui testent l'octet de
+POIDS FAIBLE des 4, soit `b[3]`) :
+
+| Bit | Masque | Réglage | Sens |
+|---|---|---|---|
+| 0 | 0x01 | démarrage automatique | **INVERSÉ** : bit à 1 = désactivé |
+| 2 | 0x04 | signal sonore | 1 = activé |
+| 3 | 0x08 | éclairage de la tasse | 1 = activé |
+| 4 | 0x10 | économie d'énergie | 1 = activé |
+| 5 | 0x20 | chauffe-tasses | 1 = activé |
+
+⚠️ Écrire cette adresse **remplace les cinq bits d'un coup**. Il faut donc lire l'octet courant et
+n'en changer qu'un ; poser l'octet depuis un état supposé éteint les quatre autres réglages.
+
+⚠️ **Tous les modèles n'exposent pas tous les réglages.** `MachinesModels.json` porte un drapeau par
+réglage (`water_hardness_settings`, `auto_off_settings`, `buzzer_settings`, `cup_light_settings`,
+`cup_warmer_settings`, `energy_saving_settings`, `auto_start_settings`, `time_settings`,
+`pin_settings`, `filter_settings`). Pour l'ECAM 610.75 : dureté de l'eau, arrêt automatique, filtre,
+signal sonore et économie d'énergie sont déclarés ; démarrage programmé, chauffe-tasses, éclairage
+de tasse, horloge et code PIN ne le sont pas.
+
+### 14.2 Écriture des noms — `0xA5` (profils) / `0xAB` (recettes perso)
+
+```
+0D <len> A5|AB F0 <premier> <dernier> [ 20 octets de nom UTF-16BE + 1 octet d'icône ] × n <crc16>
+len = n × 21 + 7
+```
+
+Pendant exact des lectures `0xA4` / `0xAA` (§ 8.2), **même pas de 21 octets**. Les octets 4 et 5
+portent le premier et le dernier index comme en lecture, ce qui permet d'écrire **une seule
+entrée** (`premier = dernier = index`) sans toucher aux autres — c'est ce que fait l'app.
+
+⚠️ La variante Striker (`d.k0()`) a un pas de **22** octets : une valeur de plus par entrée.
+Écrire un bloc au mauvais pas décale tous les noms suivants.
+
+### 14.3 Ordre des favoris — `0xAD`
+
+```
+0D 12 AD F0 <profil> <12 identifiants de boisson> <crc16>          (19 octets, longueur FIXE)
+```
+
+Pendant de la lecture `0xA8` (§ 8.3). Exactement 12 emplacements : une liste plus courte se
+complète de zéros.
+
+### 14.4 Modes de monitor — `0x60`, `0x70`, `0x75`
+
+`getByteMonitorMode` (`p097j6/d.V()`) construit trois trames de la même forme
+`0D 05 <cmd> 0F <crc16>` selon son argument : `0` → `0x60`, `1` → `0x70`, `2` → `0x75`.
+
+**Seul `0x75` est envoyé par le service Wi-Fi de l'application** ; les deux autres n'apparaissent
+que côté Bluetooth. Contenu de leur réponse **inconnu**, et rien ne garantit que le module y
+réponde en mode LAN. Le serveur les expose comme des sondes (`POST /api/monitormode`) qui
+journalisent la réponse brute sans la décoder.
+
+### 14.5 Restant non porté
+
+- `0xE8` — `getPacketForRefreshAppId`, trame fixe `0D 06 E8 F0 00 ED 7C <crc16>`, variante Striker.
+  En classic l'app envoie à la place un blob de 12 octets qui **ne commence pas par `0x0D`** (donc
+  pas une trame ECAM). Rôle non établi.
+- `0xA1` en LECTURE de paramètres : `d.r0(addr, qty)` choisit `0xA1` quand `qty > 4` et `0x95`
+  sinon. On ne sait pas ce que la première forme change.

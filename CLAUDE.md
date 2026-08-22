@@ -246,6 +246,182 @@ ones, so React redraws only the card that moved; it falls back to polling only i
 Do not add `Content-Length` or `Connection: close` to that response, and never route it through
 `raw()`.
 
+**All machine work goes through ONE queue per machine — `src/lib/tasks.mjs`.** The machine fetches
+exactly **one** command per visit to `commands.json`, so there is never more than one frame in
+flight; that is the only structural exclusion this protocol has. `startProgram` and `startImport`
+each wrote into a single slot (`m.program`, `m.import`) **without looking at what was already
+running**: last in, last served, and the previous one vanished without a log line, a failure or a
+refusal — the remaining properties of an overwritten import were simply lost. Opening a page during
+a bean sweep was enough to decapitate it.
+
+A **task** is a list of **steps** plus a policy. An import of 21 properties is one task of 21 steps;
+"Allumer" is a task of one step; a bean sweep is one task of six — where it used to be six separate
+programs chained by a guessed `setTimeout(11000)`, with a two-second dead zone between each. Three
+kinds of wait, because the machine does not answer the same way for everything: `prop` (it will push
+that property), `reponse` (a `data_response` will come — true of `0x75`, `0xA2`, `0xA3`, `0xA6`,
+`0xB0`, `0xBA`), and `fenetre` (it has nothing to answer — `0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`).
+For `fenetre`, `ms` is a **sustained-presence duration, not a failure deadline: reaching it is
+success.** The kind is derived from `ECAM_OPS` via `natureTrame()`, so no call site decides it and
+there is no second table to keep in sync.
+
+**Four ranks, one preemption rule**: a task may be suspended at a **step boundary** by a task of
+strictly higher rank. `URGENT` (0) is `stop` alone — it preempts even a running dispense, at a cost
+of at most one visit. `COMMANDE` (1) is on/off/dispense/profile/bean-select/writes. `LECTURE` (2)
+never preempts a command. `LECTURE_BASSE` (3) is the back of the queue and holds exactly one thing:
+the **statistics sweep**. Usage counters are the only data on this machine that does not go stale —
+a descale count read thirty seconds later is the same count — while profile names, beverage bounds
+and bean settings are what someone is watching a page for. A full sweep is eight round trips, so at
+rank 2 it made every page opened during it wait for nothing. Everything falls out of one insertion
+rule (`enfiler`: insert before the first task of strictly lower rank), including "a command never
+cuts another command" and "an ordinary read overtakes a sweep already under way". Suspended, **not**
+cancelled: the evicted task keeps its remaining steps and resumes — a sweep interrupted at request
+three resumes at request three.
+
+**Failures.** Each step has a deadline. A missed *read* step goes back **once** at the end of its
+task (`repris`), then counts as unread. The **circuit breaker** is the important one: no contact of
+any kind for `DELAIS.muet` (25 s) while a task heads the queue — with `local_reg` firing every
+2.5 s — means the machine is mute, so the head fails and **the rest of the queue is cancelled with
+the same motive, in one log line**, and the keep-alive stops. Without it, per-property retry would
+*double* the wait in exactly the case where it can rescue nothing. The two regimes are told apart by
+one question: has any response arrived since the task took the head? Note that a task is promoted to
+`encours` **when it reaches the head, not when it is served** — `aServir` only runs when the machine
+visits, and the case that matters most is the one where it never does; without that promotion the
+breaker never fired and the queue waited forever. Nothing is persisted: a restart drops the queue.
+
+**`m.program` / `m.import` are now derived views** (`vueProgramme`, `vueLecture`) because
+`/machines`, `/api/beverages` and `/api/profiles` read those shapes. There is one state, so two
+pages can no longer contradict each other about what the machine is doing. Every queueing endpoint
+returns `taskId` and `position`; `/api/status` returns `queue` (running / waiting / last finished);
+`{action:"clear"}` cancels everything, or one task with `taskId`. Cancelled and failed tasks land in
+`finies` with their motive — they do not evaporate, which was the original defect.
+
+**`POST /api/readall` reads everything the machine can tell us** — presence, model, checksums,
+profile names + favourite order, the active profile's beverage bounds and values, the six bean
+slots, and the full 62-counter sweep: **7 tasks, 90 steps**, all rank `LECTURE` so a user command
+still goes ahead of them. Nothing is prepared or written. **This endpoint was not implementable
+before the queue**: each of those reads wrote into the single `m.import` / `m.program` slot, so
+chaining them meant overwriting them one after another and only the last survived. It is the first
+feature that needed nothing but the ability to queue more than one thing. It is in `NEEDS_MACHINE`
+— without a key or an address the six reads would be accepted and silently lost.
+
+**The stat sweep ranges live in `STAT_RANGES` (server) and are published by `GET /api/stats`**, not
+copied into `/statistiques`. They used to live only in the page, and `/api/readall` needs them too;
+two copies of a protocol table that decides what gets read off an appliance is exactly the
+divergence this file warns about elsewhere. The page consumes `ranges` and keeps an empty fallback
+only for the first paint. Same pattern as `appIds`, which that endpoint already published.
+
+**`/pilotage` no longer serves beverages at all — the card was removed.** It replayed `/`'s grid: a
+second set of buttons that pour coffee, on a page titled "Pilotage local" whose every other block
+describes *state*. Two places for the same gesture, and this one had neither the names read off the
+machine, nor the profile's stored values, nor the recipe editor — it offered the same action, worse.
+`/` is where a drink is started.
+
+**"Arrêter" lives in "Commandes machine"**: on/off/stop are the three orders given to the appliance
+itself, and separating the third meant hunting for it elsewhere. Removing the beverages card took
+away what used to enable it (`lance`, the drink *this tab* had started), so it now follows a
+server-side signal — **`program.dispense`**, not `program.active`. That distinction is the whole
+point: since the queue exists, `active` is true whenever *any* task runs, so gating on it lit
+"Arrêter" during a counter sweep and offered to interrupt it with a **beverage-stop frame**. Only
+the `dispense` action is marked (`meta: { dispense: true }` at `startProgram`), and `vueProgramme`
+publishes the flag; `/` ORs it with its own `lastDispensed`. Unchanged limit, worth stating: a drink
+started at the machine's own panel never passed through us, so it does not light the button — that
+was already true before the queue. The confirmation says outright that we do not know which drink is
+pouring (`power.stopUnknownBeverage`)
+rather than letting the user believe we are stopping what they see. The espresso fallback in the
+frame stays necessary — the stop frame carries a beverage id — but it is never tacit. Leaving the
+button permanently inert would have been worse than confirming an imprecise stop.
+
+Below those three, under a "Lectures" sub-heading and deliberately **not** in the same row, sit
+**"Lire l'état"** then "Tout lire": the three above act on the appliance, these only ask — equal
+weight would equate "cut the hot water" with "re-read some counters".
+
+**"Lire l'état" is `0x75`, the only frame that asks the machine where it is** — standby / heating /
+ready, sensors, alarms. It posts to `/api/presence` with **`force: true`**, and that flag exists
+because the endpoint is deliberately throttled for its *automatic* caller (opening four tabs must
+not open four sessions): monitor younger than 30 s, non-empty queue, or called under 8 s ago, and it
+answers `skipped`. For a click that is the wrong answer — one clicks precisely because the state row
+is empty or dated. The merge key (`cle: "presence"`) still holds, so a double click is still one
+task. Rank stays `LECTURE`: an état request must not overtake a command, but it does overtake a
+counter sweep (`LECTURE_BASSE`), which is the long job one actually risked waiting behind. "Tout
+lire" keeps the `.mini` treatment, same rule as `/statistiques`: two buttons that differ in extent,
+not in nature. It asks **no confirmation**, unlike the three
+above it: the question it used to pose warned about queueing seven tasks at once, back when each new
+request destroyed the previous one. The queue removed that risk — the tasks stack at rank `LECTURE`,
+a command overtakes them, "Activité" shows them one by one and each carries its own "Annuler". The
+confirmations that remain guard a gesture that reaches the appliance (a hot-water rinse, a
+persistent write) and that no queue can undo afterwards; this one only asks.
+
+**`L()` folds consecutive identical lines instead of writing them again.** Measured on a real
+circuit-breaker run: 24 of the last 30 journal lines were `local_reg erreur: socket hang up`, and
+the six that explained anything — the tasks being queued, the verdict — were pushed off screen. An
+unreachable machine fills the journal mechanically (`local_reg` every 2.5 s) and drowns exactly what
+one comes there to read. Only **consecutive** repeats from the same machine and direction fold; the
+timestamp follows the LAST occurrence ("it is still happening" is the useful fact) and `repetitions`
+carries the count, which `/pilotage` renders as `(×12)`. Same run after folding: 30 lines → 9, whole
+story readable at a glance. Do not drop the count when rendering a log line — a folded line without
+it reads as an isolated incident where there were two dozen.
+
+**`scripts/verif-tasks.mjs` is the first thing in this repo that is verifiable without the
+machine** — fourteen assertions over ordering (including the statistics sweep's back-of-queue rank
+and its suspend-and-resume), preemption-with-resume, merging, the cap, retry, window-as-success, the
+breaker, cancellation and the view. Plain `node scripts/verif-tasks.mjs`, no
+dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`. The scheduler is pure
+(the instant is always a parameter, no I/O, no logging) precisely so this stays possible; keep it
+that way.
+
+**`scripts/verif-monitor.mjs` is the second, and it replays REAL device behaviour.**
+`scripts/captures/*.json` are three preparations recorded on the machine on 2026-08-22 — an
+espresso (coffee only), an espresso macchiato (milk then coffee) and a hot milk (milk only) — and
+the script decodes every frame through the very module the server uses. It is the only place in
+this project where appliance behaviour is frozen and replayable. That is what makes the extraction
+of `decodeMonitor` into **`src/lib/monitor.mjs`** worth its cost: the decoder is pure, so it can be
+proven without the machine. **That module is not one of the shadowed `src/lib/*.ts` copies — it
+runs, `server.mjs` imports it.**
+
+**`/pilotage`'s "Activité" panel is the queue, in three blocks** — running (label, rank, `2 sur 6`,
+current step, retries), waiting (one row per task, each with its own **Annuler**, plus "Vider la
+file"), and the last finished tasks **with their verdict**. That third block matters as much as the
+first: a task that ends having done nothing is otherwise indistinguishable from one that has not
+answered yet, and the `muette` motive carries the repair (in LAN mode the machine connects to *us*,
+so the usual culprit is the return path, not the command). The rank pill lives in the **value**
+column, not the label column — the label column is capped at 13 rem, so a long task name pushed the
+pill under it where it read as a second label. The panel replaced a "File de commandes" table that
+read a `status.queue` the server had never returned; the field exists now, and means it. It sits
+**below "Commandes machine", not above it**: liaison → what you came to do → what follows from it.
+Above the commands it asked the reader to follow a queue before seeing what fills it, and pushed the
+most frequent gesture of the page — turning the machine on — under a block that says "rien en file"
+most of the time.
+
+**The page's accessibility structure is deliberate, and it is the model for the others.** Each
+`<section>` carries `aria-labelledby` pointing at its `<h2>`, which is what turns eight anonymous
+boxes into eight **named regions** — without it an agent or a screen reader gets a flat run of
+headings and text with no way to scope "the Activité panel". The `.kv` rows of a card are a `<dl>`
+(`dl.kvListe` > `div.kv` > `dt.k` + `dd`, the `<div>` group being valid inside a `<dl>`), because the
+label→value pairing otherwise exists **only** in the two-column grid: read linearly it was "Session
+LAN", "établie", "Adresse…", "192.168…" with nothing saying which goes with which. `globals.css`
+neutralises the browser's `<dd>` indent, which the grid cannot absorb. **"État de la machine" carries the AGE of the reading, because "Session LAN : établie" does not.**
+`session.active` is `!!m.session`, and that session is dropped only on a configuration change — LAN
+key, address, machine reset, forgetting either — **never on inactivity and never on a timeout**. It
+therefore still reads "établie" hours after the machine stopped answering, which is exactly the
+situation someone opens this page to diagnose. The only dated proof we hold is `lastMonitor.at`, so
+the row now prints "lu il y a 45 s" beside the state pill, and past `AGE_PERIME` (90 s) says the
+state may have changed since. `fmtAge` and that threshold moved from `page.tsx` into
+`machineState.ts` — `/` showed the same fact with the same words and its own private copy, and two
+scales for "how old is this reading" would diverge at the first edit. A local 15 s heartbeat drives
+it, for the reason the home page already documents: nothing pushes an event because a minute
+passed, so without it the age would freeze at its first value. What is still NOT shown anywhere is
+`lastDataResponse.at` — the age of the last *ECAM* answer, which is what a mute stats sweep is
+about. The **liaison report lands on the row it
+describes**, not in a bordered box under the button: "Annonce envoyée à la machine (HTTP 202)" *is*
+a machine state, and a separate panel made the reader shuttle between the button, the box, and the
+"État de la machine" line it comments on. `StatutEnLigne` renders it beside the state pill, mounted
+permanently and empty when there is nothing — a `role="status"` created at the same instant as its
+content is not announced, only a change *inside* an already-present region is, so do not make it
+conditional. A failure keeps the alert pictogram of the "Serveur" row above it. The Activité card is
+`role="status"` **with `aria-atomic="false"`**: it is the only card that changes on its own, so it
+must be announced, but `role="status"` implies atomic and would re-read the whole queue every two
+seconds as the step counter ticks. Do not drop that `aria-atomic`.
+
 **A machine's first read fires by itself, as soon as it becomes possible.** `maybeInitialRead(m)`
 queues the **model** (`d270_serialnumber`) and the **names** (profile names + custom-recipe names,
 both name families) the moment the *second* prerequisite lands — key obtained when the address was
@@ -302,7 +478,7 @@ has **no** default to offer: it is labelled "pas de défaut" and left untouched 
 rather than forced to `min`. Both resets are local — nothing reaches the machine until "Préparer" or
 "Écrire"), `/profils` (imports profile names/icons, favourite order, custom-recipe names, and
 lists **all** profiles including factory-named ones), `/pilotage`
-(dashboard: on/off, live monitor, log), `/recipes` (custom recipes, **constrained by the model's min/def/max bounds** — the `0xB0` bounds are
+(dashboard: on/off, live monitor, **activity**, log), `/recipes` (custom recipes, **constrained by the model's min/def/max bounds** — the `0xB0` bounds are
 model characteristics shared by all 5 profiles, so a profile may only pick a value inside them; the
 page shows them and clamps inputs, shows the profile's stored value beside them, and can **write a
 recipe into a profile on the machine** — `0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a
@@ -314,8 +490,10 @@ multi-machine section: the two prerequisites of any control, in dependency order
 the machine concerned: its **address** — entered, probed and stored, no default anywhere — then the
 LAN key's state (`set`/`keyId`/`source`/`cachedAt`, never the key), its discovery from the De'Longhi
 account, and forgetting the cached key),
-`/systeme` (technical sheet: firmware, OTA, module, Ayla
-platform, model, protocol state, security findings). `/boissons` 307-redirects to `/`, and
+`/reglages` (**the appliance's own configuration** — water hardness, auto-off,
+temperature, buzzer, energy saving — read and written locally; not to be confused with `/machines`,
+which configures the *server*), `/systeme` (technical sheet: firmware, OTA, module, Ayla
+platform, model, protocol state, security findings, plus the two monitor-mode probes). `/boissons` 307-redirects to `/`, and
 `/bean-adapt` to **`/beans`** — the beans page moved, the old URL stays alive for open tabs.
 
 **`/beans` shows TWO lists, both as card grids.** The machine's six Bean-System slots, and a
@@ -599,6 +777,43 @@ inversion action. Both editing UIs show it read-only and keep it in the payload.
 Reads happen in pure LAN via an Ayla `property.json?name=` command served in `commands.json` — no
 cloud, no token.
 
+**Machine settings — the read/write symmetry, `0x95` / `0x90`.** `REGLAGES` in `server.mjs` holds
+the address table lifted from the app's settings view-model (`p018b7/d.java`): 50 water hardness,
+61 coffee temperature, 62 auto-off, **63 a bitfield** (auto-start — *inverted*, bit set = disabled —
+buzzer, cup light, energy saving, cup warmer), 64/65 the auto-start clock. The `0x95` response is
+**not** shaped like `0xA2`: the first address sits in bytes 4-5 and the values follow as n × 4 bytes
+for *consecutive* addresses, with no id in front of each. Confusing the two formats shifts every
+value by one — plausible and wrong. `/reglages` is the page; `GET/POST /api/settings` and
+`POST /api/settings/write`.
+
+Three guards that are the point of the feature, not decoration: **the same data also exists as Ayla
+properties** (`d281`…`d284`, two name families as usual) and we ask for both, since neither is
+guaranteed on a given model; **a bitfield write re-reads the current byte and flips one bit**, and
+*refuses* (409, `needsRead`) when that byte was never read — writing it from an assumed state would
+switch the other four settings off; and **only addresses in `REGLAGES` are ever written**, and only
+when the model's own flag declares the setting. Those flags now travel in `machine-catalogs.json`
+(`water_hardness_settings` and friends, extracted verbatim from the APK — a renamed copy would be a
+second table to keep in sync, and the APK's is the one that must win). **An undeclared flag means
+not supported, never "supported by default"**: `0x90` writes four bytes to an arbitrary address in a
+real appliance's configuration, and the known table covers six addresses out of an unknown space.
+
+**The three name/order writes — `0xA5`, `0xAB`, `0xAD` — live on `/profils`**, beside the reads they
+mirror (`0xA4` / `0xAA` / `0xA8`). Only **one entry** is ever written (`first = last = index`), which
+is what the app itself does: rewriting the whole block would make a rename depend on the freshness of
+the cache, and a name that had not been re-read would be overwritten with a stale value. The icon
+travels in the same 21-byte entry as the name, so the form asks for both and the endpoint **refuses**
+rather than defaulting to 0. The Striker 22-byte stride is deliberately not ported — writing a block
+at the wrong stride shifts every following name. Favourites are a **fixed** 19-byte frame, hence
+exactly 12 slots, padded with zeros; every id is checked against the model's catalog first.
+
+**`0x60` / `0x70` are probes, not features.** `getByteMonitorMode` builds three frames; the app's
+Wi-Fi service only ever sends `0x75`. `POST /api/monitormode` sends the other two and logs the raw
+answer with **no decoder** — inventing a structure for bytes never observed would produce plausible
+fields. The buttons sit on `/systeme`, under "État machine": it is the page that describes the
+protocol, and the result is the raw `lastDataResponse` line right above them. That is the one
+exception to "`/systeme` is read-only" — it sends a read frame, writes nothing, and is a measurement
+rather than a routine gesture.
+
 **Cache validation** — response `0xA3` (`decodeChecksums` in `profiles.mjs`) returns one 16-bit
 checksum per profile's recipe quantities plus one for custom recipes and one for names. One 6-byte
 request (`0D 05 A3 F0`) tells you whether anything changed, instead of re-reading 21 properties per
@@ -729,6 +944,46 @@ as `switchBits`; nothing emits `progress`. The `/systeme` page still read `lastM
 after the rename and printed "progress undefined" — if you rename a monitor field, grep the pages.
 The alarm bitfield is `byte 7 | 8<<8 | 12<<16 | 13<<24`, and byte 13 must be **multiplied** by
 `0x1000000`, not shifted: `0x80 << 24` is negative in JS and published a signed bitfield.
+
+**The real progress lives in bytes 9, 10 and 11** — `fonction`, `etape`, `pourcent`, decoded in
+`src/lib/monitor.mjs` and published by `/api/status`. Measured on three real preparations
+(`doc/commandes-cafe.md` § 11.5); three things fall out of that measurement and none of them was
+guessable from the decompiled code:
+- **`fonction` is the PHASE, not the drink.** A macchiato runs at 10 (milk) then switches to 7
+  (coffee) mid-preparation. Read it once and you are wrong halfway through.
+- **`pourcent` spans the WHOLE beverage and never resets**: the milk takes it to 38, the coffee
+  resumes at 40. One bar, no stitching.
+- ⚠️ **100 % is not guaranteed.** A hot milk stopped at 90 % and dropped straight back to idle. The
+  only reliable completion signal is the return to **`f=7, e=0`** (`auRepos`), which is the
+  machine's *global* idle state — verified on all three drinks, including the one that never left
+  `f=10`. A bar that waits for `pourcent === 100` hangs. `verif-monitor.mjs` asserts exactly this,
+  so the trap cannot come back silently.
+
+**A frozen bar is worse than no bar, so the progression has its OWN freshness threshold** —
+`AGE_PROGRESSION` (20 s) in `machineState.ts`, not the 90 s `AGE_PERIME`. Observed live: the machine
+left the network 13 s after a command was sent, and `/` kept "Mouture — 0 %" on screen, motionless,
+asserting a preparation was progressing when contact had been lost. During a brew the machine pushes
+a frame every 1–3 s (median 2.6 s, worst gap ever measured 7.6 s across the three captures), so a
+twenty-second-old percentage does not mean "it is going slowly", it means "we lost the link".
+`verif-monitor.mjs` asserts the constant stays **above** the captures' worst gap and **below**
+`AGE_PERIME` — tightening it under the real cadence would make the bar flicker.
+
+**A preparation can run entirely under state byte `0x04`, the one documented as "standby."**
+Measured: a complete espresso — grind, infusion, pour to 100 % — across **49 frames all reporting
+`0x04`**, with no power-on command ever sent through us; the same drink had been recorded at `0x02`
+throughout earlier the same day (`scripts/captures/espresso-veille.json`). Byte 4 describes the
+machine's *interface* state, not its activity, so **the progression outranks it**: `/`'s `isOn` ORs
+in `auRepos === false`, or the toggle reads "off" directly above a bar saying "Écoulement du café —
+84 %". `/` also shows **no success message after a dispense** any more — `commande()` accepts an
+empty `ok()` and renders nothing. "Commande envoyée, see the journal" pointed elsewhere while the
+bar was about to narrate the whole thing; failures, including the unheard `local_reg`, still show.
+
+Five step values were observed that nothing names — the app keeps its previous illustration there.
+`etapeCle` is `null` for them and the UI says "préparation en cours"; do not invent names.
+**No duration exists anywhere in the protocol**, so `/`'s "depuis N s" is measured by the client
+and is labelled as ours. `/` renders the bar in a permanently-mounted `role="status"` with
+**`aria-atomic="false"`** (same rule as the Activité card) and the elapsed seconds are
+`aria-hidden` — they tick every second, and atomic would re-read the whole region that often.
 
 Two behaviours that took a long time to find — do not regress them:
 - Our HTTP responses must carry `Content-Type` + explicit `Content-Length` and **no

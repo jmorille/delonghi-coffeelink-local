@@ -20,8 +20,12 @@ import next from "next";
 import { CATEGORIES, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
+import { decodeMonitor } from "./src/lib/monitor.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
+import { RANG, DELAIS, MAX_FILE, nouvelleFile, tache, pasLecture, pasTrame, enfiler, aServir,
+         reponse as apparier, contact as contactMachine, tic, vue as vueFile, annuler,
+         courante, vide } from "./src/lib/tasks.mjs";
 import { bootMessages as storeBootMessages, storageInfo, forMachine, listMachines, createMachine, setMachineLabel, deleteMachine, getSetting, setSetting, clearSetting, DEFAULT_MACHINE } from "./src/lib/store.mjs";
 // Identification du modele : la machine publie son numero de serie, et les 5 chiffres qui
 // indexent la table constructeur sont dedans. Aucun cloud — voir machine-models.mjs.
@@ -122,7 +126,30 @@ const LOG = [];
  * tombent dans la meme milliseconde des qu'un import defile.
  */
 let logSeq = 0;
+/**
+ * **Une répétition consécutive n'écrit pas une ligne de plus, elle incrémente un compteur.**
+ *
+ * Mesuré sur un coupe-circuit réel : 24 lignes « local_reg erreur: socket hang up » sur les 30
+ * dernières, et les six lignes qui expliquaient quelque chose — la mise en file des tâches, le
+ * verdict — repoussées hors de l'écran. Le journal est l'instrument de diagnostic de ce serveur ;
+ * une machine injoignable le remplit mécaniquement (`local_reg` toutes les 2,5 s) et noie
+ * exactement ce qu'on vient y chercher.
+ *
+ * Seules les répétitions **consécutives** et de même origine sont repliées : deux occurrences
+ * séparées par autre chose restent deux lignes, parce que leur voisinage est justement
+ * l'information. L'horodatage suit la DERNIÈRE occurrence — « ça continue » est ce qu'on veut
+ * savoir — et `repetitions` porte le compte.
+ */
 function L(dir, msg, m = null) {
+  const tete = LOG[0];
+  if (tete && tete.msg === msg && tete.dir === dir && tete.m === (m?.id ?? null)) {
+    tete.repetitions = (tete.repetitions ?? 1) + 1;
+    tete.t = Date.now();
+    tete.n = ++logSeq;
+    sseTouch();
+    console.log(now(), dir.toUpperCase(), (m && MACHINES.size > 1 ? `[${m.id}] ` : "") + msg + ` (×${tete.repetitions})`);
+    return;
+  }
   LOG.unshift({ n: ++logSeq, t: Date.now(), dir, msg, m: m?.id ?? null });
   if (LOG.length > 400) LOG.pop();
   // Tout changement d'état significatif passe par ici : c'est donc d'ici qu'on prévient les
@@ -196,8 +223,20 @@ function makeMachine(row) {
     aylaToken: null, // { token, expiresAt }
 
     session: null,
-    program: null, // {active,ecamB64,label,startedAt,durationMs,counter}
-    import: null, // {active,queue:[prop],pending,ok,fail,startedAt,durationMs,counter}
+    /**
+     * **La file de tâches — l'unique état de « ce qu'on demande à la machine ».**
+     *
+     * Elle remplace `m.program` et `m.import`, qui étaient deux emplacements UNIQUES écrasés sans
+     * sommation : la machine ne prenant qu'une commande par visite, tout ce qui arrivait pendant
+     * qu'une lecture tournait la décapitait, silencieusement. Voir `src/lib/tasks.mjs`.
+     *
+     * Les deux anciens champs survivent en **vues dérivées** (`vueProgramme`, `vueImport`), parce
+     * que /machines, /api/beverages et /api/profiles les lisent — les casser n'apportait rien à
+     * cette fiabilisation.
+     */
+    file: nouvelleFile(),
+    /** Compteur de visites de commands.json, pour la chorégraphie `device_connected`. */
+    visites: 0,
     cmdId: 0,
     lastMonitor: null,
     lastDataResponse: null,
@@ -216,10 +255,8 @@ function makeMachine(row) {
     // Dernier appel à /api/presence, pour ne pas marteler la machine quand plusieurs onglets
     // s'ouvrent en même temps.
     lastPresenceAt: 0,
-    // Balayage de la liste des grains : un programme 0xBA par index.
-    beanScan: null,
-    // Lecture des paramètres/statistiques : un programme 0xA2 par requête.
-    statScan: null,
+    // Les balayages ne sont plus des états : un balayage EST une tâche à N pas, cadencée par les
+    // visites de la machine et non par un `setTimeout(11000)` deviné. Voir scanBeans / scanStats.
     // Requêtes OTA reçues DE la machine. En LAN mode, c'est la machine qui vient chercher l'image
     // chez nous (`LanOTAHandler` sert la route `/ota_status.json` et le chemin de l'image) : une
     // requête ici est donc le seul signal local d'une opération OTA.
@@ -451,6 +488,86 @@ const frameBeanSystem = (index) => seal([0x0d, 0x06, 0xba, 0xf0, index & 0xff, 0
 const frameParamRead = (id, qty = 1) => seal([0x0d, 0x08, 0xa2, 0x0f, (id >> 8) & 0xff, id & 0xff, qty & 0xff, 0, 0]);
 
 /**
+ * **Les réglages de la machine — `0x95` en lecture, `0x90` en écriture.**
+ *
+ * Portés de `p097j6/d.b0()` (`getPacketForReadParameter`) et `d.n0()`
+ * (`getPacketForWriteParameter`), les deux seules trames de configuration que l'app envoie par
+ * Wi-Fi et que ce serveur ignorait. Le flag suit la même règle dans les deux sens : `0x0F` sous
+ * l'adresse 1000, `0xF0` au-delà — recopié tel quel de l'app, dont la table d'adresses connue
+ * tient entièrement sous 1000.
+ *
+ * Les deux parlent bien de la même taille : `0x95` demande `qty` adresses consécutives et la
+ * réponse rend **4 octets par adresse** (voir `decodeSettings`), `0x90` en écrit 4. Tous les
+ * réglages connus tiennent en réalité dans l'octet de poids faible — c'est là que l'app va
+ * chercher les bits de l'adresse 63 (`Parameter.f()` : `b[3] & 1`).
+ */
+const frameParamRead95 = (id, qty = 1) =>
+  seal([0x0d, 0x08, 0x95, id < 1000 ? 0x0f : 0xf0, (id >> 8) & 0xff, id & 0xff, qty & 0xff, 0, 0]);
+const frameParamWrite = (id, value) =>
+  seal([0x0d, 0x0b, 0x90, id < 1000 ? 0x0f : 0xf0, (id >> 8) & 0xff, id & 0xff,
+        (value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff, 0, 0]);
+
+/**
+ * **Écriture d'un bloc de noms — `0xA5` (profils) et `0xAB` (recettes perso).**
+ *
+ * Ports de `d.j0()` / `d.f0()`. C'est le pendant exact des lectures `0xA4` / `0xAA` que
+ * `profiles.mjs` décode déjà, **même pas de 21 octets** : 20 octets de nom UTF-16BE puis 1 octet
+ * d'icône. Les octets 4 et 5 portent le premier et le dernier index, comme en lecture — ce qui
+ * permet de n'écrire qu'une entrée sans toucher aux autres.
+ *
+ * La variante Striker (`d.k0()`) a un pas de 22 : une seconde valeur par entrée. Elle n'est pas
+ * portée ici — cette machine est « classic », et écrire un bloc au mauvais pas décalerait tous les
+ * noms suivants sur un appareil réel.
+ */
+function frameSetNames(cmd, first, last, entrees) {
+  const corps = entrees.length * 21;
+  const bytes = new Array(corps + 8).fill(0);
+  bytes[0] = 0x0d;
+  bytes[1] = corps + 7;
+  bytes[2] = cmd & 0xff;
+  bytes[3] = 0xf0;
+  bytes[4] = first & 0xff;
+  bytes[5] = last & 0xff;
+  let o = 6;
+  for (const e of entrees) {
+    const n = encodeBeanName(e.name);         // même encodage : 20 caractères, UTF-16BE, complété de zéros
+    for (let i = 0; i < 20; i++) bytes[o + i] = n[i];
+    bytes[o + 20] = e.icon & 0xff;
+    o += 21;
+  }
+  return seal(bytes);
+}
+
+/**
+ * **Ordre des favoris — `0xAD`** (`d.i0()`, `getPacketForSetFavoriteBeverage`).
+ *
+ * `0D 12 AD F0 <profil> <12 identifiants de boisson> <crc16>` — longueur fixe de 19 octets, donc
+ * exactement 12 entrées, complétées de zéros si la liste est plus courte. Pendant de la lecture
+ * `0xA8` (`d{260+p}_{p}_rec_priority`), que `/` utilise déjà pour ordonner ses cartes.
+ */
+function frameSetFavorites(profile, ordre) {
+  const bytes = new Array(19).fill(0);
+  bytes[0] = 0x0d;
+  bytes[1] = 0x12;
+  bytes[2] = 0xad;
+  bytes[3] = 0xf0;
+  bytes[4] = profile & 0xff;
+  for (let i = 0; i < 12; i++) bytes[5 + i] = (ordre[i] ?? 0) & 0xff;
+  return seal(bytes);
+}
+
+/**
+ * **Les trois modes de monitor** (`d.V()`, `getByteMonitorMode`) : `0x60`, `0x70`, `0x75`.
+ *
+ * Seul `0x75` est utilisé par le service Wi-Fi de l'app ; les deux autres n'apparaissent que dans
+ * le constructeur de trames, côté Bluetooth. Leur contenu de réponse est **inconnu** et rien ne
+ * garantit que le module y réponde en LAN — d'où `POST /api/monitormode`, qui les envoie et se
+ * contente de journaliser la réponse brute. Trames de lecture, sans effet de bord connu.
+ */
+const MONITOR_MODES = { 0: 0x60, 1: 0x70, 2: 0x75 };
+const frameMonitorMode = (mode) => seal([0x0d, 0x05, MONITOR_MODES[mode] ?? 0x75, 0x0f, 0, 0]);
+
+/**
  * a0() « bean system save or delete » — 52 octets (docs/bean-adapt.md §5.1) :
  *
  *   4       id du profil
@@ -491,105 +608,6 @@ function frameDispense(bev, prof, mode, action, params, check = false) {
 }
 function datapointValue(frame) { const t = Buffer.alloc(4); t.writeUInt32BE(Math.floor(Date.now() / 1000) >>> 0, 0); return Buffer.concat([frame, t]).toString("base64"); }
 /**
- * Alarmes du monitor — index de bit → identifiant, port de `p127m6/l` (méthode `a(int)`).
- *
- * ⚠️ La table fait autorité sur les couples (groupe, bit) déclarés dans l'énum : plusieurs index
- * sont explicitement `IGNORE_ALARM` sur cette génération (7, 10, 13, 16, 20, 21, 23, 24, 26-31),
- * alors que l'énum y déclare des alarmes. On les marque « ignorée » au lieu de les nommer à tort.
- *
- * Le champ est un bitfield 32 bits construit par `MonitorDataV2.b()` :
- *   octet 7 | octet 8 << 8 | octet 12 << 16 | octet 13 << 24
- */
-const MONITOR_ALARMS = {
-  0: "EMPTY_WATER_TANK",
-  1: "COFFEE_WASTE_CONTAINER_FULL",
-  2: "DESCALE_ALARM",
-  3: "REPLACE_WATER_FILTER",
-  4: "COFFE_GROUND_TOO_FINE",
-  5: "COFFEE_BEANS_EMPTY",
-  6: "MACHINE_TO_SERVICE",
-  8: "TOO_MUCH_COFFEE",
-  9: "COFFEE_INFUSER_MOTOR_NOT_WORKING",
-  11: "EMPTY_DRIP_TRAY",
-  12: "HYDRAULIC_CIRCUIT_PROBLEM",
-  14: "CLEAN_KNOB",
-  15: "COFFEE_BEANS_EMPTY_TWO",
-  17: "BEAN_HOPPER_ABSENT",
-  18: "GRID_PRESENCE",
-  19: "INFUSER_SENSE",
-  22: "EXPANSION_SUBMODULES_PROB",
-  25: "CONDENSE_FAN_PROBLEM",
-};
-
-/**
- * Capteurs rapportés par le monitor — port de l'énum `p127m6/p` (couple groupe/bit) et de
- * `MonitorDataV2.l()` : l'octet est `5 + groupe`, le bit est la position dans l'énum.
- */
-const MONITOR_SWITCHES = [
-  { group: 0, bit: 0, name: "WATER_SPOUT", label: "buse à eau" },
-  { group: 0, bit: 1, name: "MOTOR_UP", label: "moteur haut" },
-  { group: 0, bit: 2, name: "MOTOR_DOWN", label: "moteur bas" },
-  { group: 0, bit: 3, name: "COFFEE_WASTE_CONTAINER", label: "bac à marc" },
-  { group: 0, bit: 4, name: "WATER_TANK_ABSENT", label: "réservoir d'eau absent" },
-  { group: 0, bit: 5, name: "KNOB", label: "molette" },
-  { group: 0, bit: 6, name: "WATER_LEVEL_LOW", label: "niveau d'eau bas" },
-  { group: 0, bit: 7, name: "COFFEE_JUG", label: "verseuse" },
-  { group: 1, bit: 0, name: "IFD_CARAFFE", label: "carafe à lait" },
-  { group: 1, bit: 1, name: "CIOCCO_TANK", label: "bac chocolat" },
-  { group: 1, bit: 2, name: "CLEAN_KNOB", label: "molette nettoyage" },
-  { group: 1, bit: 5, name: "DOOR_OPENED", label: "porte ouverte" },
-  { group: 1, bit: 6, name: "PREGROUND_DOOR_OPENED", label: "trappe café moulu ouverte" },
-];
-
-/**
- * Décode `d302_monitor` — port de `it/delonghi/ecam/model/MonitorDataV2`, où le tableau indexé
- * est la trame complète décodée du base64.
- *
- * ```
- * 4        état machine        (0x04 = veille ; voir MACHINE_STATES)
- * 5, 6     capteurs           champ de bits 16 bits, octet = 5 + groupe
- * 7, 8, 12, 13  alarmes       champ de bits 32 bits (7 | 8<<8 | 12<<16 | 13<<24)
- * 9, 10, 11     compteurs/divers (accesseurs f(), e(), d() de l'app)
- * ```
- *
- * ⚠️ Les octets 5-6 étaient nommés « progress » dans une première version : c'était faux. La
- * valeur 256 relevée sur cette machine signifie « groupe 1, bit 0 » = carafe à lait connectée,
- * ce que l'écran confirmait.
- */
-function decodeMonitor(b64) {
-  const raw = Buffer.from(b64, "base64");
-  // Une trame exploitable va au moins jusqu'à l'octet 8 (état, capteurs, 2 premiers octets
-  // d'alarmes). Sans ce contrôle, une valeur vide donnait `stateByte: undefined` et le
-  // `toString(16)` du journal levait une TypeError : les autres propriétés du MÊME datapoint
-  // étaient perdues, et le journal accusait à tort le déchiffrement.
-  if (raw.length < 9) throw new Error(`trame monitor trop courte (${raw.length} octets)`);
-  const n = raw[1] + 1;
-  const e = raw.subarray(0, n);
-  if (e.length < 9) throw new Error(`trame monitor tronquée (len annoncé ${n}, ${e.length} reçus)`);
-  const bits = e[5] + (e[6] << 8);
-  const switches = MONITOR_SWITCHES.filter((sw) => (e[5 + sw.group] >> sw.bit) & 1);
-  // Octet 13 multiplié, pas décalé : `0x80 << 24` vaut −2147483648 en JS, et l'API publiait alors
-  // un champ de bits négatif. La boucle sur les bits utilise déjà `>>>`, seule la valeur exposée
-  // était fausse.
-  const alarmBits = e[7] + (e[8] << 8) + ((e[12] ?? 0) << 16) + (e[13] ?? 0) * 0x1000000;
-  const alarms = [];
-  for (let i = 0; i < 32; i++) {
-    if (!((alarmBits >>> i) & 1)) continue;
-    // `ignored` : l'app écarte explicitement ces index sur cette génération. On les remonte
-    // quand même, marqués, plutôt que de les cacher ou de leur coller un nom faux.
-    alarms.push({ bit: i, name: MONITOR_ALARMS[i] ?? null, ignored: !MONITOR_ALARMS[i] });
-  }
-  return {
-    stateByte: e[4],
-    switchBits: bits,
-    switches: switches.map((sw) => ({ name: sw.name, label: sw.label })),
-    alarmBits,
-    alarms,
-    raw: e.toString("hex").replace(/(..)/g, "$1 ").trim(),
-  };
-}
-
-/**
  * Décode la réponse `0xA2` — port de `p097j6.d.L()` case `-94`.
  *
  * ```
@@ -619,35 +637,142 @@ function decodeParameters(b64) {
   return { count, entries, hex: buf.subarray(0, buf[1] + 1).toString("hex").replace(/(..)/g, "$1 ").trim() };
 }
 
+/**
+ * **Réponse `0x95` — les réglages machine.** Port de `p097j6/d.q0()`
+ * (`getParametersFromByte`), et le format n'est PAS celui de `0xA2` :
+ *
+ *   octet 1     len
+ *   octets 4-5  adresse du PREMIER réglage (16 bits)
+ *   octets 6…   n × 4 octets de valeur, adresses consécutives ; n = (len − 7) / 4
+ *
+ * L'identifiant n'est donc pas répété devant chaque valeur, contrairement à `0xA2` : il faut
+ * l'incrémenter soi-même. Confondre les deux formats décalerait chaque valeur d'un cran, ce qui
+ * donnerait des réglages plausibles et faux — l'espèce d'erreur qui ne se voit qu'à l'usage.
+ */
+function decodeSettings(b64) {
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 8) throw new Error(`trame trop courte (${buf.length} octets)`);
+  if (buf[2] !== 0x95) throw new Error(`commande inattendue 0x${buf[2].toString(16)}`);
+  const count = Math.floor((buf[1] - 7) / 4);
+  if (count < 1) throw new Error(`aucune entrée (len ${buf[1]})`);
+  const premier = (buf[4] << 8) | buf[5];
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    const o = 6 + i * 4;
+    if (o + 4 > buf.length - 2) break;
+    entries.push({ addr: premier + i, value: buf.readUInt32BE(o) });
+  }
+  return { count, entries, hex: buf.subarray(0, buf[1] + 1).toString("hex").replace(/(..)/g, "$1 ").trim() };
+}
+
+/**
+ * Enregistre un relevé de réglages. Stocké dans `meta.reglages` — quelques entiers, une table
+ * aurait coûté une version de schéma pour six lignes (même raisonnement que `meta.beanPresets`).
+ * `source` dit par quel chemin la valeur est arrivée : la propriété Ayla ou la trame `0x95`. Les
+ * deux existent pour la même donnée, et savoir laquelle a répondu est ce qu'on regarde quand
+ * l'une des deux reste muette.
+ */
+function noteReglages(m, entries, source) {
+  const actuel = m.store.getMeta("reglages") ?? {};
+  const at = Date.now();
+  for (const e of entries) actuel[e.addr] = { value: e.value, at, source };
+  m.store.setMeta("reglages", actuel);
+  return actuel;
+}
+
+/**
+ * Met en forme un relevé de réglages : valeur brute, et pour l'adresse 63 les cinq interrupteurs
+ * qu'elle porte. `autoStart` est **inversé** (bit à 1 = désactivé), comme dans l'app.
+ */
+function vueReglages(m, brut) {
+  const modele = m.catalog?.model ?? {};
+  /**
+   * **Non déclaré vaut « non supporté », jamais « supporté par défaut ».** Le drapeau vient du
+   * catalogue extrait de l'APK ; s'il manque, c'est que ce modèle ne figure pas dans la table ou
+   * que la source ne dit rien — dans les deux cas on n'a aucune raison d'écrire à cette adresse.
+   * Le sens inverse (absent ⇒ autorisé) proposerait un chauffe-tasses à une machine qui n'en a pas
+   * et écrirait un bit dont on ignore l'effet.
+   */
+  const dispo = (drapeau) => (drapeau == null ? true : modele[drapeau] === true);
+  const sortie = [];
+  for (const r of REGLAGES) {
+    const lu = brut?.[r.addr];
+    const e = {
+      addr: r.addr,
+      cle: r.cle,
+      value: lu?.value ?? null,
+      at: lu?.at ?? null,
+      source: lu?.source ?? null,
+      min: r.min,
+      max: r.max,
+      supporte: dispo(r.supporte),
+      prop: r.prop ? reglageProp(m, r) : null,
+    };
+    if (r.bits) {
+      const v = e.value ?? 0;
+      e.bits = r.bits.map((b) => ({
+        cle: b.cle,
+        bit: b.bit,
+        value: e.value == null ? null : (b.inverse ? (v & (1 << b.bit)) === 0 : (v & (1 << b.bit)) !== 0),
+        inverse: !!b.inverse,
+        supporte: dispo(b.supporte),
+      }));
+    }
+    sortie.push(e);
+  }
+  return sortie;
+}
+
 // Libellé d'une boisson, dans le catalogue de CETTE machine. Plus de table de module : deux
 // machines de modèles différents n'ont pas la même liste, et un libellé pris dans la mauvaise
 // nommerait une boisson que la machine ne sait pas faire.
 const bevLabel = (m, id) => m.catalog.byId(id)?.label ?? id;
 
-// --- programme (séquence app validée : device_connected → cmd → présence soutenue) ---
+// --- service des commandes : une visite, un pas ---
 const prop = (m, name, value, id = false) => { const p = { base_type: "string", dsn: m.dsn ?? "", name, value, metadata: {} }; if (id) p.id = crypto.randomBytes(4).toString("hex"); return { property: p }; };
 const nowSec = () => String(Math.floor(Date.now() / 1000));
-function nextProgramData(m) {
-  const pg = m.program;
-  if (!pg || !pg.active) return { data: "{}", label: "idle" };
-  if (Date.now() > pg.startedAt + pg.durationMs) { pg.active = false; L("sys", `programme « ${pg.label} » terminé`, m); return { data: "{}", label: "done" }; }
-  const c = pg.counter++;
-  if (c === 0) return { data: JSON.stringify({ properties: [prop(m, "device_connected", nowSec())] }), label: "device_connected" };
-  if (c === 1) return { data: JSON.stringify({ properties: [prop(m, m.send, pg.ecamB64, true)] }), label: pg.label };
-  if (c % 5 === 0) return { data: JSON.stringify({ properties: [prop(m, "device_connected", nowSec())] }), label: "device_connected(refresh)" };
-  // Trame de présence : dépend du programme. `profile` (0xA9) n'est utilisé que là où il est
-  // nécessaire — le réveil, dont c'est la recette validée, et la sélection de profil, où
-  // réaffirmer la même valeur est idempotent. Partout ailleurs on tient la présence avec une
-  // demande de monitor, qui ne change rien sur la machine.
-  //
-  // ⚠️ 0xA9 EST la commande de sélection de profil : l'utiliser comme simple battement de cœur
-  // avec un profil non confirmé imposait silencieusement le profil 1 à chaque commande (constaté :
-  // une simple demande de sommes de contrôle ramenait la machine du profil 3 au profil 1).
-  if (pg.sustain === "profile") {
-    return { data: JSON.stringify({ properties: [prop(m, m.send, datapointValue(frameSendProfile(m.activeProfile)), true)] }), label: `sustain(profil ${m.activeProfile})` };
+const paquet = (props) => JSON.stringify({ properties: props });
+
+/**
+ * Ce qu'on sert à la machine lors de CETTE visite.
+ *
+ * Deux choses se superposent ici, et elles étaient auparavant mêlées dans `nextProgramData` :
+ *
+ * 1. **La chorégraphie de présence**, qui appartient au protocole — `device_connected` d'abord,
+ *    puis rafraîchi une visite sur cinq. Elle ne dépend d'aucune priorité et reste donc ici.
+ * 2. **Quel travail servir**, qui appartient à l'ordonnanceur et à lui seul (`aServir`).
+ *
+ * La machine ne prend qu'une commande par visite : c'est cette fonction qui matérialise
+ * l'exclusion, et c'est pour ça qu'il ne peut jamais y avoir deux trames en vol.
+ */
+function prochainePaquet(m) {
+  if (vide(m.file)) { m.visites = 0; return { data: "{}", label: "idle" }; }
+  const c = m.visites++;
+  // `device_connected` en tête de séquence puis périodiquement : la machine cesse de nous
+  // considérer présents sans lui, et le pas suivant ne serait jamais récupéré.
+  if (c === 0 || c % 5 === 0) return { data: paquet([prop(m, "device_connected", nowSec())]), label: "device_connected" };
+
+  const a = aServir(m.file, Date.now());
+  if (a.quoi === "pas") {
+    const p = a.pas;
+    if (p.type === "prop") return { data: readPropertyCmd(m, p.prop), label: `lecture ${p.prop}` };
+    return { data: paquet([prop(m, m.send, p.trame, true)]), label: `${a.tache.label} · ${p.nom}` };
   }
-  return { data: JSON.stringify({ properties: [prop(m, m.send, datapointValue(frameMonitorRequest()), true)] }), label: "sustain(monitor)" };
+  if (a.quoi === "soutien") {
+    // Présence tenue pendant qu'on attend la réponse du pas déjà servi.
+    //
+    // ⚠️ 0xA9 EST la commande de sélection de profil : s'en servir comme simple battement de cœur
+    // imposait silencieusement le profil 1 (constaté : une demande de sommes de contrôle ramenait
+    // la machine du profil 3 au profil 1). `profile` n'est donc utilisé que là où réaffirmer la
+    // valeur est la recette validée — le réveil — ou idempotent : la sélection de profil elle-même.
+    if (a.sustain === "profile") {
+      return { data: paquet([prop(m, m.send, datapointValue(frameSendProfile(m.activeProfile)), true)]), label: `présence(profil ${m.activeProfile})` };
+    }
+    return { data: paquet([prop(m, m.send, datapointValue(frameMonitorRequest()), true)]), label: "présence(monitor)" };
+  }
+  return { data: "{}", label: "idle" };
 }
+
 /**
  * Opérations ECAM, par octet de commande. Sert à **nommer** ce qu'un programme fait dans le
  * journal : « 0x83 » ne dit rien à la relecture, « préparation ou enregistrement de recette » si.
@@ -670,9 +795,73 @@ const ECAM_OPS = {
   0xb0: { nature: "lecture", nom: "bornes d'une recette" },
   0xb9: { nature: "action", nom: "sélection du grain actif" },
   0xba: { nature: "lecture", nom: "profil de grains" },
-  // La seule écriture persistante de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
+  // Les écritures persistantes de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
   0xbb: { nature: "écriture", nom: "profil de grains" },
+  0x90: { nature: "écriture", nom: "réglage machine" },
+  0xa5: { nature: "écriture", nom: "noms de profils" },
+  0xab: { nature: "écriture", nom: "noms de recettes perso" },
+  0xad: { nature: "écriture", nom: "ordre des favoris" },
+  // `0x95` lit un réglage machine — pendant exact de l'écriture `0x90`.
+  0x95: { nature: "lecture", nom: "réglage machine" },
+  // Les deux autres modes de monitor. Nature « lecture » : ils attendent une réponse, comme 0x75.
+  0x60: { nature: "lecture", nom: "monitor mode 0" },
+  0x70: { nature: "lecture", nom: "monitor mode 1" },
 };
+
+/**
+ * **Les réglages machine, par adresse** — relevés dans le view-model de l'app
+ * (`p018b7/d.java`), où chaque écran de configuration appelle `readParameter(addr, 1)` puis
+ * `writeParameter(addr, valeur)`.
+ *
+ * `prop` est la propriété Ayla qui porte la même valeur : l'app la lit **de préférence** à la
+ * trame quand la machine est jointe par le cloud (`d.X()` fait exactement ce choix pour la dureté
+ * de l'eau). Deux familles de noms, comme partout ailleurs : `d28x_mchn_sett_*` en génération
+ * classic, `d28x_mach_sett_*` en Striker.
+ *
+ * `bits` marque le seul réglage qui n'est pas un nombre : l'adresse 63 est un champ de bits, et
+ * `autostart` y est **inversé** (bit à 1 = démarrage automatique désactivé). C'est l'app qui le
+ * fait, pas nous : `d.f0()`, `zBooleanValue = bool5.booleanValue() ^ true`.
+ *
+ * `supporte` nomme le drapeau du catalogue de modèles qui dit si CE modèle expose le réglage —
+ * l'ECAM 610.75 en supporte cinq sur neuf. Ne jamais proposer un réglage que le modèle ne déclare
+ * pas : l'écrire quand même serait poser une valeur à une adresse dont on ignore l'usage.
+ */
+const REGLAGES = [
+  { addr: 50, cle: "waterHardness", prop: true, supporte: "water_hardness_settings", min: 1, max: 4 },
+  // `globalTemperature` : quand il est faux, la température est un paramètre de recette, pas un
+  // réglage de la machine — l'adresse 61 n'a alors rien à régler.
+  { addr: 61, cle: "temperature", prop: true, supporte: "globalTemperature", min: 0, max: 3 },
+  { addr: 62, cle: "autoOff", prop: true, supporte: "auto_off_settings", min: 0, max: 255 },
+  { addr: 63, cle: "userConf", prop: true, supporte: null, min: 0, max: 255, bits: [
+    { bit: 0, cle: "autoStart", inverse: true, supporte: "auto_start_settings" },
+    { bit: 2, cle: "buzzer", supporte: "buzzer_settings" },
+    { bit: 3, cle: "cupLight", supporte: "cup_light_settings" },
+    { bit: 4, cle: "energySaving", supporte: "energy_saving_settings" },
+    { bit: 5, cle: "cupWarmer", supporte: "cup_warmer_settings" },
+  ] },
+  { addr: 64, cle: "autoStartHour", prop: null, supporte: "time_settings", min: 0, max: 23 },
+  { addr: 65, cle: "autoStartMinute", prop: null, supporte: "time_settings", min: 0, max: 59 },
+];
+const REGLAGE_PAR_CLE = new Map(REGLAGES.map((r) => [r.cle, r]));
+/**
+ * Nom complet de la propriété Ayla d'un réglage, selon la génération.
+ *
+ * Les deux familles ne sont pas un simple préfixe : en Striker la dureté de l'eau s'appelle
+ * `d283_mach_sett_water_hard` là où le classic dit `d283_mchn_sett_water`. Table explicite plutôt
+ * que règle, pour la même raison que partout ailleurs ici — un nom inventé se lit « propriété
+ * absente sur ce modèle » et non « bug ».
+ */
+const REGLAGE_PROPS = {
+  50: { classic: "d283_mchn_sett_water", striker: "d283_mach_sett_water_hard" },
+  61: { classic: "d281_mchn_sett_temp", striker: "d281_mach_sett_temperature" },
+  62: { classic: "d282_mchn_sett_aoff", striker: "d282_mach_sett_auto_off" },
+  63: { classic: "d284_mchn_sett_user_conf", striker: "d284_mach_sett_user_conf" },
+};
+function reglageProp(m, r) {
+  const e = REGLAGE_PROPS[r.addr];
+  if (!e) return null;
+  return m.mon === "d302_monitor_machine" ? e.striker : e.classic;
+}
 
 /**
  * Décrit la trame qu'on est en train d'envoyer : opération, nature, et octets.
@@ -680,23 +869,43 @@ const ECAM_OPS = {
  * `ecamB64` porte la trame **suivie de 4 octets d'horodatage** (voir `datapointValue`) : on les
  * retire, sinon le journal afficherait quatre octets qui n'appartiennent pas à la commande.
  */
+/**
+ * L'opération que porte une trame — extrait de `describeFrame`, parce que deux choses en ont
+ * besoin : le journal, pour la nommer, et l'ordonnanceur, pour savoir si la machine RÉPONDRA.
+ * Une seule table, un seul endroit où `0x83` est affiné par son mode.
+ */
+function opTrame(ecamB64) {
+  const buf = Buffer.from(ecamB64, "base64");
+  const trame = buf.subarray(0, Math.max(0, buf.length - 4));
+  const cmd = trame[2];
+  // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
+  // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
+  if (cmd === 0x83) {
+    const mode = trame[5] & 0x7f;
+    const op =
+      mode === 0x00
+        ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
+        : mode === 0x02
+          ? { nature: "action", nom: "arrêt de la préparation" }
+          : { nature: "action", nom: "préparation d'une boisson" };
+    return { cmd, op, trame };
+  }
+  return { cmd, op: ECAM_OPS[cmd], trame };
+}
+
+/**
+ * « lecture », « action » ou « écriture ». C'est ce qui décide si le pas attend un `data_response`
+ * ou seulement une fenêtre de présence — voir `startProgram`. Une trame illisible est traitée comme
+ * une action : c'est le choix prudent, il fait tenir la présence au lieu d'attendre une réponse qui
+ * ne viendra peut-être jamais.
+ */
+function natureTrame(ecamB64) {
+  try { return opTrame(ecamB64).op?.nature ?? "action"; } catch { return "action"; }
+}
+
 function describeFrame(ecamB64) {
   try {
-    const buf = Buffer.from(ecamB64, "base64");
-    const trame = buf.subarray(0, Math.max(0, buf.length - 4));
-    const cmd = trame[2];
-    let op = ECAM_OPS[cmd];
-    // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
-    // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
-    if (cmd === 0x83) {
-      const mode = trame[5] & 0x7f;
-      op =
-        mode === 0x00
-          ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
-          : mode === 0x02
-            ? { nature: "action", nom: "arrêt de la préparation" }
-            : { nature: "action", nom: "préparation d'une boisson" };
-    }
+    const { cmd, op, trame } = opTrame(ecamB64);
     const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
     return `${op ? `${op.nature} · ${op.nom}` : "opération inconnue"} (0x${(cmd ?? 0).toString(16).padStart(2, "0")}) · trame ${hex}`;
   } catch {
@@ -704,14 +913,72 @@ function describeFrame(ecamB64) {
   }
 }
 
-function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor") {
-  m.program = { active: true, ecamB64, label, startedAt: Date.now(), durationMs, counter: 0, sustain };
+/**
+ * Met une COMMANDE ECAM en file. Signature conservée : quinze sites d'appel l'utilisent, et les
+ * réécrire tous en même temps que l'ordonnanceur aurait mêlé deux changements dans un seul pas.
+ *
+ * `durationMs` n'a plus le même sens selon la trame, et c'est une correction, pas un détail :
+ *
+ * - une trame de **lecture** (`0x75`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA`) attend une réponse.
+ *   Le pas s'achève quand elle arrive — plus quand un chronomètre le décide. Un balayage des grains
+ *   avance donc à la vitesse de la machine au lieu d'un `setTimeout(11000)` deviné.
+ * - une trame qui **agit** (`0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`) n'a rien à répondre :
+ *   `durationMs` reste la durée de présence soutenue, et l'atteindre est un SUCCÈS.
+ *
+ * La nature se déduit de la table `ECAM_OPS` que `describeFrame` exploite déjà : aucun site d'appel
+ * n'a à trancher, et il n'y a pas de deuxième table à tenir à jour.
+ */
+function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null } = {}) {
+  const lecture = natureTrame(ecamB64) === "lecture";
+  const pas = [pasTrame(label, ecamB64, lecture
+    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain }
+    : { attente: "fenetre", ms: durationMs, sustain })];
+  return enfilerTache(m, tache({ label, rang, pas, cle, meta, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
+}
+
+/** Met une LECTURE de propriétés Ayla en file : une tâche, un pas par propriété. */
+function startImport(m, queue, durationMs = 120000, { label = null, rang = RANG.LECTURE, cle = null, meta = null } = {}) {
+  const nom = label ?? (queue.length === 1 ? `Lecture ${queue[0]}` : `Lecture de ${queue.length} propriétés`);
+  const t = tache({ label: nom, rang, pas: queue.map((n) => pasLecture(n)), cle: cle ?? `lecture:${[...queue].sort().join(",")}`, meta });
+  return enfilerTache(m, t, `${nom} — ${queue.length} propriété(s)`);
+}
+
+/**
+ * Le seul endroit qui met en file, donc le seul qui journalise une mise en file, réveille le
+ * keep-alive et arme le veilleur. Renvoie de quoi répondre au client : l'identifiant de la tâche et
+ * sa place, pour que l'interface puisse la suivre au lieu de deviner.
+ */
+function enfilerTache(m, t, ligne) {
+  const r = enfiler(m.file, t, Date.now());
+  if (!r.ok) {
+    L("sys", `file pleine (${MAX_FILE} tâches) : « ${t.label} » refusée`, m);
+    return { ok: false, raison: r.raison };
+  }
+  if (r.fusion) {
+    L("sys", `« ${t.label} » déjà en attente (${r.tache.id}) : demande fusionnée`, m);
+    return { ok: true, fusion: true, taskId: r.tache.id, position: m.file.liste.indexOf(r.tache) };
+  }
+  const position = m.file.liste.indexOf(r.tache);
   // Une seule ligne, et elle porte tout : ce que l'utilisateur a demandé, ce que ça vaut côté
-  // protocole, et les octets. C'est ici que la trame vit — plus dans les messages de l'interface,
-  // où elle ne renseignait personne sur le résultat de son geste.
-  L("out", `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`, m);
+  // protocole, et les octets. La trame vit ici — plus dans les messages de l'interface, où elle ne
+  // renseignait personne sur le résultat de son geste. La position dit s'il va falloir attendre.
+  L("out", `${r.tache.id} · ${ligne}${position > 0 ? ` · ${position} tâche(s) devant` : ""}`, m);
   ensureKeepalive(m);
   sseWatch();
+  return { ok: true, taskId: r.tache.id, position };
+}
+
+/**
+ * Ce qu'un endpoint renvoie au client à propos de la tâche qu'il vient de mettre en file.
+ *
+ * Sans identifiant, l'interface ne pouvait que deviner : elle annonçait « envoyé » et regardait
+ * ensuite un état global qui pouvait très bien décrire le travail de quelqu'un d'autre. Avec
+ * `taskId` elle suit SA demande, et `position` lui dit franchement s'il va falloir patienter.
+ */
+function tacheRendue(r) {
+  if (!r) return {};
+  if (!r.ok) return { queueFull: true, error: `file pleine (${MAX_FILE} tâches en attente) : réessayez quand elle se sera écoulée, ou videz-la.` };
+  return { taskId: r.taskId, position: r.position, merged: r.fusion ?? false };
 }
 
 // --- import des recettes : lecture de propriétés Ayla en LAN (100 % local) ---
@@ -720,34 +987,6 @@ function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor"
 // endpoint qu'on déchiffre déjà. Aucun appel au cloud.
 function readPropertyCmd(m, name) {
   return JSON.stringify({ cmds: [{ cmd: { cmd_id: ++m.cmdId, method: "GET", resource: `property.json?name=${name}`, data: "", uri: "/local_lan/property/datapoint.json" } }] });
-}
-function startImport(m, queue, durationMs = 120000) {
-  m.import = { active: true, queue: [...queue], pending: null, ok: [], fail: [], startedAt: Date.now(), durationMs, counter: 0 };
-  L("sys", `import démarré : ${queue.length} propriétés à lire`, m);
-  ensureKeepalive(m);
-  // La fin d'une fenêtre expirée n'écrit aucune ligne de journal : voir sseWatch().
-  sseWatch();
-}
-function nextImportData(m) {
-  const im = m.import;
-  if (!im?.active) return null;
-  if (Date.now() > im.startedAt + im.durationMs) {
-    im.active = false;
-    im.fail = [...im.fail, ...im.queue];
-    L("sys", `import expiré : ${im.ok.length} lues, ${im.fail.length} non lues`, m);
-    return null;
-  }
-  // Présence de l'app d'abord (même prérequis que pour les commandes ECAM).
-  if (im.counter++ === 0) return { data: JSON.stringify({ properties: [prop(m, "device_connected", nowSec())] }), label: "device_connected" };
-  const name = im.queue.shift();
-  if (!name) {
-    im.active = false;
-    applyChecksumMark(m, im);
-    L("sys", `import terminé : ${im.ok.length} propriétés lues`, m);
-    return null;
-  }
-  im.pending = name;
-  return { data: readPropertyCmd(m, name), label: `lecture ${name}` };
 }
 
 // --- local_reg (node:http, Content-Length explicite) ---
@@ -768,7 +1007,8 @@ async function postLocalReg(m) {
     L("out", `local_reg impossible : ${probleme} — c'est l'adresse que la machine utilisera pour nous joindre`, m);
     return { ok: false, error: "serverIp" };
   }
-  const notify = m.program?.active || m.import?.active ? 1 : 0;
+  // `notify` dit à la machine qu'il y a du travail : c'est vrai dès qu'une tâche est en file.
+  const notify = vide(m.file) ? 0 : 1;
   const b = Buffer.from(JSON.stringify({ local_reg: { ip: CFG.serverIp, port: CFG.port, uri: "/local_lan", notify } }), "utf8");
   return new Promise((resolve) => {
     const r = httpRequest(
@@ -789,20 +1029,24 @@ async function postLocalReg(m) {
  * Présence soutenue pendant qu'une commande est en attente : `local_reg` toutes les 2,5 s, parce
  * que c'est la machine qui vient nous chercher et qu'elle doit connaître notre adresse.
  *
- * **L'arrêt se juge sur la fenêtre, pas sur le drapeau.** `m.program.active` ne retombe qu'à la
- * ligne 607, quand la machine vient chercher la commande suivante — donc jamais si elle est
- * éteinte, injoignable ou sans clé. Cette boucle tournait alors **indéfiniment** : un `local_reg`
- * toutes les 2,5 s vers une adresse muette, une ligne d'erreur par tentative, et un journal de
- * 400 lignes identiques où l'historique utile avait disparu. Les quinze secondes de grâce après la
- * fin de fenêtre restent : la machine peut se présenter juste après l'échéance.
+ * **Le critère d'arrêt est la file vide, et c'est enfin un critère honnête.** Il reposait avant sur
+ * un drapeau qui ne retombait que quand la machine venait chercher la commande suivante — donc
+ * jamais si elle était éteinte, injoignable ou sans clé : la boucle tournait **indéfiniment**, un
+ * `local_reg` toutes les 2,5 s vers une adresse muette, une ligne d'erreur par tentative, et un
+ * journal de 400 lignes identiques où l'historique utile avait disparu. Le coupe-circuit de
+ * l'ordonnanceur vide désormais la file au bout de 25 s sans contact, ce qui borne cette boucle
+ * par construction. Les quinze secondes de grâce restent : la machine peut se présenter juste
+ * après le dernier pas.
  */
 function ensureKeepalive(m) {
   if (m.keepalive) return;
   L("sys", "keep-alive démarré (2,5 s)", m);
+  let videDepuis = 0;
   m.keepalive = setInterval(async () => {
-    const active = fenetreOuverte(m.program) || fenetreOuverte(m.import);
-    const past = Date.now() - (m.program?.startedAt ?? 0) - (m.program?.durationMs ?? 0);
-    if (!active && past > 15000) { clearInterval(m.keepalive); m.keepalive = null; L("sys", "keep-alive arrêté", m); return; }
+    if (vide(m.file)) {
+      if (!videDepuis) videDepuis = Date.now();
+      if (Date.now() - videDepuis > 15000) { clearInterval(m.keepalive); m.keepalive = null; L("sys", "keep-alive arrêté", m); return; }
+    } else videDepuis = 0;
     await postLocalReg(m);
   }, 2500);
 }
@@ -853,9 +1097,9 @@ async function handleLan(req, res) {
   }
   if (url === "/local_lan/commands.json" && req.method === "GET") {
     if (!m.session) return raw(res, "no session", 412);
-    // Une commande ECAM en cours a priorité ; sinon on écoule la file de lecture.
-    const { data, label } = (m.program?.active ? null : nextImportData(m)) ?? nextProgramData(m);
-    if (label !== "idle" && label !== "done") L("out", `commande servie: ${label}`, m);
+    // Une visite, un pas — c'est ici que l'exclusion est matérialisée. Voir prochainePaquet().
+    const { data, label } = prochainePaquet(m);
+    if (label !== "idle") L("out", `commande servie: ${label}`, m);
     return raw(res, m.session.encapsulate(data));
   }
   if (url.includes("/property/datapoint") && req.method === "POST") {
@@ -904,13 +1148,20 @@ function collectProps(decoded) {
  * `0xA1` (numéro de série) fait exception : voir le routage par nom, plus bas.
  */
 function handleProperty(m, name, value) {
+  // Tout datapaquet, même inattendu, prouve que la machine est là : c'est ce que le coupe-circuit
+  // interroge. Le noter AVANT tout traitement, sinon un décodage raté ferait passer une machine
+  // bavarde pour une machine muette.
+  contactMachine(m.file, Date.now());
   if (name.startsWith(m.mon)) {
     // Isolé : un monitor illisible ne doit pas interrompre le traitement des AUTRES propriétés
     // portées par le même datapoint.
     try {
       const mo = decodeMonitor(value);
       m.lastMonitor = { at: Date.now(), ...mo };
-      L("in", `monitor: état=0x${mo.stateByte.toString(16).padStart(2, "0")}${mo.switches.length ? " · " + mo.switches.map((x) => x.label).join(", ") : ""}${mo.alarms.length ? " · alarmes " + mo.alarms.map((a) => a.name ?? `bit ${a.bit}`).join(", ") : ""}`, m);
+      // La progression n'est journalisée que pendant une préparation : au repos elle n'apprend
+      // rien et ferait perdre le pliage des lignes identiques de `L()`.
+      const prog = mo.auRepos ? "" : ` · ${mo.etapeCle ?? "en cours"} ${mo.pourcent ?? "?"} % (f=${mo.fonction} e=${mo.etape})`;
+      L("in", `monitor: état=0x${mo.stateByte.toString(16).padStart(2, "0")}${prog}${mo.switches.length ? " · " + mo.switches.map((x) => x.label).join(", ") : ""}${mo.alarms.length ? " · alarmes " + mo.alarms.map((a) => a.name ?? `bit ${a.bit}`).join(", ") : ""}`, m);
     } catch (e) {
       L("in", `${name}: monitor illisible (${e.message})`, m);
     }
@@ -924,7 +1175,9 @@ function handleProperty(m, name, value) {
     // Une propriété qui répond vide n'existe pas sur ce modèle (typiquement les variantes
     // Striker) : on le note pour ne pas la confondre avec « pas encore lue ».
     if (isProfileProp(name)) m.store.putProp(name, { at: Date.now(), kind: profilePropInfo(name).kind, absent: true });
-    if (m.import) { m.import.ok.push(name); m.import.pending = null; }
+    // Une propriété absente du modèle a bel et bien RÉPONDU : le pas est fait, pas manqué. La
+    // confondre avec un échec relancerait une lecture qui n'a aucune chance d'aboutir.
+    apparier(m.file, { prop: name }, Date.now());
     L("in", `${name}: absente sur ce modèle`, m);
     return;
   }
@@ -936,7 +1189,7 @@ function handleProperty(m, name, value) {
   // MOTIF (`_beansystem` → décodeur de recettes) qui avait produit les désalignements.
   if (name === SERIAL_PROP) {
     applyIdentity(m, value);
-    if (m.import) { m.import.ok.push(name); m.import.pending = null; }
+    apparier(m.file, { prop: name }, Date.now());
     return;
   }
 
@@ -944,11 +1197,16 @@ function handleProperty(m, name, value) {
   try { cmd = Buffer.from(value, "base64")[2]; } catch { cmd = undefined; }
   // Chaque branche écrit ce qu'elle a décodé, tout de suite : `done` ne fait plus que journaliser.
   const done = (msg) => {
-    if (m.import) { m.import.ok.push(name); m.import.pending = null; }
+    apparier(m.file, { prop: name }, Date.now());
     L("in", `${name}: ${msg}`, m);
   };
+  /**
+   * Décodage impossible : la machine a répondu, donc le pas n'est PAS à retenter — le redemander
+   * rendrait exactement les mêmes octets. On le solde comme fait, et c'est le journal qui porte
+   * l'anomalie. Ne pas l'apparier laisserait le pas expirer, donc repartir pour rien.
+   */
   const failed = (e) => {
-    if (m.import) m.import.fail.push(name);
+    apparier(m.file, { prop: name }, Date.now());
     L("in", `${name}: décodage impossible (${e.message})`, m);
   };
 
@@ -990,6 +1248,12 @@ function handleProperty(m, name, value) {
         m.store.putChecksums(cs);
         return done(`sommes de contrôle : ${cs.size} profils, noms=0x${cs.names.toString(16)}`);
       }
+      case 0x95: {
+        const st = decodeSettings(value);
+        m.store.putProp(name, { at: Date.now(), kind: "settings", entries: st.entries, hex: st.hex });
+        noteReglages(m, st.entries, "propriété");
+        return done(`réglages : ${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`);
+      }
       default: {
         const hex = Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim();
         m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: cmd ?? null, hex });
@@ -1007,6 +1271,10 @@ function handleDataResponse(m, value) {
   const hex = buf.toString("hex").replace(/(..)/g, "$1 ").trim();
   m.lastDataResponse = { at: Date.now(), hex };
   L("in", `data_response: ${hex}`, m);
+  // C'est LA réponse qu'attend un pas de trame de lecture (0xBA, 0xA3, 0xA2, monitor). Apparier ici
+  // est ce qui fait avancer un balayage à la vitesse de la machine : six grains ne sont plus six
+  // programmes espacés d'un `setTimeout(11000)` deviné, mais six pas qui s'enchaînent à la réponse.
+  apparier(m.file, { reponse: true }, Date.now());
   if (buf[2] === 0xa2) {
     try {
       const pr = decodeParameters(value);
@@ -1014,6 +1282,16 @@ function handleDataResponse(m, value) {
       L("in", `paramètres : ${pr.entries.map((e) => `${e.id}=${e.value}`).join(", ")}`, m);
     } catch (e) {
       L("in", `paramètres : décodage impossible (${e.message})`, m);
+    }
+    return;
+  }
+  if (buf[2] === 0x95) {
+    try {
+      const st = decodeSettings(value);
+      noteReglages(m, st.entries, "trame 0x95");
+      L("in", `réglages : ${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`, m);
+    } catch (e) {
+      L("in", `réglages : décodage impossible (${e.message})`, m);
     }
     return;
   }
@@ -1173,6 +1451,23 @@ function beverageCounter(store, bev) {
  */
 const APP_STAT_IDS = [105, 106, 108, 115, 3000, 3001, 3003, 3017, 3021, 3025, 3047, 3048, 3077, 3078, 3080];
 
+/**
+ * Plages de balayage des compteurs, `[premier id, quantité]`, une réponse par plage (10 entrées
+ * maximum par réponse — voir §12 de `docs/commandes-cafe.md`).
+ *
+ * **Elles vivaient dans la page `/statistiques`**, donc hors de portée du serveur, qui en a
+ * désormais besoin lui aussi pour « tout lire ». Les recopier ici aurait fait deux sources de
+ * vérité pour une table de protocole — exactement ce que ce fichier interdit ailleurs. Le serveur
+ * les publie donc dans `GET /api/stats` (comme il publie déjà `appIds`), et la page les consomme.
+ *
+ * `all` exploite le fait que la machine ÉNUMÈRE : un id inexistant renvoie les suivants qui
+ * existent, en sautant les trous. C'est ainsi que les 62 paramètres ont été cartographiés.
+ */
+const STAT_RANGES = {
+  known: [[100, 10], [3001, 10], [3017, 10]],
+  all: [[100, 10], [3001, 10], [3011, 10], [3021, 10], [3039, 10], [23000, 10], [23009, 10], [43011, 10]],
+};
+
 /** Propriétés dont la lecture est couverte par la somme de contrôle « noms » (trame `0xA3`). */
 const NAME_PROPS = new Set([...PROFILE_NAME_PROPS, ...CUSTOM_NAME_PROPS].map((x) => x.prop));
 
@@ -1182,12 +1477,13 @@ const NAME_PROPS = new Set([...PROFILE_NAME_PROPS, ...CUSTOM_NAME_PROPS].map((x)
  * Une propriété absente sur ce modèle (variantes Striker) compte comme lue, pas comme un échec :
  * c'est `handleProperty` qui la range dans `ok` avec `absent: true`.
  */
-function applyChecksumMark(m, im) {
-  const mark = im.checksumMark;
+function applyChecksumMark(m, t) {
+  const mark = t.meta?.checksumMark;
   if (!mark) return;
-  const missing = (im.covered ?? []).filter((p) => !im.ok.includes(p));
-  if (im.fail.length || missing.length) {
-    L("sys", `sommes non mémorisées : ${im.fail.length} échec(s), ${missing.length} sans réponse — la relecture restera proposée`, m);
+  // Une propriété non lue, même une seule, invalide la marque : « à jour » doit vouloir dire que
+  // TOUT ce que la somme couvre a bien été relu.
+  if (t.nonLus.length) {
+    L("sys", `sommes non mémorisées : ${t.nonLus.length} propriété(s) sans réponse — la relecture restera proposée`, m);
     return;
   }
   m.store.setMeta("checksumsAtImport", { ...(m.store.getMeta("checksumsAtImport") ?? {}), ...mark });
@@ -1825,7 +2121,8 @@ function applyIdentity(m, b64) {
  */
 async function maybeInitialRead(m) {
   if (!m.ip || !m.lanKey.length) return null;
-  if (m.import?.active || m.program?.active) return null;
+  // Plus de refus quand quelque chose tourne : la file encaisse, et la clé de fusion empêche deux
+  // lectures initiales identiques de coexister. C'est précisément ce que l'écrasement interdisait.
   const queue = [];
   if (!m.modelKey) queue.push(SERIAL_PROP);
   // Les noms de profils ET ceux des recettes personnalisées : même famille de trames, même somme
@@ -1838,7 +2135,7 @@ async function maybeInitialRead(m) {
   }
   if (!queue.length) return null;
   L("sys", `adresse et clé LAN réunies : première lecture (${queue.length} propriétés — modèle et noms)`, m);
-  startImport(m, queue, Math.max(45000, queue.length * 4000));
+  startImport(m, queue, 0, { label: "Première lecture (modèle et noms)", cle: "initiale" });
   await postLocalReg(m);
   return queue;
 }
@@ -1936,40 +2233,39 @@ function restoreActiveProfile(m) {
 }
 
 /**
- * Enchaîne un `0xBA` par index. Un intervalle fixe suffit : la machine répond en 2-3 s, et le
- * programme précédent doit être clos avant le suivant, sinon `startProgram` l'écraserait.
+ * Balayage des grains : **une tâche, un pas `0xBA` par index**.
+ *
+ * C'étaient six programmes indépendants, enchaînés par `setTimeout(11000)` — un intervalle deviné.
+ * Trois défauts en découlaient : les 2 s de vide entre deux grains, où plus rien n'était « actif » ;
+ * l'impossibilité de dire « 3 sur 6 » ailleurs que dans un état ad hoc ; et surtout, n'importe
+ * quelle autre demande arrivant entre-temps écrasait le programme en cours et décapitait le
+ * balayage. En une tâche, les pas s'enchaînent **à la réponse de la machine**, le rythme est le
+ * sien, et une commande qui s'intercale suspend le balayage au lieu de le tuer.
  */
-function scanNextBean(m) {
-  const sc = m.beanScan;
-  if (!sc?.active) return;
-  if (sc.next > sc.to) {
-    sc.active = false;
-    L("sys", "balayage des grains terminé", m);
-    return;
-  }
-  const index = sc.next++;
-  startProgram(m, datapointValue(frameBeanSystem(index)), `Bean System ${index}`, 9000, "monitor");
-  postLocalReg(m);
-  setTimeout(() => scanNextBean(m), 11000);
+function scanBeans(m, from, to) {
+  const pas = [];
+  for (let i = from; i <= to; i++) pas.push(pasTrame(`Bean System ${i}`, datapointValue(frameBeanSystem(i)), { attente: "reponse", sustain: "monitor" }));
+  return enfilerTache(m, tache({
+    label: `Balayage des grains ${from}–${to}`,
+    rang: RANG.LECTURE,
+    pas,
+    cle: `beans:${from}-${to}`,
+    meta: { scan: "beans", from, to },
+  }), `balayage des grains ${from}→${to}, ${pas.length} lectures 0xBA`);
 }
 
-/**
- * Enchaîne les lectures de paramètres, une trame `0xA2` à la fois. Même cadence que le balayage
- * des grains, qui est validée : la machine répond en 2-3 s et le programme précédent doit être clos
- * avant le suivant.
- */
-function scanNextStat(m) {
-  const sc = m.statScan;
-  if (!sc?.active) return;
-  const next = sc.queue.shift();
-  if (next === undefined) {
-    sc.active = false;
-    L("sys", `lecture des statistiques terminée (${m.store.countStats()} paramètres connus)`, m);
-    return;
-  }
-  startProgram(m, datapointValue(frameParamRead(next.id, next.qty)), `Paramètres ${next.id}${next.qty > 1 ? `+${next.qty - 1}` : ""}`, 9000, "monitor");
-  postLocalReg(m);
-  setTimeout(() => scanNextStat(m), 11000);
+/** Lecture des statistiques : une tâche, un pas `0xA2` par requête. Même raison qu'au-dessus. */
+function scanStats(m, requetes) {
+  const pas = requetes.map((r) => pasTrame(`Paramètres ${r.id}${r.qty > 1 ? `+${r.qty - 1}` : ""}`, datapointValue(frameParamRead(r.id, r.qty)), { attente: "reponse", sustain: "monitor" }));
+  return enfilerTache(m, tache({
+    label: requetes.length > 1 ? `Statistiques (${requetes.length} requêtes)` : `Statistiques ${requetes[0].id}`,
+    // Fond de file : voir `RANG.LECTURE_BASSE`. Les compteurs ne périment pas, tout le reste est
+    // ce qu'on attend devant l'écran — un balayage de huit requêtes ne doit pas le faire patienter.
+    rang: RANG.LECTURE_BASSE,
+    pas,
+    cle: `stats:${requetes.map((r) => `${r.id}+${r.qty}`).join(",")}`,
+    meta: { scan: "stats", total: requetes.length },
+  }), `statistiques, ${pas.length} requête(s) 0xA2`);
 }
 
 // La persistance vit maintenant dans `src/lib/store.mjs` (SQLite). Les écritures sont ciblées
@@ -2001,6 +2297,15 @@ const NEEDS_MACHINE = [
   "/api/beanadapt",
   "/api/beverages/import",
   "/api/profiles/import",
+  // Six lectures en file, toutes portées par une session chiffrée : sans clé ni adresse, elles
+  // seraient acceptées puis silencieusement perdues — ce que ce garde-fou existe pour empêcher.
+  "/api/readall",
+  // Même raison pour les nouveautés : lecture ET écriture des réglages, écriture des noms, ordre
+  // des favoris, sondes de mode monitor. Toutes passent par une trame, donc par une session.
+  "/api/settings",
+  "/api/profiles/name",
+  "/api/profiles/favorites",
+  "/api/monitormode",
 ];
 
 /**
@@ -2069,13 +2374,17 @@ function machineSummary(m) {
     lastRegisterAt: m.lastRegisterAt,
     /**
      * Lecture en cours, pour que l'interface puisse attendre le résultat au lieu de demander un
-     * rafraîchissement. Voir `fenetreOuverte` pour la raison du contrôle de durée.
+     * rafraîchissement. Déduit de la file — voir `vueLecture` / `vueProgramme`.
      */
-    reading: fenetreOuverte(m.import)
-      ? { remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending }
-      : null,
-    running: fenetreOuverte(m.program) ? m.program.label : null,
+    reading: vueLecture(m)?.active ? vueLecture(m) : null,
+    running: vueProgramme(m)?.label ?? null,
+    /** Combien de tâches attendent derrière : de quoi dire « ça va prendre un moment ». */
+    queued: m.file.liste.length,
     // Juste de quoi dire « elle répond, et dans quel état » — la fiche complète est /api/status.
+    // **La progression n'est délibérément PAS ici** : `/api/status` renvoie `m.lastMonitor` en
+    // entier, donc les octets 9-11 y parviennent déjà, et c'est de là que `/` et `/pilotage` les
+    // lisent. Les recopier dans ce résumé ferait deux sources pour le même fait, dont une que
+    // personne ne consomme.
     lastMonitor: m.lastMonitor ? { at: m.lastMonitor.at, stateByte: m.lastMonitor.stateByte } : null,
     activeProfile: m.activeProfile,
     activeProfileConfirmed: m.activeProfileConfirmed,
@@ -2187,14 +2496,10 @@ async function handleMachines(req, res) {
      * forcées par l'environnement, seule chose qu'un effacement local ne peut pas défaire.
      */
     if (MACHINES.size === 1) {
-      // L'ancien enregistrement va être remplacé, mais des `setTimeout` en vol le référencent
-      // encore (balayage des grains, lecture des statistiques). Les désarmer avant : sinon un
-      // balayage en cours continuerait à s'annoncer à l'ancienne adresse, sur un objet qui n'est
-      // plus dans le registre — invisible depuis l'interface.
-      m.beanScan = null;
-      m.statScan = null;
-      m.import = null;
-      m.program = null;
+      // Tout ce qui était en vol part avec la machine effacée. Plus de `setTimeout` à désarmer :
+      // les balayages sont des tâches, donc vider la file suffit — c'est un des bénéfices
+      // silencieux de la file, il n'y a plus qu'un endroit où du travail peut être en attente.
+      annuler(m.file, null, "machine réinitialisée", Date.now());
       m.session = null;
       m.aylaToken = null;
       const cleared = m.store.reset();
@@ -2233,12 +2538,66 @@ async function handleMachines(req, res) {
 }
 
 /**
- * Une fenêtre est-elle encore ouverte ? On vérifie la **durée**, pas seulement le drapeau `active` :
- * celui-ci ne retombe que quand la machine vient chercher la commande suivante
- * (`nextImportData` / `nextProgramData`). Si elle ne se connecte jamais, il resterait vrai
- * indéfiniment — et tout ce qui s'y fie resterait bloqué avec lui.
+ * **Vues dérivées de la file**, pour les consommateurs écrits avant elle.
+ *
+ * `m.program` et `m.import` n'existent plus comme état : la file est la seule source. Mais
+ * /machines, /api/beverages et /api/profiles lisent ces formes-là, et les casser n'apportait rien
+ * à cette fiabilisation. Elles sont donc calculées ici, à un seul endroit — d'où l'impossibilité
+ * qu'elles se contredisent, ce qui arrivait quand `m.program.active` et `fenetreOuverte()` ne
+ * disaient pas la même chose selon la page.
  */
-const fenetreOuverte = (x) => !!x?.active && Date.now() <= x.startedAt + x.durationMs;
+function vueProgramme(m) {
+  const t = courante(m.file);
+  if (!t || t.etat !== "encours") return null;
+  return { active: true, id: t.id, label: t.label, counter: t.faits, genre: t.genre, dispense: t.meta?.dispense === true };
+}
+
+/**
+ * L'état d'une LECTURE, en cours ou tout juste terminée.
+ *
+ * La tâche terminée est incluse à dessein : le résultat d'une lecture qui vient d'échouer est
+ * exactement ce qu'on cherche à voir, et il disparaissait avec elle. `active` distingue les deux.
+ */
+function vueLecture(m) {
+  const tete = courante(m.file);
+  const t = tete?.genre === "lecture" ? tete : m.file.finies.find((x) => x.genre === "lecture");
+  if (!t) return null;
+  const encours = t.etat === "encours";
+  return {
+    active: encours,
+    id: t.id,
+    label: t.label,
+    remaining: Math.max(0, t.pas.length - t.i),
+    ok: t.faits,
+    fail: t.nonLus.length,
+    pending: encours ? (t.pas[t.i]?.nom ?? null) : null,
+  };
+}
+
+/** Une tâche de balayage en cours, repérée par sa `meta`. Sert /api/beanadapt et /api/stats. */
+function vueBalayage(m, quoi) {
+  const t = courante(m.file);
+  return t?.etat === "encours" && t.meta?.scan === quoi ? t : null;
+}
+
+/**
+ * Tout ce que la machine est en train de faire pour nous, en un seul objet.
+ *
+ * `queue` est la vraie réponse depuis que la file existe ; `program`, `import`, `beanScan` et
+ * `statScan` restent pour les pages qui les lisent déjà, et se déduisent tous de cette même file —
+ * il n'y a plus qu'un seul état, donc plus de contradiction possible entre deux affichages.
+ */
+function machineActivity(m) {
+  const bs = vueBalayage(m, "beans");
+  const st = vueBalayage(m, "stats");
+  return {
+    queue: vueFile(m.file),
+    program: vueProgramme(m),
+    import: vueLecture(m),
+    beanScan: bs ? { from: bs.meta.from, next: bs.meta.from + bs.faits, to: bs.meta.to } : null,
+    statScan: st ? { remaining: st.pas.length - st.i, total: st.meta.total } : null,
+  };
+}
 
 /**
  * Flux d'évènements vers les navigateurs (Server-Sent Events).
@@ -2285,11 +2644,51 @@ function sseTouch() {
 }
 
 /**
+ * Fait avancer les échéances de toutes les machines et journalise ce qui en sort.
+ *
+ * **Le temps ne passe pas tout seul dans l'ordonnanceur** : il est pur, l'instant lui est fourni.
+ * C'est donc ici — dans le veilleur à 2 s — qu'une échéance manquée devient une reprise, une fin
+ * ou un verdict de machine muette. Avant, ces constats n'avaient lieu que quand la machine venait
+ * chercher la commande suivante : si elle ne venait jamais, aucune ligne n'était jamais écrite.
+ */
+function avancerFiles() {
+  for (const m of machineList()) {
+    for (const e of tic(m.file, Date.now())) {
+      if (e.silencieux) continue;
+      if (e.type === "muette") {
+        L("sys", `${e.tache.id} « ${e.tache.label} » abandonnée : aucun contact de la machine depuis ${Math.round(DELAIS.muet / 1000)} s${e.restantes ? ` — ${e.restantes} tâche(s) en attente annulée(s) pour la même raison` : ""}`, m);
+      } else if (e.type === "repris") {
+        L("sys", `${e.tache.id} · « ${e.pas.nom} » sans réponse, remis en fin de tâche`, m);
+      } else if (e.type === "perdu") {
+        L("sys", `${e.tache.id} · « ${e.pas.nom} » sans réponse après reprise : abandonné`, m);
+      } else if (e.type === "faite") {
+        L("sys", `${e.tache.id} « ${e.tache.label} » terminée : ${e.tache.faits} pas`, m);
+        finDeTache(m, e.tache);
+      } else if (e.type === "echouee") {
+        L("sys", `${e.tache.id} « ${e.tache.label} » échouée : ${e.tache.motif}`, m);
+        finDeTache(m, e.tache);
+      }
+    }
+  }
+}
+
+/**
+ * Ce qu'il reste à faire quand une tâche s'achève. Une seule chose aujourd'hui — la marque de
+ * fraîcheur des sommes de contrôle — mais elle DOIT être posée à la fin et nulle part ailleurs :
+ * posée à l'envoi, un import échoué prétendait que les noms étaient à jour, et la relecture était
+ * alors définitivement sautée jusqu'à un `force: true`.
+ */
+function finDeTache(m, t) {
+  if (t.meta?.checksumMark) applyChecksumMark(m, t);
+}
+
+/**
  * Veilleur, actif seulement pendant qu'un import ou un programme tourne.
  *
  * Le journal suffit pour tout ce qui **arrive**, mais pas pour ce qui **cesse** : quand une fenêtre
  * expire sans que la machine se soit connectée, aucune ligne n'est écrite. Sans ce veilleur, le
- * badge « lecture… » resterait affiché indéfiniment, à décrire un import qui n'existe plus.
+ * badge « lecture… » resterait affiché indéfiniment, à décrire un import qui n'existe plus — et
+ * c'est aussi lui qui, désormais, écrit cette ligne manquante (`cloreFenetreExpiree`).
  *
  * Il s'arrête de lui-même au premier passage où plus rien n'est ouvert, après une dernière émission
  * — celle qui remet les champs à zéro.
@@ -2298,7 +2697,9 @@ let sseWatcher = null;
 function sseWatch() {
   if (sseWatcher) return;
   sseWatcher = setInterval(() => {
-    const actif = machineList().some((m) => fenetreOuverte(m.import) || fenetreOuverte(m.program));
+    // Faire avancer le temps d'abord : ça journalise, donc ça doit précéder l'émission finale.
+    avancerFiles();
+    const actif = machineList().some((m) => !vide(m.file));
     sseBroadcast();
     if (!actif) {
       clearInterval(sseWatcher);
@@ -2445,24 +2846,37 @@ async function handleApi(req, res) {
       // Volontairement léger : /api/status est interrogé toutes les 3 s. La fiche complète du
       // modèle est sur /api/model.
       model: { key: m.modelKey, source: m.modelSource, catalogKey: m.catalog.key, catalogType: m.catalog.model.type, matchesCatalog: m.modelKey ? m.modelKey === m.catalog.key : null },
-      session: { active: !!m.session }, lastRegisterAt: m.lastRegisterAt, activeProfile: m.activeProfile, activeProfileConfirmed: m.activeProfileConfirmed,
       /**
-       * `active` juge sur la **fenetre**, pas sur le drapeau seul — meme regle que
-       * `machineSummary`, et pour la meme raison : `m.program.active` ne retombe que quand la
-       * machine vient chercher la commande suivante (voir `nextCommandData`). Machine eteinte,
-       * injoignable ou sans cle, elle ne vient jamais : le drapeau restait vrai jusqu'au
-       * redemarrage du serveur. L'accueil affichait alors « preparation en cours » pour toujours,
-       * proposait « Arreter », et tenait sa cadence rapide indefiniment — pendant que /machines,
-       * qui passe deja par `fenetreOuverte`, affirmait le contraire. Les compteurs restent : ils
-       * disent ce qu'un programme termine a fait.
+       * **`lastContactAt` : la seule mesure honnête de la liaison.** `active` est un VERROU — il
+       * passe à vrai au premier échange de clés et n'est remis à zéro que par un changement de
+       * configuration (clé, adresse, réinitialisation), jamais par une inactivité ni un délai. Il
+       * affiche donc « établie » des heures après que la machine a cessé de répondre, ce qui est
+       * exactement la situation qu'on vient diagnostiquer sur `/pilotage`. `file.dernierContact`
+       * est daté par CHAQUE datapaquet reçu (`contactMachine` dans `handleProperty`), donc il dit
+       * « elle nous parle encore » et non « elle nous a parlé un jour ». 0 = jamais.
        */
-      program: m.program ? { active: fenetreOuverte(m.program), label: m.program.label, counter: m.program.counter } : null,
+      session: { active: !!m.session, lastContactAt: m.file.dernierContact || null }, lastRegisterAt: m.lastRegisterAt, activeProfile: m.activeProfile, activeProfileConfirmed: m.activeProfileConfirmed,
+      /**
+       * `queue` — la file de tâches, et les vues dérivées que les autres pages lisent encore.
+       * Voir `machineActivity()`. Il n'y a plus qu'un seul état pour « ce que fait la machine »,
+       * donc plus de page qui en affirme une chose pendant qu'une autre affirme le contraire.
+       */
+      ...machineActivity(m),
       lastMonitor: m.lastMonitor, lastDataResponse: m.lastDataResponse, log: LOG.slice(0, 50),
     }));
   }
   if (url === "/api/command" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
-    if (b.action === "clear") { m.program = null; L("sys", "programme annulé", m); return raw(res, JSON.stringify({ cleared: true })); }
+    /**
+     * `clear` vide la file — toutes les tâches, ou une seule si `taskId` est fourni. Les tâches
+     * annulées rejoignent les terminées avec leur motif : elles ne s'évaporent pas, ce qui était
+     * précisément le défaut que la file corrige.
+     */
+    if (b.action === "clear") {
+      const annulees = annuler(m.file, b.taskId ?? null, "annulée depuis l'interface", Date.now());
+      L("sys", annulees.length ? `${annulees.length} tâche(s) annulée(s) : ${annulees.map((t) => t.label).join(", ")}` : "rien à annuler", m);
+      return raw(res, JSON.stringify({ cleared: annulees.length, tasks: annulees.map((t) => t.id) }));
+    }
     let frame, label, dur = 75000, refreshOrderFor = null, sustain = "monitor", checksumBefore;
     // DONTCARE (0) est le mode utilisé pour enregistrer/supprimer une recette (voir
     // DeLonghiWifiConnectService:2959) ; START pour préparer.
@@ -2519,16 +2933,29 @@ async function handleApi(req, res) {
       } else return raw(res, JSON.stringify({ error: "action inconnue" }), 400);
     } catch (e) { return raw(res, JSON.stringify({ error: e.message }), 400); }
     const ecamB64 = datapointValue(frame);
-    startProgram(m, ecamB64, label, dur, sustain);
+    /**
+     * **Le rang, et c'est ici que la politique de priorité entre dans le monde réel.** L'arrêt est
+     * le seul geste qui ne peut pas attendre : il agit sur une machine qui coule. Tout le reste des
+     * commandes passe devant les lectures sans jamais couper une autre commande.
+     */
+    const rang = b.action === "stop" ? RANG.URGENT : RANG.COMMANDE;
+    /**
+     * **Marquer la préparation, parce que c'est la seule chose qu'« Arrêter » puisse arrêter.**
+     * `program.active` dit qu'une tâche tourne — depuis la file, une lecture en est une. Allumer
+     * ce bouton là-dessus proposerait d'interrompre un balayage de compteurs avec une trame d'arrêt
+     * de boisson. Le drapeau ne connaît que ce que CE serveur a mis en file : une boisson lancée au
+     * panneau de la machine reste invisible, comme avant la file.
+     */
+    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, meta: b.action === "dispense" ? { dispense: true } : null });
     // La file de lecture est écoulée quand aucun programme n'est actif : elle s'enchaîne donc
     // naturellement après la fenêtre du programme ci-dessus.
     if (refreshOrderFor) {
       const p = refreshOrderFor;
-      startImport(m, [`d${String(260 + p).padStart(3, "0")}_${p}_rec_priority`], 45000);
+      startImport(m, [`d${String(260 + p).padStart(3, "0")}_${p}_rec_priority`], 0, { label: `Ordre d'affichage du profil ${p}` });
     }
 
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ program: label, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...(checksumBefore !== undefined ? { checksumBefore } : {}) }));
+    return raw(res, JSON.stringify({ program: label, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...tacheRendue(t), ...(checksumBefore !== undefined ? { checksumBefore } : {}) }));
   }
   // Catalogue des boissons de la machine + ce qui a été lu dessus.
   if (url === "/api/beverages" && req.method === "GET") {
@@ -2568,14 +2995,60 @@ async function handleApi(req, res) {
       model: { key: m.catalog.key, type: m.catalog.model.type, appModelId: m.catalog.model.appModelId, productCode: m.catalog.model.productCode, nProfiles: m.catalog.model.nProfiles, protocolVersion: m.catalog.model.protocolVersion, fallback: m.catalog.fallback },
       categories: CATEGORIES, profileId, beverages, order, orderProp: prioProp,
       importedAt: store.importedAt,
-      // Meme regle que pour `program` ci-dessus : `m.import.active` ne retombe qu'a la visite
-      // suivante de la machine, donc un import expire dans le vide restait « en cours » et
-      // maintenait la page en relecture. Les comptes lues/non lues survivent a la fenetre.
-      import: m.import ? { active: fenetreOuverte(m.import), remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
+      // Déduit de la file : la lecture en cours, ou la dernière terminée si plus rien ne tourne —
+      // c'est `active` qui les distingue. Auparavant un import expiré dans le vide restait « en
+      // cours » pour toujours et maintenait la page en relecture.
+      import: vueLecture(m),
     }));
   }
 
   // Import : lit sur la machine les bornes et/ou les recettes du profil, en LAN pur.
+  /**
+   * **Tout lire, en une fois.** Six familles de données, six tâches, dans l'ordre où elles se
+   * rendent service : la présence d'abord (l'état de la machine s'affiche tout de suite), le
+   * modèle ensuite (c'est lui qui choisit le catalogue), puis les sommes, les profils, les
+   * boissons du profil actif, les grains, et enfin le balayage complet des compteurs.
+   *
+   * **Cet endpoint n'était pas réalisable avant la file.** Chacune de ces lectures écrivait dans
+   * l'emplacement unique `m.import` ou `m.program` : les enchaîner, c'était les écraser l'une après
+   * l'autre, et seule la dernière survivait. C'est le premier usage qui ne demandait rien d'autre
+   * que de pouvoir mettre plusieurs choses en file.
+   *
+   * Rien n'est préparé ni écrit : ce ne sont que des lectures, toutes de rang LECTURE — une
+   * commande utilisateur passera donc devant sans avoir à attendre les quatre minutes du balayage.
+   */
+  if (url === "/api/readall" && req.method === "POST") {
+    const p = m.activeProfile || 1;
+    const taches = [];
+    const ajouter = (r) => { if (r?.ok) taches.push({ id: r.taskId, position: r.position }); };
+
+    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence" }));
+    ajouter(startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)" }));
+    ajouter(startProgram(m, datapointValue(frameChecksums()), "Sommes de contrôle", 15000, "monitor", { cle: "checksums" }));
+
+    // Profils : les deux familles de noms plus l'ordre des favoris. `force` implicite — on relit
+    // tout, c'est la demande ; les sommes de contrôle ne court-circuitent rien ici.
+    const profs = [...PROFILE_NAME_PROPS, ...CUSTOM_NAME_PROPS, ...PRIORITY_PROPS].map((x) => x.prop);
+    ajouter(startImport(m, profs, 0, { label: "Profils · noms et ordre" }));
+
+    // Boissons : bornes (caractéristiques du modèle) ET valeurs du profil actif.
+    const bev = [];
+    for (const x of m.catalog.beverages) {
+      if (x.bounds) bev.push(x.bounds);
+      const vp = m.catalog.profileProp(x, p);
+      if (vp) bev.push(vp);
+    }
+    if (bev.length) ajouter(startImport(m, bev, 0, { label: `Boissons · profil ${p}` }));
+
+    ajouter(scanBeans(m, 0, 5));
+    ajouter(scanStats(m, STAT_RANGES.all.map(([id, qty]) => ({ id, qty }))));
+
+    const pas = m.file.liste.reduce((n, t) => n + t.pas.length, 0);
+    L("sys", `lecture complète demandée : ${taches.length} tâches, ${pas} pas en file`, m);
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({ tasks: taches, count: taches.length, steps: pas, profileId: p, register: reg }));
+  }
+
   if (url === "/api/beverages/import" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const profileId = Number(b.profileId ?? 1);
@@ -2594,10 +3067,10 @@ async function handleApi(req, res) {
     // 0xBA. Si la lecture concerne la boisson 200, on l'enchaîne : programme court d'abord, puis
     // la file de lecture s'écoule.
     const beanIndex = ids.includes(200) ? 1 : null;
-    startImport(m, queue, Math.max(60000, queue.length * 3000));
+    const t = startImport(m, queue, 0, { label: `Boissons · profil ${profileId}` });
     if (beanIndex !== null) startProgram(m, datapointValue(frameBeanSystem(beanIndex)), `Bean System ${beanIndex}`, 12000, "monitor");
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ queued: queue.length, profileId, what, beanSystem: beanIndex, register: reg }));
+    return raw(res, JSON.stringify({ queued: queue.length, profileId, what, beanSystem: beanIndex, register: reg, ...tacheRendue(t) }));
   }
 
   // Profils : noms, icônes, noms des recettes perso, ordre des favoris.
@@ -2635,17 +3108,20 @@ async function handleApi(req, res) {
       source: customNames[n]?.prop ?? null,
     }));
     return raw(res, JSON.stringify({
-      model: { key: m.catalog.key, type: m.catalog.model.type, nProfiles: m.catalog.model.nProfiles, customizableProfiles: m.catalog.model.customizableProfiles, nCustomRecipes: m.catalog.model.nCustomRecipes },
+      // `namesCustomizable` / `iconsCustomizable` : drapeaux du catalogue extrait de l'APK. Ils
+      // décident si la page propose de renommer — sur un modèle qui dit non, la trame `0xA5`
+      // partirait quand même, et on ignore ce qu'elle y ferait.
+      model: { key: m.catalog.key, type: m.catalog.model.type, nProfiles: m.catalog.model.nProfiles, customizableProfiles: m.catalog.model.customizableProfiles, nCustomRecipes: m.catalog.model.nCustomRecipes, namesCustomizable: m.catalog.model.profileNamesCustomizable !== false, iconsCustomizable: m.catalog.model.profileIconsCustomizable !== false },
       profiles, customs,
       props: ALL_PROFILE_PROPS.map((x) => {
         const d = store.props[x.prop];
         return { prop: x.prop, kind: x.kind, stride: x.stride ?? null, state: !d ? "unread" : d.absent ? "absent" : "read" };
       }),
       importedAt: store.importedAt,
-      // Meme regle que pour `program` ci-dessus : `m.import.active` ne retombe qu'a la visite
-      // suivante de la machine, donc un import expire dans le vide restait « en cours » et
-      // maintenait la page en relecture. Les comptes lues/non lues survivent a la fenetre.
-      import: m.import ? { active: fenetreOuverte(m.import), remaining: m.import.queue.length, ok: m.import.ok.length, fail: m.import.fail.length, pending: m.import.pending } : null,
+      // Déduit de la file : la lecture en cours, ou la dernière terminée si plus rien ne tourne —
+      // c'est `active` qui les distingue. Auparavant un import expiré dans le vide restait « en
+      // cours » pour toujours et maintenait la page en relecture.
+      import: vueLecture(m),
     }));
   }
 
@@ -2678,7 +3154,6 @@ async function handleApi(req, res) {
     if (!queue.length) {
       return raw(res, JSON.stringify({ queued: 0, what, skipped, upToDate: true, customFresh }));
     }
-    startImport(m, queue, Math.max(60000, queue.length * 3000));
     // La marque « à jour » est posée à la FIN de l'import (`applyChecksumMark`), et seulement sur
     // les familles que cet import lit vraiment.
     //
@@ -2689,20 +3164,18 @@ async function handleApi(req, res) {
     // `force:true` s'en sortait. Les sommes ne couvrant pas l'ordre des favoris, `what:"order"`
     // ne marque désormais rien du tout.
     const covered = queue.filter((p) => NAME_PROPS.has(p));
-    if (m.import && store.checksums && covered.length) {
-      m.import.covered = covered;
-      m.import.checksumMark = { names: store.checksums.names };
-    }
+    const meta = store.checksums && covered.length ? { checksumMark: { names: store.checksums.names } } : null;
+    const t = startImport(m, queue, 0, { label: `Profils · ${what}`, meta });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ queued: queue.length, what, skipped, register: reg }));
+    return raw(res, JSON.stringify({ queued: queue.length, what, skipped, register: reg, ...tacheRendue(t) }));
   }
 
   // Sommes de contrôle : demande la trame 0xA3 à la machine.
   if (url === "/api/checksums" && req.method === "POST") {
     const frame = frameChecksums();
-    startProgram(m, datapointValue(frame), "Sommes de contrôle", 15000, "monitor");
+    const t = startProgram(m, datapointValue(frame), "Sommes de contrôle", 15000, "monitor", { cle: "checksums" });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ sent: true, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg }));
+    return raw(res, JSON.stringify({ sent: true, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...tacheRendue(t) }));
   }
   if (url === "/api/checksums" && req.method === "GET") {
     const store = m.store.machineView();
@@ -2781,9 +3254,9 @@ async function handleApi(req, res) {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const index = Number(b.index ?? 1);
     const frame = frameBeanSystem(index);
-    startProgram(m, datapointValue(frame), `Bean System ${index}`, 15000, "monitor");
+    const t = startProgram(m, datapointValue(frame), `Bean System ${index}`, 15000, "monitor", { cle: `bean:${index}` });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ sent: true, index, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg }));
+    return raw(res, JSON.stringify({ sent: true, index, frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(), register: reg, ...tacheRendue(t) }));
   }
   if (url === "/api/beansystem" && req.method === "GET") {
     return raw(res, JSON.stringify({ beanSystems: m.store.allBeanSystems() }));
@@ -2797,9 +3270,9 @@ async function handleApi(req, res) {
     return raw(res, JSON.stringify(modelState(m)));
   }
   if (url === "/api/model" && req.method === "POST") {
-    startImport(m, [SERIAL_PROP], 30000);
+    const t = startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)" });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ queued: true, prop: SERIAL_PROP, register: reg }));
+    return raw(res, JSON.stringify({ queued: true, prop: SERIAL_PROP, register: reg, ...tacheRendue(t) }));
   }
 
   // Lecture de propriétés Ayla arbitraires — outil d'exploration, et brique de /api/presence.
@@ -2807,9 +3280,9 @@ async function handleApi(req, res) {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const props = Array.isArray(b.props) ? b.props.filter((x) => typeof x === "string" && x) : [];
     if (!props.length) return raw(res, JSON.stringify({ error: "aucune propriété demandée" }), 400);
-    startImport(m, props, Math.max(30000, props.length * 3000));
+    const t = startImport(m, props, 0);
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ queued: props.length, props, register: reg }));
+    return raw(res, JSON.stringify({ queued: props.length, props, register: reg, ...tacheRendue(t) }));
   }
 
   /**
@@ -2822,24 +3295,35 @@ async function handleApi(req, res) {
    */
   if (url === "/api/presence" && req.method === "POST") {
     const now = Date.now();
-    const fresh = m.lastMonitor && now - m.lastMonitor.at < 30000;
+    /**
+     * **`force` : le geste explicite ne se fait pas étrangler.** Les trois garde-fous ci-dessous
+     * existent pour l'appel AUTOMATIQUE — ouvrir quatre onglets ne doit pas ouvrir quatre sessions.
+     * Mais quand quelqu'un clique « Lire l'état », il clique précisément parce que l'état affiché
+     * lui paraît absent ou périmé : lui répondre « monitor récent, ignoré » serait répondre le
+     * contraire de ce qu'il demande. La fusion sur `cle: "presence"` reste, elle : deux clics
+     * rapides ne font toujours qu'une tâche.
+     */
+    const force = (JSON.parse((await readBody(req)).toString("utf8") || "{}")).force === true;
+    const fresh = !force && m.lastMonitor && now - m.lastMonitor.at < 30000;
     // Même règle : sur le drapeau brut, une machine qui a cessé de répondre restait « occupée »
     // pour toujours et cette relance — la seule qui puisse rétablir l'état — était refusée à
     // jamais avec « programme en cours ».
-    const busyAlready = fenetreOuverte(m.program) || fenetreOuverte(m.import);
+    // « Occupé » veut simplement dire qu'il y a déjà du travail en file : inutile d'y ajouter une
+    // présence, la machine va de toute façon venir chercher ce qui s'y trouve.
+    const busyAlready = !force && !vide(m.file);
     if (fresh || busyAlready) {
       return raw(res, JSON.stringify({ skipped: true, reason: fresh ? "monitor récent" : "programme en cours", lastMonitor: m.lastMonitor }));
     }
     // 8 s : assez pour ne pas marteler, assez court pour qu'une relance de la page passe. La
     // machine ne pousse pas toujours son monitor à la première session (comportement transitoire
     // déjà observé), donc une seconde tentative doit être possible.
-    if (now - (m.lastPresenceAt ?? 0) < 8000) {
+    if (!force && now - (m.lastPresenceAt ?? 0) < 8000) {
       return raw(res, JSON.stringify({ skipped: true, reason: "présence déjà demandée récemment", lastMonitor: m.lastMonitor }));
     }
     m.lastPresenceAt = now;
-    startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor");
+    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence" });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ started: true, register: reg }));
+    return raw(res, JSON.stringify({ started: true, register: reg, ...tacheRendue(t) }));
   }
 
   // Bean Adapt : bornes + profils lus, et la règle d'ajustement rejouée LOCALEMENT.
@@ -2855,10 +3339,12 @@ async function handleApi(req, res) {
     if (!(Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to <= 9 && to >= from)) {
       return raw(res, JSON.stringify({ error: "plage d'index invalide" }), 400);
     }
-    if (m.beanScan?.active) return raw(res, JSON.stringify({ error: "un balayage est déjà en cours" }), 409);
-    m.beanScan = { active: true, next: from, to, startedAt: Date.now() };
-    scanNextBean(m);
-    return raw(res, JSON.stringify({ started: true, from, to }));
+    // Plus de refus « un balayage est déjà en cours » : la file l'encaisse, et la clé de fusion
+    // empêche deux balayages identiques de coexister. Refuser était l'aveu qu'un deuxième aurait
+    // écrasé le premier.
+    const t = scanBeans(m, from, to);
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({ started: t.ok, from, to, register: reg, ...tacheRendue(t) }));
   }
 
   if (url === "/api/beanadapt" && req.method === "GET") {
@@ -2886,7 +3372,7 @@ async function handleApi(req, res) {
         temperature: { min: TEMPERATURE_MIN, max: TEMPERATURE_MAX, verified: false },
       },
       activeProfile: m.activeProfile,
-      scan: m.beanScan?.active ? { next: m.beanScan.next, to: m.beanScan.to } : null,
+      scan: machineActivity(m).beanScan,
     }));
   }
 
@@ -2933,6 +3419,205 @@ async function handleApi(req, res) {
   }
 
   // Écriture d'un profil Bean System dans la machine (0xBB). Persistant.
+  /**
+   * **Renommer un profil ou une recette perso — `0xA5` / `0xAB`, persistant.**
+   *
+   * Pendant exact des lectures `0xA4` / `0xAA` que `profiles.mjs` décode déjà. On n'écrit **qu'une
+   * entrée** (`premier = dernier = index`), comme le fait l'app elle-même : réécrire le bloc entier
+   * imposerait de connaître les autres noms, donc de faire dépendre un renommage de la fraîcheur du
+   * cache — un nom non relu serait écrasé par une valeur périmée.
+   *
+   * L'icône est obligatoire dans la trame (21e octet). Faute de valeur fournie, on reprend celle
+   * qui a été lue ; faute de lecture, on refuse. Envoyer 0 mettrait silencieusement l'icône par
+   * défaut sur un profil que l'utilisateur venait seulement de renommer.
+   *
+   * ⚠️ Pas de 21 octets : c'est la variante « classic ». Un modèle Striker demande 22
+   * (`d.k0()`) et n'est pas porté ici — écrire au mauvais pas décalerait tous les noms suivants.
+   */
+  if (url === "/api/profiles/name" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const perso = b.kind === "custom";
+    const index = Number(b.index);
+    const maxi = perso ? 6 : (m.catalog?.model?.nProfiles ?? 5);
+    if (!Number.isInteger(index) || index < 1 || index > maxi) {
+      return raw(res, JSON.stringify({ error: `index ${b.index} invalide (1–${maxi})` }), 400);
+    }
+    if (m.gen === "striker") {
+      return raw(res, JSON.stringify({ error: "écriture de noms non portée pour la génération Striker (pas de 22 octets)" }), 400);
+    }
+    const nom = String(b.name ?? "");
+    if (nom.length > 20) return raw(res, JSON.stringify({ error: "nom limité à 20 caractères" }), 400);
+    const lus = readNames(m.store.machineView(), perso ? "customNames" : "profileNames");
+    const icone = b.icon != null ? Number(b.icon) : lus[index]?.icon;
+    if (!Number.isInteger(icone)) {
+      return raw(res, JSON.stringify({ error: "icône inconnue : lire d'abord les noms, ou fournir `icon`", needsRead: true }), 409);
+    }
+    const frame = frameSetNames(perso ? 0xab : 0xa5, index, index, [{ name: nom, icon: icone }]);
+    const label = perso ? `Renommer la recette perso ${index} en « ${nom} »` : `Renommer le profil ${index} en « ${nom} »`;
+    const t = startProgram(m, datapointValue(frame), label, 20000, "monitor", { rang: RANG.COMMANDE });
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({
+      sent: true, kind: perso ? "custom" : "profile", index, name: nom, icon: icone,
+      frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      register: reg, ...tacheRendue(t),
+    }));
+  }
+  /**
+   * **Ordre des favoris d'un profil — `0xAD`, persistant.**
+   *
+   * Pendant de la lecture `0xA8` (`d{260+p}_{p}_rec_priority`), dont `/` se sert pour ordonner ses
+   * cartes. La trame a une longueur FIXE de 19 octets, donc exactement 12 emplacements : une liste
+   * plus courte est complétée de zéros, une plus longue est refusée plutôt que tronquée en silence.
+   * Chaque identifiant est vérifié dans le catalogue du modèle — envoyer une boisson que l'appareil
+   * ne sait pas faire est le genre d'écriture dont on ne connaît pas l'effet.
+   */
+  if (url === "/api/profiles/favorites" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const profil = Number(b.profileId ?? m.activeProfile ?? 1);
+    const nMax = m.catalog?.model?.nProfiles ?? 5;
+    if (!Number.isInteger(profil) || profil < 1 || profil > nMax) {
+      return raw(res, JSON.stringify({ error: `profil ${b.profileId} invalide (1–${nMax})` }), 400);
+    }
+    const ordre = Array.isArray(b.beverageIds) ? b.beverageIds.map(Number) : null;
+    if (!ordre) return raw(res, JSON.stringify({ error: "`beverageIds` manquant" }), 400);
+    if (ordre.length > 12) return raw(res, JSON.stringify({ error: `12 emplacements au maximum (${ordre.length} fournis)` }), 400);
+    const inconnue = ordre.find((id) => id !== 0 && !m.catalog.byId(id));
+    if (inconnue !== undefined) {
+      return raw(res, JSON.stringify({ error: `boisson ${inconnue} inconnue sur ${m.catalog.model.type}` }), 400);
+    }
+    const frame = frameSetFavorites(profil, ordre);
+    const t = startProgram(m, datapointValue(frame), `Ordre des favoris du profil ${profil}`, 20000, "monitor", { rang: RANG.COMMANDE });
+    // Puis on relit : c'est la seule confirmation disponible, la machine n'accuse pas l'écriture.
+    const prop = `d${String(260 + profil).padStart(3, "0")}_${profil}_rec_priority`;
+    startImport(m, [prop], 0, { label: `Ordre d'affichage du profil ${profil}` });
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({
+      sent: true, profileId: profil, beverageIds: ordre,
+      frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      register: reg, ...tacheRendue(t),
+    }));
+  }
+  /**
+   * **Les deux modes de monitor restés hors Wi-Fi — `0x60` et `0x70`.**
+   *
+   * Diagnostic pur, et volontairement sans décodeur : on envoie la trame et on regarde ce qui
+   * revient dans `lastDataResponse` / le journal. Ces deux modes n'apparaissent que dans le
+   * constructeur de trames de l'app, jamais dans son service Wi-Fi ; rien ne dit que le module y
+   * réponde en LAN, et inventer un décodage pour des octets qu'on n'a jamais vus serait pire que
+   * de les afficher bruts. Rang `LECTURE`, aucun effet de bord connu.
+   */
+  if (url === "/api/monitormode" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const mode = Number(b.mode);
+    if (![0, 1, 2].includes(mode)) return raw(res, JSON.stringify({ error: "mode attendu : 0, 1 ou 2" }), 400);
+    const frame = frameMonitorMode(mode);
+    const t = startProgram(m, datapointValue(frame), `Monitor mode ${mode} (0x${MONITOR_MODES[mode].toString(16)})`, 15000, "monitor", { cle: `monitormode:${mode}` });
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({
+      sent: true, mode, cmd: MONITOR_MODES[mode],
+      frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      lastDataResponse: m.lastDataResponse, register: reg, ...tacheRendue(t),
+    }));
+  }
+
+  /**
+   * **Réglages machine — la symétrie lecture / écriture qui manquait.**
+   *
+   * Deux chemins pour la même donnée, et c'est l'app qui les a tous les deux : la **propriété
+   * Ayla** (`d281`…`d284`, une par réglage) et la **trame `0x95`** (une requête, plusieurs
+   * adresses consécutives). On demande les deux — la propriété pour ce qui en a une, la trame pour
+   * le reste (l'heure de démarrage, adresses 64/65) — parce qu'aucune des deux n'est garantie sur
+   * un modèle donné et que la seconde ne coûte qu'un pas. `source` dira laquelle a répondu.
+   */
+  if (url === "/api/settings" && req.method === "GET") {
+    return raw(res, JSON.stringify({
+      reglages: vueReglages(m, m.store.getMeta("reglages") ?? {}),
+      model: m.modelKey ?? null,
+      modelName: m.catalog?.model?.name ?? null,
+      lecture: vueLecture(m),
+    }));
+  }
+  if (url === "/api/settings" && req.method === "POST") {
+    const props = [];
+    for (const r of REGLAGES) {
+      const nom = r.prop ? reglageProp(m, r) : null;
+      if (nom) props.push(nom);
+    }
+    const taches = [];
+    if (props.length) {
+      const t = startImport(m, props, 0, { label: "Réglages machine", cle: "reglages" });
+      if (t?.ok) taches.push({ id: t.taskId, position: t.position });
+    }
+    // Les adresses sans propriété connue : une seule trame les couvre toutes, la machine rendant
+    // `qty` adresses consécutives à partir de la première.
+    const sansProp = REGLAGES.filter((r) => !r.prop).map((r) => r.addr);
+    if (sansProp.length) {
+      const premier = Math.min(...sansProp);
+      const qty = Math.max(...sansProp) - premier + 1;
+      const t = startProgram(m, datapointValue(frameParamRead95(premier, qty)), `Réglages ${premier}+${qty - 1}`, 15000, "monitor", { cle: `reglages95:${premier}+${qty}` });
+      if (t?.ok) taches.push({ id: t.taskId, position: t.position });
+    }
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({ tasks: taches, count: taches.length, register: reg }));
+  }
+  /**
+   * **Écriture d'un réglage — `0x90`, rang COMMANDE, persistant.**
+   *
+   * Deux formes acceptées : `{cle, value}` pour un réglage numérique, `{cle, on}` pour un des cinq
+   * interrupteurs de l'adresse 63. Le second RELIT la valeur courante du champ de bits et n'y
+   * change qu'un bit : écrire l'octet entier depuis un état supposé éteindrait au passage les
+   * quatre autres réglages. Sans lecture préalable on refuse, plutôt que de deviner un octet.
+   *
+   * Le garde-fou qui compte : on n'écrit **que** les adresses de `REGLAGES`, et seulement si le
+   * modèle déclare le réglage. `0x90` écrit 4 octets à une adresse arbitraire dans la
+   * configuration d'un appareil réel ; la table d'adresses connue en couvre six, tout le reste est
+   * inconnu et le rester est le comportement sûr.
+   */
+  if (url === "/api/settings/write" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const brut = m.store.getMeta("reglages") ?? {};
+    const modele = m.catalog?.model ?? {};
+    const dispo = (d) => (d == null ? true : modele[d] === true);  // voir `vueReglages`
+    let r = REGLAGE_PAR_CLE.get(String(b.cle));
+    let valeur;
+    let libelle;
+    if (r) {
+      if (!dispo(r.supporte)) return raw(res, JSON.stringify({ error: `réglage « ${r.cle} » non supporté par ce modèle` }), 400);
+      valeur = Number(b.value);
+      if (!Number.isInteger(valeur) || valeur < r.min || valeur > r.max) {
+        return raw(res, JSON.stringify({ error: `valeur hors bornes (${r.min}–${r.max})` }), 400);
+      }
+      libelle = `Réglage ${r.cle} = ${valeur}`;
+    } else {
+      // Un interrupteur du champ de bits.
+      const porteur = REGLAGES.find((x) => x.bits?.some((y) => y.cle === String(b.cle)));
+      const bit = porteur?.bits.find((y) => y.cle === String(b.cle));
+      if (!bit) return raw(res, JSON.stringify({ error: `réglage « ${b.cle} » inconnu` }), 400);
+      if (!dispo(bit.supporte)) return raw(res, JSON.stringify({ error: `réglage « ${bit.cle} » non supporté par ce modèle` }), 400);
+      const courant = brut[porteur.addr]?.value;
+      if (courant == null) {
+        return raw(res, JSON.stringify({ error: `réglage « ${bit.cle} » : lire d'abord les réglages — sans la valeur courante du champ de bits, l'écrire éteindrait les autres`, needsRead: true }), 409);
+      }
+      const on = b.on === true;
+      // `inverse` : le bit à 1 DÉSACTIVE. C'est l'app qui en décide ainsi, pas nous.
+      const poser = bit.inverse ? !on : on;
+      valeur = poser ? (courant | (1 << bit.bit)) & 0xff : courant & ~(1 << bit.bit) & 0xff;
+      r = porteur;
+      libelle = `Réglage ${bit.cle} ${on ? "activé" : "désactivé"}`;
+    }
+    const frame = frameParamWrite(r.addr, valeur);
+    const t = startProgram(m, datapointValue(frame), libelle, 20000, "monitor", { rang: RANG.COMMANDE });
+    // On note tout de suite la valeur envoyée, marquée comme telle : la machine ne confirme pas une
+    // écriture de réglage, donc « lu » et « envoyé » ne doivent pas se ressembler dans l'interface.
+    noteReglages(m, [{ addr: r.addr, value: valeur }], "écrit (non relu)");
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({
+      sent: true, addr: r.addr, value: valeur,
+      frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
+      register: reg, ...tacheRendue(t),
+    }));
+  }
+
   if (url === "/api/beanadapt/save" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const index = Number(b.index);
@@ -2946,7 +3631,7 @@ async function handleApi(req, res) {
     const name = typeof b.name === "string" ? b.name : "";
     const visible = b.visible !== false;
     const frame = frameBeanSystemSave(index, name, grinder, temperature, aroma, visible);
-    startProgram(m, datapointValue(frame), `Bean System ${index} → mouture ${grinder}, temp ${temperature}, arôme ${aroma}`, 20000, "monitor");
+    const t = startProgram(m, datapointValue(frame), `Bean System ${index} → mouture ${grinder}, temp ${temperature}, arôme ${aroma}`, 20000, "monitor", { rang: RANG.COMMANDE });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({
       sent: true,
@@ -3086,7 +3771,7 @@ async function handleApi(req, res) {
    */
   if (url === "/api/stats" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
-    if (m.statScan?.active) return raw(res, JSON.stringify({ error: "une lecture est déjà en cours" }), 409);
+    // Même raison qu'au balayage des grains : la file encaisse au lieu d'écraser, donc plus de refus.
     let queue = [];
     if (Array.isArray(b.ids) && b.ids.length) {
       queue = b.ids.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 0xffff).map((id) => ({ id, qty: 1 }));
@@ -3096,10 +3781,9 @@ async function handleApi(req, res) {
     }
     if (!queue.length) return raw(res, JSON.stringify({ error: "fournir ids[] ou from(+qty)" }), 400);
     const requests = queue.length;
-    m.statScan = { active: true, queue, total: requests, startedAt: Date.now() };
-    // scanNextStat() consomme la file : on compte AVANT de la lancer.
-    scanNextStat(m);
-    return raw(res, JSON.stringify({ started: true, requests }));
+    const t = scanStats(m, queue);
+    const reg = await postLocalReg(m);
+    return raw(res, JSON.stringify({ started: t.ok, requests, register: reg, ...tacheRendue(t) }));
   }
 
   if (url === "/api/stats" && req.method === "GET") {
@@ -3111,9 +3795,11 @@ async function handleApi(req, res) {
       stats: Object.fromEntries(Object.entries(stats).map(([id, v]) => [id, v.value])),
       readAt: Object.fromEntries(Object.entries(stats).map(([id, v]) => [id, v.at])),
       count: Object.keys(stats).length,
-      scan: m.statScan?.active ? { remaining: m.statScan.queue.length, total: m.statScan.total } : null,
+      scan: machineActivity(m).statScan,
       // Ce que l'app demande (p258z7/w.java et le viewmodel des statistiques).
       appIds: APP_STAT_IDS,
+      // Publiées plutôt que recopiées dans la page : voir STAT_RANGES.
+      ranges: STAT_RANGES,
       // Les seuls dont la signification est établie. `raw` reste la valeur brute ; `value` est
       // convertie quand il y a une unité (eau : 0,5 ml → litres).
       known: Object.entries(STAT_MEANINGS)

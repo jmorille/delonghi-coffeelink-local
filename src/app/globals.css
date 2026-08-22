@@ -553,10 +553,24 @@ button.danger { background: var(--danger); color: var(--danger-ink); border-colo
   justify-items: start;
   align-items: baseline;
 }
+/* **Une valeur qui doit occuper toute sa colonne le dit.** `justify-items: start` ci-dessus est le
+   bon défaut — une pastille est un objet, pas une colonne — mais il empêche `margin-left: auto` de
+   fonctionner dans la cellule de valeur : la boîte n'est large que de son contenu, donc « pousser à
+   droite » ne pousse nulle part. C'est ce qui laissait les croix « Annuler » de la file en dents de
+   scie, chacune posée là où le libellé qui la précède s'arrête. */
+.kv > .etire { justify-self: stretch; }
 .kv:last-child { border-bottom: none; }
 /* Le libellé et la valeur gardent la MÊME taille : ils forment une ligne, et deux tailles dans une
    ligne de tableau cassent l'alignement optique qui fait tenir la colonne. Le ton les distingue. */
 .kv .k { color: var(--muted); }
+/* **Une paire nom/valeur écrite comme telle.** Là où ces lignes sont de vraies paires — `/pilotage`
+   pour l'instant — la liste est un `<dl>`, chaque rangée un `<div className="kv">` (permis comme
+   groupe dans un `<dl>`), et ses deux cellules un `<dt>`/`<dd>`. L'appariement cesse alors d'être
+   une affaire de colonnes : il est dans le balisage, donc lisible en linéaire. Reste à neutraliser
+   ce que le navigateur ajoute de son côté — la marge de 40 px du `<dd>`, que la grille ne peut pas
+   absorber, et la marge verticale du `<dl>`, qui décollerait la liste de sa carte. */
+dl.kvListe { margin: 0; }
+.kv > dd { margin: 0; }
 /* Le compte qui suit un titre de section (« Dans l'ordre de la machine (23) ») héritait du gras du
    titre : il pesait autant que lui. Trois pages posaient `fontWeight: 400` à la main. */
 h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
@@ -675,6 +689,14 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
   font-size: var(--t-petit); overflow-wrap: anywhere;
 }
 .status:empty { display: none; }
+/* **Le même compte rendu, mais sur la ligne qu'il commente.** `/pilotage` fait atterrir le retour
+   de « Rappeler la machine » dans la ligne « État de la machine » plutôt que dans un encadré sous
+   le bouton : à cette place, un cadre bordé de pleine largeur dans la colonne des valeurs pèserait
+   plus lourd que les quatre lignes qu'il accompagne. Donc pas de bordure ni de fond — la taille de
+   texte secondaire suffit, et l'échec garde le pictogramme d'alerte. Vide, l'élément disparaît sans
+   être démonté : c'est ce qui permet à `role="status"` d'annoncer le changement. */
+.enLigne { font-size: var(--t-petit); color: var(--muted); overflow-wrap: anywhere; }
+.enLigne:empty { display: none; }
 /* Le statut est teinté par le fond et la bordure, jamais par un liseré latéral. La couleur seule
    ne porte pas l'information : le texte dit toujours ce qui s'est passé. */
 /* `color-mix(... transparent)` composait sur ce qu'il y avait derrière : le contraste dépendait
@@ -767,6 +789,27 @@ dialog.confirm .actions {
    La couleur n'est pas seule à le dire — l'état coché est porté par la radio elle-même. */
 .themes .theme.actif { color: var(--accent-text); background: var(--accent-tint); }
 .themes .theme:has(input:focus-visible) { outline: 2px solid var(--accent-edge); outline-offset: -2px; }
+
+/* **La liste ordonnée des favoris d'un profil.** Une liste numérotée, pas une table : chaque
+   ligne est un nom et ses deux flèches, et le numéro EST l'information — c'est l'ordre qu'on
+   écrit dans la machine. `list-style-position: inside` garde le compteur dans la carte, dont le
+   remplissage n'absorbe pas le retrait par défaut du navigateur. */
+ol.listeFavoris { margin: var(--s-2) 0; padding: 0; list-style: none; counter-reset: favori; }
+ol.listeFavoris > li {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-hair) 0; border-bottom: 1px dotted var(--rule);
+}
+/* **Le rang est écrit, pas laissé au marqueur natif.** Un `<li>` en flex supprime la puce du
+   navigateur : sans ce compteur, la liste perdait le seul élément qui la rende lisible — le
+   NUMÉRO, qui est précisément ce qu'on écrit dans la machine. */
+ol.listeFavoris > li::before {
+  counter-increment: favori; content: counter(favori) ".";
+  flex: none; min-width: 1.6em; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+/* Le nom prend la place restante, les deux flèches restent collées à droite et alignées d'une
+   ligne à l'autre — sinon elles suivraient la longueur du nom. */
+ol.listeFavoris > li > :first-of-type { flex: 1 1 auto; min-width: 0; }
+ol.listeFavoris > li:last-child { border-bottom: 0; }
 
 /* Texte réservé aux lecteurs d'écran : nomme une commande dont l'icône est décorative. */
 .horsEcran {
@@ -959,6 +1002,19 @@ dialog.drawer .pied select { width: 100%; }
    n'observerait que la grille). Avec le repli : dedans dans les deux cas, sur deux et trois lignes.
    Le nom se replie, la tasse reste a sa place. */
 .iconBtn.multi { white-space: normal; }
+/* **Icône seule, choisie et non subie.** À distinguer du repli automatique plus bas, qui cache un
+   `.lbl` présent quand la carte devient étroite : ici il n'y a pas de libellé du tout, parce que le
+   bouton se répète — une ligne par tâche en attente. Le remplissage latéral retombe à 10 px pour ne
+   pas laisser une pastille large autour d'un glyphe de 17 ; la hauteur, elle, ne bouge pas
+   (`min-height: var(--h-ctl)` s'applique toujours), donc la cible tactile reste entière. Le nom
+   accessible est porté par `aria-label` côté composant — sans lui le bouton n'aurait plus de nom
+   du tout. */
+.iconBtn.iconSeul { padding-left: 10px; padding-right: 10px; }
+/* **Aligné au bord droit, sinon la colonne de boutons est en dents de scie.** Dans une ligne de
+   file, ce qui précède le bouton n'a pas de largeur fixe : la pastille de rang fait « lecture » ou
+   « lecture différée ». Sans cette marge, chaque bouton se pose là où le texte le laisse, et deux
+   lignes voisines décalent leur croix d'une soixantaine de pixels. */
+.titreLigne > .aDroite { margin-left: auto; }
 /* Le chevron des panneaux dépliants tourne au lieu de changer de dessin. */
 .iconBtn.ouvert > svg:first-child { transform: rotate(180deg); }
 /* **Le seuil était au-dessus de la largeur réelle des libellés : ils tenaient et disparaissaient
@@ -1200,6 +1256,34 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 /* Les pastilles d'état : serrées entre elles (4 px) et proches de la ligne d'état qu'elles
    précisent (2 px). L'échelle sert ici son extrémité basse — un groupe se lit comme un objet. */
 .etats { gap: var(--s-1); margin-top: var(--s-1); }
+
+/* ═══ Progression d'une préparation ═══════════════════════════════════════════════════════════
+   Montée en permanence et vide au repos : une région `role="status"` créée en même temps que son
+   contenu n'est pas annoncée. `:empty` la retire de la mise en page, exactement comme `.enLigne`.
+   Elle occupe TOUTE la largeur de la carte, sous la rangée de tête : la barre décrit la machine,
+   pas son bloc d'identité, et confinée dans la colonne du titre elle mesurait 224 px pour dire un
+   pourcentage — la seule chose de cette page qui bouge de seconde en seconde. */
+.progression { margin-top: var(--s-3); display: flex; flex-direction: column; gap: var(--s-1); }
+.progression:empty { display: none; }
+.progLigne { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); }
+.progEtape { font-weight: 600; }
+/* La piste garde sa hauteur même à 0 % : pendant toute la mouture le pourcentage RESTE à 0
+   (relevé sur la machine), et une barre qui n'apparaîtrait qu'au premier pour cent donnerait
+   l'impression que rien ne commence. */
+.jauge {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--rule); width: 100%;
+}
+.jaugeBarre {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--accent);
+  transition: width 400ms ease-out;
+}
+/* Le pourcentage n'arrive que toutes les 1 à 3 s : sans transition la barre saute de 28 à 68 en
+   un seul cadre. Mais une animation ne doit jamais être imposée à qui l'a refusée. */
+@media (prefers-reduced-motion: reduce) {
+  .jaugeBarre { transition: none; }
+}
 
 /* Interrupteur principal. 76 × 42 au lieu de 52 × 28, soit 3 192 px² : il cesse d'être la plus
    petite chose de la carte la plus importante. La géométrie est recalculée, pas mise à l'échelle —

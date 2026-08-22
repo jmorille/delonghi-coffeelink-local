@@ -31,7 +31,7 @@ interface PropRow {
   state: "read" | "absent" | "unread";
 }
 interface Payload {
-  model: { type: string; nProfiles: number; customizableProfiles: boolean; nCustomRecipes: number };
+  model: { type: string; nProfiles: number; customizableProfiles: boolean; nCustomRecipes: number; namesCustomizable?: boolean; iconsCustomizable?: boolean };
   profiles: Profile[];
   customs: Custom[];
   props: PropRow[];
@@ -47,6 +47,62 @@ const SCOPES: { value: Scope; key: string }[] = [
   { value: "customNames", key: "scopeCustomNames" },
   { value: "order", key: "scopeOrder" },
 ];
+
+/**
+ * **Un seul éditeur pour les deux familles de noms.** Un profil et une recette perso se renomment
+ * par la même trame à un octet de commande près (`0xA5` / `0xAB`), avec la même contrainte : 20
+ * caractères, et une icône obligatoire. Deux formulaires auraient divergé sur la borne.
+ */
+function Editeur({
+  edition, setEdition, busy, onEcrire, t, tc,
+}: {
+  edition: { kind: "profile" | "custom"; index: number; name: string; icon: string };
+  setEdition: (e: { kind: "profile" | "custom"; index: number; name: string; icon: string } | null) => void;
+  busy: boolean;
+  onEcrire: () => void;
+  t: (k: string, v?: Record<string, string | number>) => string;
+  tc: (k: string, v?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className="note">
+      <div className="row">
+        <div className="champBloc">
+          <label htmlFor={`nom-${edition.kind}-${edition.index}`}>{t("renameLabel")}</label>
+          <input
+            id={`nom-${edition.kind}-${edition.index}`}
+            className="champ"
+            value={edition.name}
+            maxLength={20}
+            onChange={(e) => setEdition({ ...edition, name: e.target.value })}
+            placeholder={t("renamePlaceholder")}
+          />
+        </div>
+        {/* L'icône est un numéro dans un jeu propre au modèle (`profile_icons_set`), pas une image
+            que nous saurions dessiner : on montre le nombre, et on dit d'où il vient. */}
+        <div className="champBloc">
+          <label htmlFor={`icone-${edition.kind}-${edition.index}`}>{t("iconLabel")}</label>
+          <input
+            id={`icone-${edition.kind}-${edition.index}`}
+            className="champ"
+            type="number"
+            min={0}
+            max={255}
+            value={edition.icon}
+            onChange={(e) => setEdition({ ...edition, icon: e.target.value })}
+          />
+        </div>
+      </div>
+      <div className="row">
+        <button className="iconBtn" disabled={busy || !edition.name.trim()} onClick={onEcrire}>
+          <Icone nom="ecrire" />
+          <span className="lbl">{t("renameWrite")}</span>
+        </button>
+        <button className="mini discret" disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</button>
+      </div>
+      <p className="legende">{t("renameNote")}</p>
+    </div>
+  );
+}
 
 export default function Profils() {
   const t = useTranslations("profiles");
@@ -118,6 +174,69 @@ export default function Profils() {
         body: JSON.stringify({ action: "selectProfile", profileId: id }),
       }).then((x) => x.json());
       rendre(r, t("activateSent", { label: r.program }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * **Renommer, et c'est le pendant d'une lecture qui existait déjà.** `/profils` lisait les noms
+   * de profils (`0xA4`) et de recettes perso (`0xAA`) sans jamais pouvoir en écrire un : la trame
+   * symétrique (`0xA5` / `0xAB`) n'était pas portée. Elle l'est.
+   *
+   * L'édition est ouverte sur UNE entrée à la fois (`edition`), et l'icône part avec le nom parce
+   * que la trame les porte ensemble — 20 octets de nom puis un octet d'icône. Laisser l'icône hors
+   * du formulaire aurait obligé à en deviner une, et la valeur devinée serait écrite pour de bon.
+   */
+  const [edition, setEdition] = useState<{ kind: "profile" | "custom"; index: number; name: string; icon: string } | null>(null);
+
+  const ecrireNom = async () => {
+    if (!edition) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await mfetch("/api/profiles/name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: edition.kind, index: edition.index, name: edition.name, icon: Number(edition.icon) }),
+      }).then((x) => x.json());
+      rendre(r, t("renameSent", { name: edition.name }));
+      if (!r.error) setEdition(null);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * **L'ordre des favoris s'écrit aussi.** La lecture (`0xA8`) alimentait déjà l'ordre des cartes
+   * de l'accueil ; l'écriture (`0xAD`) manquait. L'éditeur travaille sur une copie locale — rien
+   * ne part avant « Écrire », et « ↺ » revient à ce que la machine a dit.
+   */
+  const [favoris, setFavoris] = useState<{ profileId: number; ids: number[] } | null>(null);
+  const bouger = (i: number, d: -1 | 1) => {
+    setFavoris((f) => {
+      if (!f) return f;
+      const j = i + d;
+      if (j < 0 || j >= f.ids.length) return f;
+      const ids = [...f.ids];
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      return { ...f, ids };
+    });
+  };
+  const ecrireFavoris = async () => {
+    if (!favoris) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await mfetch("/api/profiles/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId: favoris.profileId, beverageIds: favoris.ids }),
+      }).then((x) => x.json());
+      rendre(r, t("favoritesSent", { id: favoris.profileId }));
+      if (!r.error) setFavoris(null);
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -266,11 +385,95 @@ export default function Profils() {
                     </div>
                   )}
                 </div>
-                <button className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
-                  <Icone nom="choisir" />
-                  <span className="lbl">{t("activate")}</span>
-                </button>
+                <div className="row">
+                  <button className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
+                    <Icone nom="choisir" />
+                    <span className="lbl">{t("activate")}</span>
+                  </button>
+                  {/* **Renommer n'est proposé que si le modèle le permet.** `profileNamesCustomizable`
+                      vient du catalogue extrait de l'APK : sur un modèle qui dit non, la trame
+                      partirait quand même et on ne sait pas ce qu'elle y ferait. */}
+                  {data.model.namesCustomizable !== false && (
+                    <button
+                      className="discret iconBtn"
+                      disabled={busy}
+                      onClick={() => setEdition(edition?.kind === "profile" && edition.index === p.id ? null : { kind: "profile", index: p.id, name: p.name ?? "", icon: String(p.icon ?? 0) })}
+                      title={t("renameTitle")}
+                    >
+                      <Icone nom="modifier" />
+                      <span className="lbl">{t("rename")}</span>
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {edition?.kind === "profile" && edition.index === p.id && (
+                <Editeur
+                  edition={edition}
+                  setEdition={setEdition}
+                  busy={busy}
+                  onEcrire={() =>
+                    demander({
+                      question: t("confirmRename", { name: edition.name, cible: tc("profileNumbered", { id: p.id }) }),
+                      detail: t("confirmRenameDetail"),
+                      onConfirm: () => void ecrireNom(),
+                    })
+                  }
+                  t={t}
+                  tc={tc}
+                />
+              )}
+
+              {/* **L'ordre des favoris, modifiable là où il est déjà affiché.** Il n'est proposé
+                  que s'il a été lu : réordonner une liste qu'on n'a pas encore reçue reviendrait à
+                  écrire un ordre inventé sur la machine. */}
+              {p.order && p.order.length > 0 && (
+                <>
+                  <button
+                    className="discret iconBtn"
+                    disabled={busy}
+                    onClick={() => setFavoris(favoris?.profileId === p.id ? null : { profileId: p.id, ids: p.order!.map((o) => o.id) })}
+                    title={t("favoritesTitle")}
+                  >
+                    <Icone nom="etoile" />
+                    <span className="lbl">{t("favorites")}</span>
+                  </button>
+                  {favoris?.profileId === p.id && (
+                    <div className="note">
+                      <ol className="listeFavoris">
+                        {favoris.ids.map((id, i) => (
+                          <li key={`${id}-${i}`}>
+                            <span>{p.order!.find((o) => o.id === id)?.label ?? `#${id}`}</span>
+                            <span className="row">
+                              <button className="mini discret" disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</button>
+                              <button className="mini discret" disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</button>
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                      <div className="row">
+                        <button
+                          className="iconBtn"
+                          disabled={busy}
+                          onClick={() =>
+                            demander({
+                              question: t("confirmFavorites", { id: p.id }),
+                              detail: t("confirmRenameDetail"),
+                              onConfirm: () => void ecrireFavoris(),
+                            })
+                          }
+                        >
+                          <Icone nom="ecrire" />
+                          <span className="lbl">{t("favoritesWrite")}</span>
+                        </button>
+                        <button className="mini discret" disabled={busy} onClick={() => setFavoris({ profileId: p.id, ids: p.order!.map((o) => o.id) })}>
+                          {t("favoritesReset")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ))}
           </div>
@@ -285,6 +488,7 @@ export default function Profils() {
                   <th>{t("machineName")}</th>
                   <th>{t("iconColumn")}</th>
                   <th>{t("beverageId")}</th>
+                  <th><span className="horsEcran">{t("rename")}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -294,11 +498,38 @@ export default function Profils() {
                     <td>{c.name ?? <span className="sub">{t("unnamed")}</span>}</td>
                     <td className="num">{c.icon ?? tc("dash")}</td>
                     <td className="num">{c.beverageId}</td>
+                    <td>
+                      <button
+                        className="discret iconBtn iconSeul"
+                        disabled={busy}
+                        onClick={() => setEdition(edition?.kind === "custom" && edition.index === c.slot ? null : { kind: "custom", index: c.slot, name: c.name ?? "", icon: String(c.icon ?? 0) })}
+                        aria-label={t("rename")}
+                        title={t("renameTitle")}
+                      >
+                        <Icone nom="modifier" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             </div>
+            {edition?.kind === "custom" && (
+              <Editeur
+                edition={edition}
+                setEdition={setEdition}
+                busy={busy}
+                onEcrire={() =>
+                  demander({
+                    question: t("confirmRename", { name: edition.name, cible: t("customSlot", { n: edition.index }) }),
+                    detail: t("confirmRenameDetail"),
+                    onConfirm: () => void ecrireNom(),
+                  })
+                }
+                t={t}
+                tc={tc}
+              />
+            )}
             <p className="note">
               {t("customsNote")}
             </p>

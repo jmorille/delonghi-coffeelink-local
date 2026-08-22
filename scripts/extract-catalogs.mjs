@@ -81,6 +81,26 @@ for (const m of src.machines) {
     globalTemperature: m.globalTemperature,
     characterSet: m.characterSet,
     profileIconsSet: m.profile_icons_set,
+    profileNamesCustomizable: m.profile_names_customizable,
+    profileIconsCustomizable: m.profile_icons_customizable,
+    /**
+     * **Les réglages machine que CE modèle expose.** Repris tels quels, nom compris : ce sont les
+     * drapeaux que `REGLAGES` (server.mjs) interroge avant de proposer — puis d'écrire — un
+     * réglage. Recopiés sous un autre nom, ils auraient formé une deuxième table à tenir à jour ;
+     * or celle-ci vient de l'APK et la nôtre est écrite à la main, donc c'est celle-ci qui doit
+     * gagner. Un modèle absent de la source laisse le drapeau `undefined`, ce que le serveur lit
+     * « non déclaré, donc on ne propose pas » — jamais « supporté par défaut ».
+     */
+    water_hardness_settings: m.water_hardness_settings,
+    auto_off_settings: m.auto_off_settings,
+    auto_start_settings: m.auto_start_settings,
+    buzzer_settings: m.buzzer_settings,
+    cup_light_settings: m.cup_light_settings,
+    cup_warmer_settings: m.cup_warmer_settings,
+    energy_saving_settings: m.energy_saving_settings,
+    filter_settings: m.filter_settings,
+    time_settings: m.time_settings,
+    pin_settings: m.pin_settings,
     support,
     // Les ids qui sortent de l'espace de noms vérifié, nommés : c'est ce qui justifie le verdict.
     unsupportedIds: hors,

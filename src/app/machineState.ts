@@ -25,6 +25,59 @@ export function stateLabel(state: number, t: Translator): string {
   return t("onUnknownState", { state: `0x${state.toString(16).padStart(2, "0")}` });
 }
 
+/**
+ * **L'étape d'une préparation en cours.** Le serveur envoie une clé de protocole (`etapeCle`,
+ * dérivée du couple fonction/étape des octets 9-10 du monitor) ou `null` quand le couple observé
+ * n'est nommé ni par la table de l'app ni par nos relevés. `null` n'est pas une erreur : cinq
+ * valeurs d'étape sur un espresso ne portent aucun nom connu, et l'app officielle y garde
+ * simplement l'illustration précédente. On dit « en cours » plutôt que d'inventer.
+ *
+ * Libellés dans l'espace de noms `power`, préfixés `step_`.
+ */
+export function stepLabel(cle: string | null, t: Translator): string {
+  return cle ? t(`step_${cle}`) : t("step_encours");
+}
+
+/**
+ * **L'âge d'une lecture, formaté une seule fois pour toute l'application.**
+ *
+ * Cette fonction vivait dans `page.tsx`, non exportée, alors que `/pilotage` affiche exactement le
+ * même fait sur sa ligne « État de la machine » : depuis combien de temps le monitor qu'on montre a
+ * été reçu. La recopier aurait produit deux barèmes qui divergent à la première retouche — et le
+ * seuil de 90 s n'est pas cosmétique, c'est lui qui décide quand un état cesse d'être présenté
+ * comme actuel. Il est ici, avec les libellés d'état qu'il accompagne.
+ *
+ * Les paliers : sous 90 s en secondes (on suit une machine qui répond), sous 90 min en minutes,
+ * au-delà en heures. Les libellés viennent de l'espace de noms `power`.
+ */
+export function fmtAge(sec: number, t: Translator): string {
+  if (sec < 90) return t("ageSeconds", { n: sec });
+  if (sec < 5400) return t("ageMinutes", { n: Math.round(sec / 60) });
+  return t("ageHours", { n: Math.round(sec / 3600) });
+}
+
+/** Au-delà, un état lu n'est plus présenté comme actuel. Même seuil sur `/` et sur `/pilotage`. */
+export const AGE_PERIME = 90;
+
+/**
+ * **La progression se périme BEAUCOUP plus vite que l'état, et le seuil est mesuré.**
+ *
+ * `AGE_PERIME` vaut 90 s parce qu'un état machine reste plausible longtemps : « prête » il y a une
+ * minute est encore une information. Une progression, non — pendant une préparation la machine
+ * pousse une trame toutes les 1 à 3 s, donc un pourcentage vieux de vingt secondes ne veut pas dire
+ * « ça avance lentement », il veut dire « on a perdu le contact ».
+ *
+ * Le défaut a été observé en vrai : la machine a quitté le réseau treize secondes après le départ
+ * d'une commande, et l'accueil a gardé « Mouture — 0 % » à l'écran, immobile. **Une barre figée est
+ * pire que pas de barre** : elle affirme qu'une préparation progresse alors qu'on ne sait plus rien.
+ *
+ * 20 s = 2,6 × le pire écart entre deux trames jamais relevé (7,6 s, sur trois préparations
+ * enregistrées dans `scripts/captures/`). `scripts/verif-monitor.mjs` vérifie que cette constante
+ * reste au-dessus du pire écart des captures : la resserrer sous la cadence réelle ferait
+ * clignoter la barre.
+ */
+export const AGE_PROGRESSION = 20;
+
 /** La classe de pastille correspondante. Chaîne vide = pastille neutre. */
 export function stateTone(state: number): "" | "on" | "info" {
   if (state === 0x04) return "";
