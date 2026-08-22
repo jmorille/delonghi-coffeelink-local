@@ -12,3 +12,9 @@ next-env.d.ts
 # Artefacts de travail du skill Impeccable (instantanes de critique, session du serveur
 # de previsualisation avec son jeton). Local, jamais publie.
 .impeccable/
+
+# Visuels de boissons extraits de l'APK par scripts/extract-images.mjs. Le dépôt transporte la
+# CORRESPONDANCE (src/lib/beverage-images.json, une table de noms dérivée par analyse), jamais les
+# images : elles appartiennent à De'Longhi, et lan-server est publié — image GHCR, archive de
+# release, dépôt public. Même règle que apk/ et decompiled/, dont elles sortent.
+public/boissons/

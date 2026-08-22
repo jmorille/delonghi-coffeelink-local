@@ -46,6 +46,59 @@ export const PORT_ATTENDU_PAR_APP = 80;
  * HTTP embarqué du SDK Android (NanoHTTPD) est aussi économe que celui de l'ESP32. `fetch`/undici
  * ajoute un `transfer-encoding` et des en-têtes que rien n'oblige ces serveurs à accepter.
  */
+/**
+ * Les codes réseau qui PROUVENT qu'il n'y a plus personne à l'écoute. `ETIMEDOUT` n'en est pas.
+ *
+ * La distinction est la justification même de l'éviction rapide : un port fermé répond non, et
+ * c'est un fait sur l'application ; un silence ne dit rien, le téléphone peut être verrouillé. Les
+ * confondre — ce que faisait le code, faute de code d'erreur porté jusqu'à l'appelant — évinçait en
+ * une douzaine de secondes une application qui s'était seulement tue. Mesuré sur la vraie
+ * application : sortie du registre en 16 s, revenue 9 s plus tard sur le MÊME port d'écoute.
+ */
+export const REFUS_RESEAU = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
+
+/**
+ * **Les statuts qui portent une charge chiffrée : `200` ET `206`.**
+ *
+ * ⚠️ Le `206` n'est pas une curiosité, c'est le cœur du protocole côté application, et le lire
+ * dans le SDK décompilé est la seule façon de le savoir :
+ *
+ * ```java
+ * private Status getResponseCode() {
+ *     return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+ * }
+ * ```
+ *
+ * Autrement dit **`206` veut dire « il me reste des commandes en file »** et `200` « c'était la
+ * dernière ». Les deux réponses portent la MÊME charge chiffrée — le statut ne qualifie pas le
+ * corps, il annonce la suite.
+ *
+ * Ne traiter que le `200` avait donc l'effet exactement inverse de l'intention : on jetait
+ * précisément les réponses qui transportaient une commande. Et jeter est ici irréparable, deux
+ * fois — le SDK retire la commande de sa file au moment où il la **chiffre**, sans réessai (voir
+ * `handleLanCommandRequest`), et le message chiffré qu'on n'a pas déchiffré laisse notre flux
+ * AES-CBC un message en arrière, donc tout ce qui suit est illisible.
+ *
+ * Mesuré en direct sur l'application officielle : `sonde commands.json — HTTP 206, 300 o — non
+ * déchiffré`, puis un bloc illisible finissant par `…ta":{}}`, et un allumage que l'appareil n'a
+ * jamais reçu alors que le téléphone journalisait `AylaDatapoint sent to SDK: 0d 07 84 0f 02 01`.
+ */
+export const STATUTS_AVEC_CHARGE = new Set([200, 206]);
+
+/** Pur, donc prouvable sans réseau : cette réponse transporte-t-elle quelque chose à déchiffrer ? */
+export const porteUneCharge = (status, corps) =>
+  STATUTS_AVEC_CHARGE.has(Number(status)) && String(corps ?? "").trim().length > 0;
+
+/**
+ * `206` : l'application dit qu'il lui en reste. Y retourner tout de suite plutôt qu'au prochain
+ * tour de sonde — un lot de dix commandes mettrait vingt secondes à arriver alors que
+ * l'utilisateur vient d'appuyer sur un bouton.
+ */
+export const encoreDesCommandes = (status) => Number(status) === 206;
+
+/** Pur, donc prouvable sans réseau : cette erreur est-elle un refus, ou seulement un silence ? */
+export const estRefus = (err) => REFUS_RESEAU.has(err?.code);
+
 export function httpJson({ ip, port, path, method = "POST", body = null, timeout = 5000 }) {
   return new Promise((resolve, reject) => {
     const buf = body == null ? null : Buffer.from(body, "utf8");
@@ -67,7 +120,17 @@ export function httpJson({ ip, port, path, method = "POST", body = null, timeout
         res.on("end", () => resolve({ status: res.statusCode, corps: Buffer.concat(morceaux).toString("utf8") }));
       },
     );
-    req.on("timeout", () => req.destroy(new Error("délai dépassé")));
+    // Le code d'erreur est PORTÉ, pas seulement le message : un délai dépassé et un refus de
+    // connexion n'ont pas la même valeur de preuve. Un port fermé répond non — c'est un fait sur
+    // l'application. Un silence ne dit rien : le téléphone peut être verrouillé. Sans ce code,
+    // l'appelant ne peut que les confondre, et l'éviction rapide conçue pour les refus frappait
+    // aussi les silences (constaté : une application déclarée injoignable en 16 s, revenue sur le
+    // MÊME port 9 s plus tard — elle n'était jamais partie).
+    req.on("timeout", () => {
+      const e = new Error("délai dépassé");
+      e.code = "ETIMEDOUT";
+      req.destroy(e);
+    });
     req.on("error", reject);
     if (buf) req.write(buf);
     req.end();
@@ -156,12 +219,89 @@ export function analyserCommandes(clair) {
   return out;
 }
 
-/** Le paquet `{properties:[…]}` qu'un appareil pousse vers une application. */
+/**
+ * **Le datapoint qu'un appareil pousse vers une application : un objet NU.**
+ *
+ * ⚠️ Même piège que l'accusé, et il était encore plus coûteux parce qu'il touchait *toutes* les
+ * rediffusions. `AylaLanModule.handlePropertyUpdateRequest` lit la charge à plat :
+ *
+ * ```java
+ * JSONObject jSONObject = new JSONObject(payload.data);
+ * String string = jSONObject.getString("name");
+ * Object obj    = jSONObject.get("value");
+ * String dsn    = jSONObject.optString("dsn", null);
+ * ```
+ *
+ * Enveloppé dans `{properties:[{property:…}]}`, `getString("name")` lève une `JSONException` :
+ * la propriété n'est jamais appliquée, la commande en attente reçoit un `JsonError`, et
+ * l'application répond **400 « Bad message JSON »**. Autrement dit, le cœur du multiplexeur —
+ * une lecture réelle, N destinataires — poussait depuis toujours des messages que personne ne
+ * pouvait lire. Le journal disait « état rediffusé » et c'était vrai ; ce qui manquait, c'est
+ * que rien n'arrivait de l'autre côté.
+ *
+ * `metadata` et `dev_time_ms` sont facultatifs (`JSONException` attrapée, `optInt`) ; `dsn` ne
+ * l'est pas tout à fait — quand il est là, le SDK s'en sert pour retrouver l'appareil visé.
+ */
 export function paquetDatapoint(dsn, name, value) {
-  return JSON.stringify({ properties: [{ property: { base_type: "string", name, value, dsn } }] });
+  return JSON.stringify({ name, value, dsn });
 }
 
-/** L'accusé qu'une application attend quand sa propriété portait un `id`. */
-export function paquetAck(dsn, id, status = 0) {
-  return JSON.stringify({ properties: [{ property: { dsn, id, ack_status: status, ack_message: 0 } }] });
+/**
+ * **L'URL qui apparie une poussée à la commande de lecture qui l'attendait.**
+ *
+ * `AylaLanModule.getCommand()` ne regarde ni le corps ni le chemin : il lit le paramètre d'URL
+ * `cmd_id`, et lui seul.
+ *
+ * ```java
+ * String str = (String) jVar.c().get("cmd_id");        // c() == getParms(), la query string
+ * AylaLanCommand queued = str != null ? getQueuedCommand(Integer.parseInt(str)) : null;
+ * if (queued == null) { AylaLog.d(…, "No matching command found in the queue"); return null; }
+ * ```
+ *
+ * Sans le paramètre, `command` vaut `null`, `setModuleResponse()` n'est jamais appelé, et la
+ * commande expire au bout de `getRequestTimeout()` — `defaultNetworkTimeoutMs`, **5 secondes**
+ * mesurées en direct : `E/LocalNetwork: Timed out waiting for command response:
+ * LanCmd[1]=property.json?name=d302_monitor`.
+ *
+ * Une poussée spontanée n'en porte pas, et c'est correct : `getCommand()` rend `null`, la
+ * propriété est appliquée quand même.
+ */
+export function cheminAvecCmd(chemin, cmdId) {
+  return cmdId === null || cmdId === undefined ? chemin : `${chemin}?cmd_id=${encodeURIComponent(cmdId)}`;
+}
+
+/**
+ * **Le chemin d'un accusé — et c'est l'URI qui en fait un accusé, rien d'autre.**
+ *
+ * Les deux routes tombent sur le même gestionnaire, qui tranche sur la fin du chemin :
+ *
+ * ```java
+ * return gVar.c().endsWith("ack.json")
+ *      ? lanModule.handleDatapointAck(gVar, map, jVar)
+ *      : lanModule.handlePropertyUpdateRequest(gVar, map, jVar);
+ * ```
+ *
+ * Un accusé posté sur `/property/datapoint.json` est donc lu comme une **écriture de
+ * propriété** : il ne dénoue rien, et l'application déclare la commande en échec au bout de son
+ * `_ackTimeout`. Symptôme vécu : la machine s'allume pour de bon, et le téléphone affiche que la
+ * connexion a échoué.
+ */
+export const CHEMIN_ACK = "/property/datapoint/ack.json";
+
+/**
+ * **L'accusé qu'une application attend quand sa propriété portait un `id`.** Trois détails, tous
+ * relevés dans `AylaLanModule.handleDatapointAck`, et chacun suffit à faire échouer la commande
+ * du point de vue de l'application alors que l'appareil, lui, a bien exécuté.
+ *
+ * 1. **La charge est l'objet NU**, pas un `{properties:[{property:…}]}`. Le SDK fait
+ *    `fromJson(payload.data, CreateDatapointAck.class)` : enveloppé, Gson ne trouve ni `id` ni
+ *    `ack_status`, l'identifiant sort `null`, aucune commande ne correspond, et l'application
+ *    lève `PreconditionError("Received ack for this device without a matching command")`.
+ * 2. **`ack_status` vaut `200`, pas `0`.** C'est un code HTTP réemployé comme statut applicatif :
+ *    `if (ack.ack_status == Status.OK.getRequestStatus())` → succès, **sinon** `ServerError(…,
+ *    "Datapoint NAK")`. Un `0` bien routé est donc lu comme un refus explicite.
+ * 3. Le chemin doit finir par `ack.json` — voir `CHEMIN_ACK`.
+ */
+export function paquetAck(dsn, id, status = 200) {
+  return JSON.stringify({ dsn, id, ack_status: status, ack_message: 0 });
 }

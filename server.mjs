@@ -17,7 +17,14 @@ import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
-import { CATEGORIES, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+// Le référentiel du protocole ECAM : la table des opérations, la lecture d'une trame sortante
+// (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
+// commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
+import {
+  TWO, argumentsTrame as argsEcam, cleFusion, constanteConnue, describeFrame, hexCmd,
+  natureTrame, opReponse, opTrame, profilVise,
+} from "./src/lib/ecam-args.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
@@ -26,6 +33,7 @@ import { makeLanSession, token } from "./src/lib/lansession.mjs";
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue as vueApps,
          cleApp, echouer, DELAI_APP_MUETTE, SEUIL_ECHECS } from "./src/lib/appregistry.mjs";
 import { httpJson, echangeClesVersApp, analyserCommandes, paquetDatapoint, paquetAck,
+         estRefus, porteUneCharge, encoreDesCommandes, CHEMIN_ACK, cheminAvecCmd,
          PORT_ATTENDU_PAR_APP } from "./src/lib/appproxy.mjs";
 // Persistance : SQLite (`data/lan-server.db`). Le module migre tout seul les anciens JSON au
 // premier démarrage. Chaque propriété reçue est UNE ligne réécrite, plus 80 ko de cache entier.
@@ -167,6 +175,44 @@ function L(dir, msg, m = null) {
 }
 
 /**
+ * Le journal des APPLICATIONS — le second, et il est séparé pour une raison de lecture.
+ *
+ * Une application branchée bavarde : elle se réannonce, elle sonde, et nous lui rediffusons
+ * chaque état que la machine pousse. Versé dans le journal principal, ce trafic en chasse en
+ * quelques secondes ce qu'on vient y chercher — ce que la cafetière, elle, a répondu.
+ *
+ * **La frontière : le journal principal garde ce qui ATTEINT l'appareil, celui-ci garde la
+ * conversation avec les téléphones.** Une commande relayée paraît donc des deux côtés, sous
+ * deux angles : ici « a1 a demandé ceci », là-bas « la tâche part vers la machine ». Ce n'est
+ * pas une redite : la première ligne dit qui a voulu, la seconde dit ce qu'il en est advenu.
+ *
+ * Mêmes règles que `L()`, et pour les mêmes raisons : repli des lignes consécutives identiques
+ * — le compte survit dans `repetitions` et ne doit jamais se perdre au rendu — et `sseTouch()`,
+ * sans quoi la page ne saurait pas qu'il y a du neuf. Une différence : l'identifiant de
+ * l'application est une COLONNE, pas un préfixe de message, ce qui permet de suivre un
+ * téléphone parmi trois. `app` accepte une entrée du registre ou une simple adresse, parce que
+ * les refus arrivent avant qu'une entrée existe — et ce sont eux qu'on veut le plus voir.
+ */
+const LOG_APPS = [];
+let logAppSeq = 0;
+function LA(dir, msg, app = null, m = null) {
+  const qui = app?.id ?? app ?? null;
+  const tete = LOG_APPS[0];
+  if (tete && tete.msg === msg && tete.dir === dir && tete.app === qui) {
+    tete.repetitions = (tete.repetitions ?? 1) + 1;
+    tete.t = Date.now();
+    tete.n = ++logAppSeq;
+    sseTouch();
+    console.log(now(), "APP", `${qui ?? "?"} · ${msg} (×${tete.repetitions})`);
+    return;
+  }
+  LOG_APPS.unshift({ n: ++logAppSeq, t: Date.now(), dir, msg, app: qui, m: m?.id ?? null });
+  if (LOG_APPS.length > 200) LOG_APPS.pop();
+  sseTouch();
+  console.log(now(), "APP", `${qui ?? "?"} · ${msg}`);
+}
+
+/**
  * État d'exécution d'UNE machine. Tout ce qui était un singleton de processus vit ici : la
  * session chiffrée, le programme en cours, la file de lecture, le dernier monitor, le profil
  * actif. Deux cafetières ont deux sessions et deux files — les confondre enverrait la commande
@@ -244,6 +290,23 @@ function makeMachine(row) {
     /** Compteur de visites de commands.json, pour la chorégraphie `device_connected`. */
     visites: 0,
     cmdId: 0,
+    /**
+     * **La dernière valeur BRUTE de chaque propriété, telle que la machine l'a poussée.**
+     *
+     * Ni décodée ni interprétée : c'est ce qu'on redonne à une application qui la demande, et
+     * une valeur qu'on ne sait pas décoder doit pouvoir être servie comme les autres.
+     *
+     * Elle existe parce que la lecture d'une application a **5 secondes** pour être servie
+     * (`defaultNetworkTimeoutMs`), là où un aller-retour vers la cafetière en demande
+     * facilement le double : la machine ne vient chercher qu'une commande par visite, et elle
+     * ne visite que toutes les 2,5 s. Répondre depuis ce cache n'est donc pas une optimisation,
+     * c'est la seule façon de répondre à temps — et c'est exactement la promesse du
+     * multiplexeur : **une lecture réelle, N destinataires.**
+     *
+     * En mémoire seulement, bornée par le nombre de propriétés distinctes (~60). Un redémarrage
+     * la vide, ce qui ne coûte qu'une lecture réelle de plus.
+     */
+    dernieresValeurs: new Map(),
     lastMonitor: null,
     lastDataResponse: null,
     lastRegisterAt: 0,
@@ -474,6 +537,26 @@ const frameChecksums = () => seal([0x0d, 0x05, 0xa3, 0xf0, 0, 0]);
 // V(data2) : demande du monitor. Trame de LECTURE, sans aucun effet de bord — c'est ce qu'il
 // faut pour tenir la présence, contrairement à 0xA9 qui sélectionne un profil.
 const frameMonitorRequest = () => seal([0x0d, 0x05, 0x75, 0x0f, 0, 0]);
+
+/**
+ * Échéance d'un pas « Présence », et elle ne peut PAS valoir `DELAIS.reponse`.
+ *
+ * `0x75` ne rend aucun `data_response` : il est satisfait par la prochaine poussée périodique de
+ * `d302_monitor`. Or cette poussée a une **cadence mesurée de 12 à 13 secondes** (12,4 s le
+ * 2026-08-22 : 16:36:42,297 puis 16:36:54,740 ; et 13 s, 12 s, 13 s sur les relevés précédents),
+ * c'est-à-dire exactement l'échéance de 12 s qu'on lui opposait. La réussite se jouait donc à
+ * l'endroit où la demande tombait dans le cycle de la machine — un tirage au sort, gagné ce jour-là
+ * avec 1,7 s de marge, perdu les fois d'avant.
+ *
+ * Le contraste avec `0xA2` dit tout : une lecture de statistiques répond dans la **même seconde**,
+ * parce qu'elle rend un vrai `data_response`. Les deux ne sont pas de la même famille, et leur
+ * donner la même échéance revenait à traiter une attente d'horloge comme une attente de réponse.
+ *
+ * Même raisonnement que `AGE_PROGRESSION`, qui est tenu strictement au-dessus du pire écart mesuré
+ * entre deux trames : une échéance sous la cadence réelle ne mesure pas une panne, elle en fabrique.
+ * 30 s laisse plus de deux cycles, et c'est aussi le plafond que `startProgram` s'autorise.
+ */
+const DELAI_PRESENCE = 30000;
 // U(index) « BEAN_SYSTEM_READ » : seule source du NOM d'un profil Bean Adapt.
 const frameBeanSystem = (index) => seal([0x0d, 0x06, 0xba, 0xf0, index & 0xff, 0, 0]);
 /**
@@ -594,7 +677,8 @@ function frameBeanSystemSave(id, name, grinder, temperature, aroma, visible = tr
   bytes[49] = visible ? 1 : 0;
   return seal(bytes);
 }
-const TWO = new Set([1, 9, 15]);
+// `TWO` vit maintenant dans `ecam-args.mjs` : le constructeur ci-dessous et le décodeur DOIVENT
+// lire la même table, un décalage d'un octet entre eux ne lèverait aucune erreur.
 function frameDispense(bev, prof, mode, action, params, check = false) {
   const body = [];
   for (const p of params) { body.push(p.id & 0xff); if (TWO.has(p.id)) body.push((p.value >> 8) & 0xff, p.value & 0xff); else body.push(p.value & 0xff); }
@@ -799,41 +883,6 @@ function prochainePaquet(m) {
 }
 
 /**
- * Opérations ECAM, par octet de commande. Sert à **nommer** ce qu'un programme fait dans le
- * journal : « 0x83 » ne dit rien à la relecture, « préparation ou enregistrement de recette » si.
- *
- * La nature — lecture ou action — est ce qui compte le plus au moment où l'on cherche pourquoi une
- * machine a fait quelque chose : une lecture n'a aucun effet physique, une action en a un.
- */
-const ECAM_OPS = {
-  // `nature` est le VERBE, `nom` l'objet : les deux se lisent à la suite (« lecture · monitor »).
-  // Les mettre tous les deux au complet donnait « lecture lecture d'un profil de grains ».
-  0x75: { nature: "lecture", nom: "monitor" },
-  // 0x83 est affiné par son octet de mode : voir `describeFrame`. La distinction compte — le même
-  // octet de commande sert à préparer une boisson, à arrêter, et à ÉCRIRE une recette dans un profil.
-  0x83: { nature: "action", nom: "recette" },
-  0x84: { nature: "action", nom: "marche / arrêt" },
-  0xa2: { nature: "lecture", nom: "paramètres et compteurs" },
-  0xa3: { nature: "lecture", nom: "sommes de contrôle" },
-  0xa6: { nature: "lecture", nom: "recette d'un profil" },
-  0xa9: { nature: "action", nom: "sélection de profil" },
-  0xb0: { nature: "lecture", nom: "bornes d'une recette" },
-  0xb9: { nature: "action", nom: "sélection du grain actif" },
-  0xba: { nature: "lecture", nom: "profil de grains" },
-  // Les écritures persistantes de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
-  0xbb: { nature: "écriture", nom: "profil de grains" },
-  0x90: { nature: "écriture", nom: "réglage machine" },
-  0xa5: { nature: "écriture", nom: "noms de profils" },
-  0xab: { nature: "écriture", nom: "noms de recettes perso" },
-  0xad: { nature: "écriture", nom: "ordre des favoris" },
-  // `0x95` lit un réglage machine — pendant exact de l'écriture `0x90`.
-  0x95: { nature: "lecture", nom: "réglage machine" },
-  // Les deux autres modes de monitor. Nature « lecture » : ils attendent une réponse, comme 0x75.
-  0x60: { nature: "lecture", nom: "monitor mode 0" },
-  0x70: { nature: "lecture", nom: "monitor mode 1" },
-};
-
-/**
  * **Les réglages machine, par adresse** — relevés dans le view-model de l'app
  * (`p018b7/d.java`), où chaque écran de configuration appelle `readParameter(addr, 1)` puis
  * `writeParameter(addr, valeur)`.
@@ -889,77 +938,81 @@ function reglageProp(m, r) {
 }
 
 /**
- * Décrit la trame qu'on est en train d'envoyer : opération, nature, et octets.
- *
- * `ecamB64` porte la trame **suivie de 4 octets d'horodatage** (voir `datapointValue`) : on les
- * retire, sinon le journal afficherait quatre octets qui n'appartiennent pas à la commande.
+ * Les arguments d'une trame, en clair. Le décodage vit dans `src/lib/ecam-args.mjs`, **pur et
+ * vérifié en CI** ; ici on ne fournit que ce qui n'est pas du protocole : le nom d'une boisson
+ * pour CETTE machine — un nom tapé sur l'appareil prime sur le libellé du catalogue — et le nom
+ * d'un réglage. Les deux dépendent de l'état, le décodeur ne doit pas les connaître.
  */
-/**
- * L'opération que porte une trame — extrait de `describeFrame`, parce que deux choses en ont
- * besoin : le journal, pour la nommer, et l'ordonnanceur, pour savoir si la machine RÉPONDRA.
- * Une seule table, un seul endroit où `0x83` est affiné par son mode.
- */
-function opTrame(ecamB64) {
-  const buf = Buffer.from(ecamB64, "base64");
-  const trame = buf.subarray(0, Math.max(0, buf.length - 4));
-  const cmd = trame[2];
-  // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
-  // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
-  if (cmd === 0x83) {
-    const mode = trame[5] & 0x7f;
-    const op =
-      mode === 0x00
-        ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
-        : mode === 0x02
-          ? { nature: "action", nom: "arrêt de la préparation" }
-          : { nature: "action", nom: "préparation d'une boisson" };
-    return { cmd, op, trame };
-  }
-  return { cmd, op: ECAM_OPS[cmd], trame };
+function argumentsTrame(m, ecamB64) {
+  let t;
+  try { t = opTrame(ecamB64).trame; } catch { return null; }
+  return argsEcam(t, {
+    boisson: (id) => machineBeverageNames(m.store.machineView())[id]?.name ?? m.catalog.byId(id)?.label ?? `boisson ${id}`,
+    reglage: nomReglage,
+    params: PARAMS,
+  });
+}
+/** L'adresse d'un réglage machine, nommée quand `REGLAGES` la connaît. Sinon le nombre, nu. */
+function nomReglage(addr) {
+  const r = REGLAGES.find((x) => x.addr === addr);
+  return r ? `réglage ${r.cle} (${addr})` : `réglage ${addr}`;
 }
 
 /**
- * « lecture », « action » ou « écriture ». C'est ce qui décide si le pas attend un `data_response`
- * ou seulement une fenêtre de présence — voir `startProgram`. Une trame illisible est traitée comme
- * une action : c'est le choix prudent, il fait tenir la présence au lieu d'attendre une réponse qui
- * ne viendra peut-être jamais.
+ * La description complète d'une commande relayée : opération, **arguments**, puis octets.
+ *
+ * Cet ordre est le propos. `describeFrame` termine par la trame, ce qui convient à une ligne de
+ * file où l'on cherche l'opération ; ici on lit d'abord la question qu'on se pose devant une
+ * commande venue d'un tiers — *quelle boisson, quel profil, quels réglages* — et les octets
+ * viennent après, pour vérifier ou pour rétro-concevoir. Ils ne disparaissent jamais : c'est la
+ * seule trace exploitable d'une trame que nous ne saurions pas encore décoder.
+ *
+ * `octets: false` rend la forme courte — l'opération et ses arguments, sans les octets. C'est ce
+ * qu'un libellé de tâche demande : le panneau « Activité » dit ce qui part vers la machine, il
+ * n'est pas un dumper d'octets, et ceux-ci sont de toute façon dans les deux journaux.
  */
-function natureTrame(ecamB64) {
-  try { return opTrame(ecamB64).op?.nature ?? "action"; } catch { return "action"; }
-}
-
-function describeFrame(ecamB64) {
-  try {
-    const { cmd, op, trame } = opTrame(ecamB64);
-    const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
-    return `${op ? `${op.nature} · ${op.nom}` : "opération inconnue"} (0x${(cmd ?? 0).toString(16).padStart(2, "0")}) · trame ${hex}`;
-  } catch {
-    return "trame illisible";
-  }
+function decrireCommande(m, ecamB64, { octets = true } = {}) {
+  const base = describeFrame(ecamB64, { octets });
+  let args = null;
+  try { args = argumentsTrame(m, ecamB64); } catch { /* décodage douteux : la trame suffit */ }
+  if (!args) return base;
+  // On réinsère avant « · trame … » plutôt que d'ajouter à la fin.
+  const i = base.lastIndexOf(" · trame ");
+  return i < 0 ? `${base} · ${args}` : `${base.slice(0, i)} · ${args}${base.slice(i)}`;
 }
 
 /**
- * Le profil que vise une trame, ou `null` si elle n'en vise aucun.
+ * La charge d'une écriture, **telle quelle** : hexadécimal complet et base64 d'origine.
  *
- * Existe pour le multiplexeur, et pour une raison concrète : la **toute première** commande qu'une
- * application officielle nous a relayée était `0D 06 A9 F0 01 …` — une sélection de profil. L'app
- * impose son profil courant à l'appareil dès l'ouverture de session, et ce profil vient d'une
- * préférence stockée dans le téléphone, avec 1 par défaut. Sans cette lecture, une application qui
- * se branche déplace le profil actif de la machine **et notre interface continue d'annoncer
- * l'ancien** — exactement ce que la règle « toute commande qui vise un profil doit poser
- * `m.activeProfile` » existe pour empêcher.
+ * Sert au journal des applications, et pour une raison de méthode. `describeFrame()` est un outil
+ * de lecture : il nomme l'opération et **retire les 4 octets d'horodatage** parce que ce ne sont
+ * pas des octets de commande. C'est le bon choix quand on sait ce qu'on regarde. Ça devient le
+ * mauvais dès qu'on ne sait pas : un outil qui a déjà décidé quoi jeter ne peut plus rien
+ * apprendre, et ce projet s'est déjà fait prendre — voir `/regtoken.json`, où reconstruire la
+ * réponse « évidente » revenait à parier sur une liste de champs qu'on ne connaissait pas.
  *
- * Deux dispositions, relevées dans les constructeurs de trames de ce fichier :
- * - `0xA9` : `0D 06 A9 F0 <profil> <crc>` — le profil est en clair à l'octet 4 ;
- * - `0x83` : le profil est encodé `(profil << 2) | action` dans le dernier octet avant le CRC.
+ * Donc ici : aucun retrait, aucune interprétation. Les deux formes parce qu'elles ne servent pas à
+ * la même chose — l'hexadécimal se lit et se compare aux tables de `doc/commandes-cafe.md`, le
+ * base64 se recolle tel quel dans un test ou un rejeu. Borné, parce qu'une ligne de journal reste
+ * une ligne de journal ; la coupe est DITE plutôt que silencieuse.
  */
-function profilVise(ecamB64) {
-  try {
-    const { cmd, trame } = opTrame(ecamB64);
-    if (cmd === 0xa9) return trame[4] ?? null;
-    if (cmd === 0x83) return (trame[trame.length - 3] ?? 0) >> 2;
-  } catch { /* trame illisible : aucun profil à en tirer */ }
-  return null;
+function chargeBrute(valeur, max = 120) {
+  const v = String(valeur ?? "");
+  if (!v) return "charge vide";
+  const coupe = (s) => (s.length > max ? `${s.slice(0, max)}…` : s);
+  // ⚠️ Tester AVANT de décoder, parce que `Buffer.from(x, "base64")` ne lève jamais : il ignore
+  // silencieusement ce qui n'est pas du base64 et rend des octets qui ont l'air de quelque chose.
+  // Relevé en direct sur la vraie application, qui écrit `device_connected = 1787407876` — un
+  // horodatage unix en clair — et que cette fonction affichait « brut d7 bf 3b e3 4e fc ef ».
+  // Sept octets inventés là où la valeur était lisible telle quelle : le contraire exact de ce
+  // qu'un journal de rétro-ingénierie doit faire. Toutes les propriétés Ayla ne portent pas du
+  // base64 ; celle qui porte les trames ECAM, oui, et c'est ce qui rendait le piège invisible.
+  const semblebase64 = v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
+  if (!semblebase64) return `valeur ${coupe(v)}`;
+  const buf = Buffer.from(v, "base64");
+  let hex = buf.subarray(0, max).toString("hex").replace(/(..)/g, "$1 ").trim();
+  if (buf.length > max) hex += ` … (+${buf.length - max} octets)`;
+  return `brut ${hex} · b64 ${coupe(v)}`;
 }
 
 /**
@@ -974,15 +1027,19 @@ function profilVise(ecamB64) {
  * - une trame qui **agit** (`0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`) n'a rien à répondre :
  *   `durationMs` reste la durée de présence soutenue, et l'atteindre est un SUCCÈS.
  *
- * La nature se déduit de la table `ECAM_OPS` que `describeFrame` exploite déjà : aucun site d'appel
+ * La nature se déduit de la table `ECAM_OPS` de `src/lib/ecam-args.mjs` : aucun site d'appel
  * n'a à trancher, et il n'y a pas de deuxième table à tenir à jour.
  */
 function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
   const lecture = natureTrame(ecamB64) === "lecture";
+  // La commande ECAM voyage avec le pas : c'est elle qui permet d'apparier étroitement la réponse.
+  // Voir `reponse()` dans `tasks.mjs` — une poussée de monitor ne doit valider qu'un pas qui a
+  // justement demandé un monitor, jamais une lecture de statistiques en attente.
+  const cmd = (() => { try { return opTrame(ecamB64).cmd ?? null; } catch { return null; } })();
   const pas = [pasTrame(label, ecamB64, lecture
-    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain }
-    : { attente: "fenetre", ms: durationMs, sustain })];
-  return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
+    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain, cmd }
+    : { attente: "fenetre", ms: durationMs, sustain, cmd })];
+  return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${decrireCommande(m, ecamB64)} · présence ${sustain}`);
 }
 
 /** Met une LECTURE de propriétés Ayla en file : une tâche, un pas par propriété. */
@@ -1142,7 +1199,23 @@ async function handleLan(req, res) {
     // Mémorisé pour les deux autres endpoints, qui ne portent pas de `key_id`.
     m.peerIp = peerAddress(req);
     const t2 = Date.now();
+    const rouverte = !!m.session;
     m.session = makeSession(m, kx, String(t2));
+    // ⚠️ **La seule chose que ce serveur faisait sans l'écrire — et c'était la plus visible.**
+    //
+    // Deux conséquences, la seconde bien pire que la première. Le journal ne portait aucune
+    // trace de l'ouverture d'une session LAN : l'évènement le plus structurant de la liaison
+    // était le seul intraçable. Et surtout, `sseTouch()` est branché sur `L()` — c'est tout le
+    // principe : un changement d'état passe par le journal, donc les navigateurs l'apprennent.
+    // Ne rien journaliser ici, c'est ne rien pousser : `/pilotage` restait sur « session LAN :
+    // en attente » alors que `/api/status` répondait `active: true` depuis l'échange de clés.
+    // Un rechargement de page corrigeait l'affichage, ce qui faisait passer un vrai trou pour
+    // un caprice du navigateur.
+    //
+    // Aucun risque d'inonder le journal : une session s'ouvre une fois, pas toutes les deux
+    // secondes — et si elle se rouvre en boucle, c'est précisément ce qu'il faut voir. Le repli
+    // des lignes identiques de `L()` s'en charge, avec son compte.
+    L("in", `session LAN ${rouverte ? "rouverte" : "établie"} (key_id ${m.lanKeyId})`, m);
     return raw(res, JSON.stringify({ random_2: m.session.random2, time_2: t2 }));
   }
   const m = machineByPeer(req);
@@ -1245,12 +1318,12 @@ async function ouvrirSessionApp(m, app) {
     });
     const session = makeLanSession({ lanKey: m.lanKey, random1, random2, time1, time2, role: "device" });
     etablir(PROXY.registre, app, session, Date.now());
-    L("out", `app ${app.id} (${app.ip}:${app.port}) : session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, m);
+    LA("out", `session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, app, m);
     armerSondeApp(m, app);
   } catch (e) {
     app.dernierMotif = "echecEchange";
     refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
-    L("out", `app ${app.id} (${app.ip}:${app.port}) : échange de clés échoué — ${e.message}`, m);
+    LA("out", `échange de clés échoué — ${e.message}`, app, m);
   }
 }
 
@@ -1284,38 +1357,124 @@ function desarmerSondeApp(app) {
  * désynchronisé de quelques octets. Le symptôme est trompeur — il ressemble à une charge utile
  * inattendue alors que c'est notre propre concurrence qui a brouillé le déchiffrement.
  */
+/** Combien de blocs on accepte d'enchaîner sur un même passage. Voir `sonderApp`. */
+const MAX_BLOCS_ENCHAINES = 12;
+
+/**
+ * **En deçà, une lecture d'application est servie depuis le cache sans redemander à la machine.**
+ *
+ * C'est la promesse du multiplexeur mise en chiffre : deux applications qui interrogent le
+ * monitor à trois secondes d'intervalle valent **une** lecture réelle, pas deux. La vraie
+ * application sonde `d302_monitor` sans relâche — soixante-douze demandes en deux secondes ont
+ * été relevées — et sans ce seuil chacune mettrait une tâche en file.
+ *
+ * La valeur est servie dans tous les cas : au-delà du seuil on répond quand même avec ce qu'on
+ * a, et on demande un rafraîchissement en plus. Attendre la machine pour répondre reviendrait à
+ * ne pas répondre, ses 5 secondes d'attente étant plus courtes que notre aller-retour.
+ */
+const FRAICHEUR_LECTURE_APP = 10000;
+
 async function sonderApp(m, app) {
   if (app.etat !== "etablie" || !app.session) return;
   if (app.sondeEnCours) return;
   app.sondeEnCours = true;
   try {
-    await sonderAppSerialise(m, app);
+    // On enchaîne tant que l'application répond 206 (« il en reste »), sans jamais lâcher le
+    // verrou : deux sondes concurrentes déchiffreraient deux blocs du MÊME flux AES-CBC dans un
+    // ordre non garanti, ce qui est le défaut que ce verrou existe pour empêcher.
+    for (let i = 0; i < MAX_BLOCS_ENCHAINES; i++) {
+      if (app.etat !== "etablie" || !app.session) break;
+      if (!(await sonderAppSerialise(m, app))) break;
+    }
   } finally {
     app.sondeEnCours = false;
   }
+}
+
+/**
+ * **Ce que la sonde a rapporté, dit une fois par CHANGEMENT — jamais une fois par sonde.**
+ *
+ * L'angle mort était total : quatorze sondes en vingt-huit secondes, et pas une ligne. On ne
+ * pouvait donc ni prouver que la boucle tournait, ni voir ce que l'application répondait, ni
+ * situer le moment où un bloc s'est perdu. Or c'est exactement ce qu'on cherche quand une
+ * commande envoyée par le téléphone n'arrive jamais jusqu'ici.
+ *
+ * Journaliser chaque sonde noierait tout : elle bat toutes les 2 s. On ne journalise donc que
+ * la **transition** — statut HTTP, taille du corps, et la forme de ce qu'on en a tiré. Une file
+ * vide se dit une fois et se tait ; la sonde où quelque chose change se voit immédiatement.
+ */
+function noterSondage(m, app, etat) {
+  if (etat === app.dernierSondage) return;
+  app.dernierSondage = etat;
+  LA("out", `sonde commands.json — ${etat}`, app, m);
 }
 
 async function sonderAppSerialise(m, app) {
   let rep;
   try {
     rep = await httpJson({ ip: app.ip, port: app.port, path: `${app.uri}/commands.json`, method: "GET", timeout: 4000 });
-  } catch {
+  } catch (e) {
     // Une application qui ne répond plus n'est pas une erreur à journaliser toutes les deux
-    // secondes : c'est un téléphone verrouillé — mais au bout de quelques refus d'affilée,
+    // secondes : c'est un téléphone verrouillé — mais au bout de quelques REFUS d'affilée,
     // c'est un port fermé, et l'entrée doit partir sans attendre `DELAI_APP_MUETTE`.
-    constaterEchecApp(m, app);
-    return;
+    constaterEchecApp(m, app, e);
+    // ⚠️ **Un délai dépassé n'est pas un silence : c'est un flux DOUTEUX.** La requête a pu
+    // atteindre le téléphone, qui a alors produit ET CHIFFRÉ sa réponse — son flux sortant a
+    // avancé, le nôtre non. Le dégât est BORNÉ — un message sauté n'abîme que les 16 premiers
+    // octets du prochain message lu, après quoi le flux se recale seul (`verif-lansession.mjs`
+    // le prouve) — mais ce qui ne revient pas, c'est la COMMANDE que ce message portait : le SDK
+    // l'a retirée de sa file en la chiffrant. Rouvrir ne répare donc rien de perdu ; cela évite
+    // seulement le bloc illisible qui suivrait, et cela ne coûte qu'un échange de clés, qui ne
+    // touche pas la cafetière. Le verrou de 15 s empêche l'emballement si le téléphone est lent.
+    if (e?.code === "ETIMEDOUT") relancerSessionApp(m, app, "sonde expirée, réponse peut-être perdue");
+    return false;
   }
-  if (rep.status !== 200 || !rep.corps.trim()) return;
+  // ⚠️⚠️ **`206` EST une réponse normale, et la jeter perdait la commande.** Relevé dans
+  // `AylaLanModule.getResponseCode()` :
+  //
+  //     return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+  //
+  // C'est-à-dire : **206 quand il RESTE des commandes après celle-ci**, 200 quand la file vient
+  // de se vider. Le corps est identique dans les deux cas — un bloc chiffré parfaitement valide.
+  // Notre test `!== 200` en faisait donc une erreur, et le silence coûtait double, parce que le
+  // SDK a déjà retiré la commande de sa file au moment où il l'a CHIFFRÉE (voir
+  // `handleLanCommandRequest`) : la commande est perdue **définitivement**, et notre flux a un
+  // message de retard.
+  //
+  // C'est exactement ce qui empêchait l'allumage depuis l'application officielle. Elle empile le
+  // `0x84` puis, une milliseconde plus tard, tout un lot d'alarmes : dès qu'il y a deux commandes
+  // en file, la première revient en 206 — et partait à la poubelle sans une ligne de journal.
+  // La règle vit dans `appproxy.mjs`, avec sa justification et sa preuve en CI. La redire ici
+  // ferait deux copies d'une règle de protocole, qui divergeraient au premier ajout sans rien
+  // lever — et celle-ci a coûté des jours.
+  if (!porteUneCharge(rep.status, rep.corps)) {
+    // Ce retour saute le déchiffrement, donc il peut encore perdre un message : le dire est le
+    // minimum. C'était jusqu'ici une sortie muette, et c'est ce qui a rendu le défaut ci-dessus
+    // invisible pendant des jours.
+    noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — non déchiffré`);
+    return false;
+  }
   toucher(app, Date.now());
   let clair;
   try {
     clair = app.session.decapsulate(JSON.parse(rep.corps));
   } catch (e) {
-    L("in", `app ${app.id} : bloc de commandes illisible (${e.message})`, m);
-    return;
+    // Même cause que le cas `illisible` plus bas — un flux perdu — mais détectée un cran plus
+    // tôt, quand c'est le déchiffrement lui-même qui refuse (remplissage invalide). On
+    // journalisait et on repartait sonder sans jamais rouvrir la session.
+    noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — indéchiffrable`);
+    LA("in", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
+    relancerSessionApp(m, app, "déchiffrement refusé");
+    return false;
   }
-  for (const intention of analyserCommandes(clair)) await executerPourApp(m, app, intention);
+  const intentions = analyserCommandes(clair);
+  noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — ${intentions.map((i) => i.type).join(", ")}`);
+  for (const intention of intentions) await executerPourApp(m, app, intention);
+  // `206` dit « il en reste » : on repasse tout de suite au lieu d'attendre le prochain tour de
+  // sonde. Sans cela un lot de dix commandes met vingt secondes à arriver, alors que
+  // l'utilisateur, lui, vient d'appuyer sur un bouton. Borné pour ne pas transformer une
+  // application bavarde en boucle serrée : au-delà, la sonde périodique reprend la main.
+  return encoreDesCommandes(rep.status);
 }
 
 /**
@@ -1332,17 +1491,77 @@ async function sonderAppSerialise(m, app) {
  * qu'elles ne se marchent pas dessus — ce que le créneau unique de la machine, lui, ne garantit
  * pas du tout.
  */
+/**
+ * **L'accusé est dû dès que la propriété porte un `id`, que nous la relayions ou non.**
+ *
+ * Il dit « reçu », pas « exécuté » : c'est un accusé de transport. Le confondre avec une
+ * validation métier — et donc ne l'envoyer que pour les propriétés qu'on relaie — laisse
+ * l'application attendre un message qui ne viendra jamais, puis conclure à un échec.
+ *
+ * Relevé en direct : la vraie application ouvre CHAQUE session en écrivant `device_connected`,
+ * une propriété que nous n'avons aucune raison de relayer à la cafetière — et nous sortions
+ * par le `return` de la branche « ignorée » sans jamais accuser. Du point de vue du téléphone,
+ * la machine à qui il vient de se présenter ne répond pas ; il ne va donc pas plus loin, et
+ * aucune commande ne part. Le registre le montrait sans qu'on sache le lire : session établie,
+ * datapoints reçus, et `commandes = 0` pendant toute la vie de l'entrée.
+ */
+async function accuserSiDemande(m, app, intention) {
+  if (!intention.ackId) return false;
+  // Le retour est celui de l'ENVOI, pas de l'intention : dire « accusée » sur une poussée qui a
+  // échoué journaliserait le contraire de ce qui s'est produit.
+  return pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId), CHEMIN_ACK);
+}
+
 async function executerPourApp(m, app, intention) {
   switch (intention.type) {
     case "vide":
       return;
     case "finSession":
-      L("in", `app ${app.id} : fin de session demandée`, m);
+      LA("in", "fin de session demandée", app, m);
       retirerApp(app, m, "départ");
       return;
     case "lecture": {
       app.commandes++;
-      L("in", `app ${app.id} → lecture ${intention.nom}`, m);
+      // ⚠️ **Une lecture se dénoue par une POUSSÉE de notre part, pas par la réponse HTTP.** Le
+      // SDK garde la commande dans `_commandsPendingResponses` et n'y rattache un datapoint que
+      // par le `cmd_id` de l'URL. On retient donc l'identifiant tout de suite : qu'on réponde
+      // depuis le cache maintenant ou que la machine pousse dans dix secondes, l'appariement
+      // aura lieu. Sans cela, l'application redemandait sans fin — `lecture d302_monitor (×72)`
+      // au journal n'était pas soixante-douze demandes, c'était une demande réessayée.
+      app.lectures.set(intention.nom, intention.cmdId);
+      const connue = m.dernieresValeurs.get(intention.nom) ?? null;
+      const fraiche = !!connue && Date.now() - connue.at < FRAICHEUR_LECTURE_APP;
+      const dit = connue ? (fraiche ? " · servie du cache" : " · servie du cache, rafraîchissement demandé")
+                         : " · valeur inconnue, demandée à la machine";
+      LA("in", `lecture ${intention.nom}${dit}`, app, m);
+      if (connue) {
+        // Servie AVANT de mettre quoi que ce soit en file : les 5 secondes de l'application
+        // courent déjà, et notre file, elle, peut être occupée par une préparation.
+        app.lectures.delete(intention.nom);
+        pousserVersApp(m, app, paquetDatapoint(m.dsn ?? "", intention.nom, connue.valeur),
+                       "/property/datapoint.json", intention.cmdId).catch(() => {});
+      }
+      // Une valeur assez fraîche vaut pour tout le monde : c'est la promesse du multiplexeur, et
+      // c'est ce qui évite qu'une application bavarde monopolise la cafetière.
+      if (fraiche) return;
+      /**
+       * ⚠️ **Le monitor ne se lit pas comme une propriété : il se DEMANDE, avec `0x75`.** C'est
+       * la seule trame qui interroge la machine sur son état, et sa réponse arrive en poussée de
+       * `d302_monitor` — pas en `data_response`. Une lecture de propriété Ayla sur ce nom-là ne
+       * déclenche rien.
+       *
+       * Et c'est exactement le même geste que « Lire l'état » de `/pilotage`, donc la même tâche,
+       * donc la même clé de fusion. Cette propriété a trois lecteurs — le bouton, la page `/`, et
+       * chaque téléphone branché — et ils regardent tous la même valeur : **une lecture réelle
+       * vers la cafetière, N destinataires.** Passer par `startImport` aurait mis en file une
+       * tâche distincte par téléphone, à côté de celle du bouton, pour aller chercher la valeur
+       * que l'autre rapportait déjà.
+       */
+      if (intention.nom.startsWith(m.mon)) {
+        startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor",
+                     { cle: "presence", rang: RANG.LECTURE, i18n: { k: "presence" } });
+        return;
+      }
       startImport(m, [intention.nom], 30000, {
         label: `App ${app.id} · lecture ${intention.nom}`,
         rang: RANG.LECTURE,
@@ -1356,11 +1575,23 @@ async function executerPourApp(m, app, intention) {
       // écrirait autre chose se verrait ignorée plutôt que devinée : `m.send` est la propriété
       // qui porte les trames ECAM, et c'est la seule dont nous sachions ce qu'elle déclenche.
       if (intention.nom !== m.send) {
-        L("in", `app ${app.id} → écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)`, m);
+        // Ignorée pour l'appareil, PAS pour le journal : la charge est relevée telle quelle. Une
+        // propriété que nous ne relayons pas est, par définition, du protocole que nous ne
+        // connaissons pas encore — c'est-à-dire exactement ce qu'on vient chercher ici. La jeter
+        // sans la montrer, c'était perdre la seule occasion de la voir : l'application officielle
+        // est le seul émetteur au monde à produire ces trames-là, et elle ne les rejoue pas.
+        // L'accusé part quand même — voir `accuserSiDemande` : il porte le transport, pas
+        // l'exécution. Il est DIT dans la ligne, sans quoi « ignorée » se lirait comme « sans
+        // réponse » alors que c'est exactement le contraire qui se produit.
+        const accuse = await accuserSiDemande(m, app, intention);
+        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)${accuse ? " · accusée" : ""} · ${chargeBrute(intention.valeur)}`, app, m);
         return;
       }
       app.commandes++;
-      L("in", `app ${app.id} → ${describeFrame(intention.valeur)}`, m);
+      // Les arguments AVANT les octets : c'est la question qu'on se pose en lisant cette ligne —
+      // quelle boisson, quel profil, quels réglages — et les octets ne servent qu'ensuite, pour
+      // vérifier ou pour rétro-concevoir. Une commande sans argument connu garde sa seule trame.
+      LA("in", decrireCommande(m, intention.valeur), app, m);
       // Une commande relayée qui vise un profil DÉPLACE le profil actif de l'appareil, au même
       // titre que si nous l'avions envoyée nous-mêmes. On adopte donc la valeur ici — au moment de
       // la mise en file, comme le fait `/api/command` — sans quoi nos pages continueraient
@@ -1372,21 +1603,101 @@ async function executerPourApp(m, app, intention) {
         m.activeProfile = profil;
         m.activeProfileConfirmed = true;
         rememberActiveProfile(m);
+        // Des DEUX côtés, et c'est délibéré : le changement de profil actif est un état de
+        // l'APPAREIL, donc il appartient à la chronologie machine ; et c'est un tiers qui l'a
+        // décidé, donc il appartient aussi à celle des applications. Le retirer du journal
+        // principal ferait disparaître un changement d'état réel du journal qui le décrit.
         L("sys", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
+        LA("sys", `profil ${profil} imposé${avant && avant !== profil ? ` (était ${avant})` : ""}`, app, m);
       }
-      startProgram(m, intention.valeur, `App ${app.id} · ${describeFrame(intention.valeur)}`, 75000, "monitor", {
+      // Le libellé de la tâche porte la commande DÉCODÉE, arguments compris — sans octets, ils
+      // sont déjà dans les deux journaux. « App a2 · commande » ne disait rien de ce qui partait
+      // vers l'appareil, alors que c'est la seule ligne que le panneau « Activité » affiche : on
+      // y voyait passer une tâche sans pouvoir distinguer un café lancé d'une recette écrasée.
+      // La description voyage en PARAMÈTRE et reste en français, au même titre que les lignes de
+      // journal : c'est le même texte, produit par la même table, et deux formulations pour une
+      // même trame se contrediraient à la première évolution du protocole.
+      const decrite = decrireCommande(m, intention.valeur, { octets: false });
+      /**
+       * ⚠️ **Sans clé de fusion, une application empile.** Constaté en usage réel : six
+       * « sélection de profil (0xa9) · profil 1 » identiques en file, chacune partant redire à
+       * la machine ce que la précédente venait de lui dire. L'application officielle impose son
+       * profil courant à chaque ouverture de session, et elle en ouvre plusieurs.
+       *
+       * La clé vient de `cleFusion`, donc du protocole et non d'ici : ce qui se fusionne est ce
+       * dont la répétition est démontrablement sans effet. Une préparation, elle, rend `null` et
+       * garde sa ligne — demander deux cafés n'est pas demander un café.
+       *
+       * La fusion porte sur la TÂCHE, jamais sur l'accusé : `accuserSiDemande` part juste après,
+       * une fois par demande. L'application dont la tâche a fusionné reçoit son accusé quand
+       * même, ce qui est exact — il porte le transport, pas l'exécution.
+       */
+      startProgram(m, intention.valeur, `App ${app.id} · ${decrite}`, 75000, "monitor", {
         rang: RANG.COMMANDE,
+        cle: cleFusion(intention.valeur),
         meta: { app: app.id },
-        i18n: { k: "appWrite", p: { app: app.id } },
+        i18n: { k: "appWrite", p: { app: app.id, commande: decrite } },
       });
-      // L'accusé n'est dû que si la propriété portait un `id` : sa présence EST la demande.
-      // L'application attend dessus, et son absence lui fait conclure à un échec.
-      if (intention.ackId) await pousserVersApp(m, app, paquetAck(m.dsn ?? "", intention.ackId));
+      // Même accusé que pour une écriture ignorée, et par le même chemin : sa présence EST la
+      // demande, et l'application attend dessus.
+      await accuserSiDemande(m, app, intention);
       return;
     }
+    case "illisible":
+      // Ce n'est PAS une charge inattendue, c'est notre flux qui est perdu — et `lansession.mjs`
+      // le dit depuis toujours : « une désynchronisation force un nouvel échange de clés ». On ne
+      // le faisait pas : on journalisait « demande non reconnue » et on repartait sonder.
+      //
+      // ⚠️ **Ce bloc-ci est un SYMPTÔME, pas la maladie, et la nuance a coûté des jours.** En CBC
+      // un chaînage faux ne salit que le bloc de tête — la suite se recale seule sur le chiffré
+      // qui la précède DANS le même message, d'où ces octets illisibles finissant proprement par
+      // `…a":{}}`. Et le message suivant, lui, est parfaitement lisible : le flux se répare tout
+      // seul (prouvé dans `verif-lansession.mjs`). Donc **un bloc illisible ne dit pas « le flux
+      // est cassé », il dit « exactement un message a disparu juste avant »** — et ce message-là
+      // portait peut-être une commande, définitivement perdue. C'est en amont qu'il faut
+      // chercher, pas ici : voir `porteUneCharge` et le `206`.
+      // La charge illisible est CONSERVÉE : c'est la seule preuve de ce qui s'est passé, et la
+      // signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, d'où
+      // des octets illisibles finissant proprement par `…a":{}}`. Sans elle, « désynchronisé »
+      // est un verdict qu'on ne peut ni vérifier ni contredire.
+      LA("in", `bloc illisible, conservé tel quel — ${String(intention.brut ?? "").slice(0, 200)}`, app, m);
+      relancerSessionApp(m, app, "bloc illisible, flux désynchronisé");
+      return;
     default:
-      L("in", `app ${app.id} : demande non reconnue — ${JSON.stringify(intention).slice(0, 160)}`, m);
+      // 400 et non 160 : cette ligne est le seul endroit où une demande que nous ne savons pas
+      // interpréter laisse une trace, et une demande tronquée à 160 caractères ne s'analyse pas.
+      // C'est de la matière de rétro-ingénierie, pas un accusé de réception.
+      LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 400)}`, app, m);
   }
+}
+
+/** Deux relances rapprochées ne répareraient rien : la seconde casserait le flux que la première vient d'ouvrir. */
+const DELAI_RELANCE_APP = 15_000;
+
+/**
+ * Refait l'échange de clés avec une application dont le flux est irrécupérable.
+ *
+ * Une seule cause connue à ce jour, et elle est de notre côté : un message que l'application a
+ * chiffré et que nous n'avons jamais déchiffré. Une sonde `commands.json` qui atteint le téléphone
+ * puis expire côté serveur suffit — la réponse a été produite, donc le flux sortant de
+ * l'application a avancé, et le nôtre non. C'est la même mécanique que le défaut de
+ * `scripts/faux-app.mjs`, à ceci près qu'ici personne n'est fautif : le réseau a le droit de perdre
+ * une réponse.
+ *
+ * Rouvrir est donc la seule issue, et c'est sans risque pour l'appareil : un échange de clés ne
+ * touche pas la cafetière, il ne recrée que le chiffrement entre l'application et nous.
+ */
+function relancerSessionApp(m, app, motif = "flux illisible") {
+  const maintenant = Date.now();
+  if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return;
+  app.relanceA = maintenant;
+  // Le MOTIF est journalisé, pas seulement le verdict. « Désynchronisé » se constatait trois
+  // fois par session sans qu'aucune ligne ne dise ce qui l'avait provoqué, ce qui laissait la
+  // cause au rang d'hypothèse pendant des jours.
+  LA("sys", `${motif} — nouvel échange de clés`, app, m);
+  app.session = null;
+  app.etat = "annoncee";
+  ouvrirSessionApp(m, app).catch(() => {});
 }
 
 /**
@@ -1402,20 +1713,28 @@ async function executerPourApp(m, app, intention) {
  * D'où la chaîne de promesses : le chiffrement ET l'envoi ont lieu dans le même maillon, donc
  * l'ordre de production est aussi l'ordre d'émission.
  */
-function pousserVersApp(m, app, corpsJson) {
+/**
+ * `chemin` par défaut : le datapoint. Un ACCUSÉ part sur `CHEMIN_ACK` — c'est l'URI, et elle
+ * seule, qui décide si l'application le lit comme un accusé ou comme une écriture.
+ *
+ * `cmdId` non nul apparie la poussée à une commande de lecture que l'application attend. Voir
+ * `cheminAvecCmd` : le SDK ne fait ce lien que par ce paramètre d'URL, et sans lui la commande
+ * expire au bout de 5 secondes en `Timed out waiting for command response`.
+ */
+function pousserVersApp(m, app, corpsJson, chemin = "/property/datapoint.json", cmdId = null) {
   if (app.etat !== "etablie" || !app.session) return Promise.resolve(false);
   const suite = (app.chaine ?? Promise.resolve()).then(async () => {
     // Re-vérifié DANS le maillon : la session a pu tomber pendant l'attente de notre tour.
     if (app.etat !== "etablie" || !app.session) return false;
     try {
       await httpJson({
-        ip: app.ip, port: app.port, path: `${app.uri}/property/datapoint.json`,
+        ip: app.ip, port: app.port, path: `${app.uri}${cheminAvecCmd(chemin, cmdId)}`,
         method: "POST", body: app.session.encapsulate(corpsJson), timeout: 4000,
       });
       toucher(app, Date.now());
       return true;
-    } catch {
-      constaterEchecApp(m, app);
+    } catch (e) {
+      constaterEchecApp(m, app, e);
       return false;
     }
   });
@@ -1435,6 +1754,121 @@ function pousserVersApp(m, app, corpsJson) {
  * mutualisé. Réutiliser un chiffré d'une session dans une autre ne produirait pas une erreur mais
  * du bruit, et désynchroniserait le flux du destinataire pour de bon.
  */
+/**
+ * **Inverse des constructeurs de noms de propriétés** : `d263_3_rec_priority` → « ordre des
+ * favoris · profil 3 ». Construit une fois par catalogue et mémorisé sur lui, parce qu'il faut
+ * énumérer 28 boissons × 6 formes pour l'obtenir et qu'une rediffusion se produit à chaque
+ * poussée de la machine.
+ *
+ * Les noms sont bâtis par `boundsProp` / `profileProp` du catalogue, jamais recopiés ici : une
+ * deuxième table de noms de propriétés dériverait de la première sans que rien ne le signale.
+ */
+const INVERSE_BOISSONS = new WeakMap();
+function inverseBoissons(m) {
+  let idx = INVERSE_BOISSONS.get(m.catalog);
+  if (idx) return idx;
+  idx = new Map();
+  for (const b of m.catalog.beverages) {
+    const bornes = m.catalog.boundsProp(b.slug);
+    if (bornes) idx.set(bornes, { id: b.id, kind: "bounds" });
+    for (let p = 1; p <= 5; p++) {
+      const prop = m.catalog.profileProp(b, p);
+      if (prop && !idx.has(prop)) idx.set(prop, { id: b.id, kind: "values", profileId: p });
+    }
+  }
+  INVERSE_BOISSONS.set(m.catalog, idx);
+  return idx;
+}
+
+/**
+ * Le nom d'une propriété Ayla, en clair — ou `null` quand nous ne la connaissons pas.
+ *
+ * ⚠️ `null` est une **information**, pas un échec : une propriété que ce serveur ne sait pas
+ * nommer est du protocole que nous n'avons pas encore relevé, et l'application officielle est le
+ * seul émetteur au monde à en produire. Les appelants la disent en capitales plutôt que de la
+ * laisser passer pour une propriété ordinaire.
+ */
+function nomPropriete(m, name) {
+  if (name === m.mon || name.startsWith("d302_monitor")) return "état machine";
+  if (name === m.send) return "commande";
+  // `data_response` ne porte aucun sens par son nom : tout est dans la trame, que l'appelant lit.
+  if (name === "data_response" || name === "app_data_response") return "réponse ECAM";
+  if (name === SERIAL_PROP) return "numéro de série et modèle";
+  if (name === "device_connected") return "présence du serveur";
+  const pi = profilePropInfo(name);
+  if (pi) {
+    if (pi.kind === "priority") return `ordre des favoris · profil ${pi.profileId}`;
+    return `${pi.kind === "profileNames" ? "noms de profils" : "noms de recettes perso"} ${pi.first}+`;
+  }
+  const reg = Object.entries(REGLAGE_PROPS).find(([, e]) => e.classic === name || e.striker === name);
+  if (reg) return nomReglage(Number(reg[0]));
+  const bev = inverseBoissons(m).get(name);
+  if (bev) return bev.kind === "bounds" ? `bornes · ${bevLabel(m, bev.id)}` : `recette · ${bevLabel(m, bev.id)} · profil ${bev.profileId}`;
+  const grain = /^d2\d\d_beansystem_(\d)$/.exec(name);
+  if (grain) return `profil de grains ${grain[1]}`;
+  return null;
+}
+
+/**
+ * **Ce qu'une application reçoit de nous, en une ligne lisible.**
+ *
+ * Le journal disait `état rediffusé · d263_3_rec_priority`, c'est-à-dire un nom de propriété et
+ * rien d'autre : illisible pour qui ne connaît pas la table par cœur, et surtout muet sur ce que
+ * la valeur contient. On nomme donc les deux — la propriété **et** la commande que porte sa
+ * trame, via la même `ECAM_OPS` que le reste du serveur.
+ *
+ * Deux choix qui sont le propos de la fonction :
+ *
+ * - **le monitor ne dit que son état et le repos.** Y mettre le pourcentage romprait le pliage
+ *   des lignes identiques de `LA()` pendant une préparation, où la machine pousse toutes les 1 à
+ *   3 secondes et où chaque poussée part vers chaque application : le journal des applications
+ *   se remplirait de la progression, qui est déjà dans celui de la machine, à sa place.
+ * - **l'inconnu est CRIÉ et garde ses octets.** Une propriété que nous ne savons pas nommer, ou
+ *   une trame dont l'octet de commande n'est pas dans la table, sont exactement ce que ce
+ *   multiplexeur permet de découvrir — l'application officielle produit des trames que nous
+ *   n'avons jamais vues et ne les rejoue pas. Une ligne discrète les perd ; une ligne en
+ *   capitales avec son hexadécimal se retrouve et se recolle dans `doc/commandes-cafe.md`.
+ */
+function libelleEtat(m, name, value) {
+  const nom = nomPropriete(m, name);
+  if (nom === "état machine") {
+    try {
+      const mo = decodeMonitor(value);
+      return `${name} · état machine 0x${mo.stateByte.toString(16).padStart(2, "0")} · ${mo.auRepos ? "au repos" : "préparation en cours"}`;
+    } catch { /* monitor illisible : on retombe sur le traitement générique, octets compris */ }
+  }
+  const r = opReponse(value);
+  const parts = [name];
+  parts.push(nom ?? "PROPRIÉTÉ NON IDENTIFIÉE");
+  /**
+   * ⚠️ **Une valeur qui n'est pas une trame doit le DIRE, ici comme ailleurs.**
+   *
+   * Ce branchement ne connaissait qu'`opReponse`. Quand il rendait `null` — valeur non-ECAM —
+   * la ligne s'arrêtait au nom de la propriété : `état rediffusé · data_request · commande`,
+   * relevé en direct. Ni ce que c'est, ni ses octets, puisque `chargeBrute` n'était joint que
+   * si `r` existait avec une opération inconnue. Le pire des deux, et sur la seule valeur qui
+   * méritait qu'on la garde.
+   *
+   * Le cas n'est pas théorique : `s0()` est écrite dans `data_request`, donc relayée, donc
+   * réémise par la machine et rediffusée ici. Elle était **nommée à l'aller** (`describeFrame`)
+   * et **anonyme au retour** — une table lue dans un seul sens est une table qui ment dans
+   * l'autre, c'est la leçon que ce fichier répète ailleurs à propos des copies de tables.
+   */
+  if (r) {
+    parts.push(r.op ? `${r.op.nom} (${hexCmd(r.cmd)})` : `commande ${hexCmd(r.cmd)} NON IDENTIFIÉE`);
+  } else {
+    const brut = Buffer.from(String(value ?? "").replace(/\s+/g, ""), "base64");
+    const connue = constanteConnue(brut);
+    parts.push(connue ? `${connue.nom} · non-trame` : "valeur non-trame");
+  }
+  // Les octets ne sont joints que sur de l'inconnu : ailleurs ils feraient une ligne de deux cents
+  // caractères qui répète ce que le journal machine décode déjà, mieux. Une valeur non-trame que
+  // l'on ne sait pas nommer en fait partie — c'est même le cas type, la seule trace qu'on aura
+  // d'un paquet que l'application officielle est seule au monde à produire.
+  const inconnue = !r && !constanteConnue(Buffer.from(String(value ?? "").replace(/\s+/g, ""), "base64"));
+  if (!nom || (r && !r.op) || inconnue) parts.push(chargeBrute(value, 64));
+  return parts.join(" · ");
+}
 function diffuserAuxApps(m, name, value) {
   if (!PROXY.actif) return;
   const cibles = appsEtablies().filter((a) => a.machineId === m.id);
@@ -1442,7 +1876,17 @@ function diffuserAuxApps(m, name, value) {
   const corps = paquetDatapoint(m.dsn ?? "", name, value);
   for (const app of cibles) {
     app.datapoints++;
-    pousserVersApp(m, app, corps).catch(() => {});
+    // Cette propriété était-elle attendue par une commande de lecture de CETTE application ?
+    // Si oui, la poussée doit porter son `cmd_id`, sinon la commande expire alors même que la
+    // valeur, elle, est bien arrivée. L'entrée est consommée : un `cmd_id` ne sert qu'une fois.
+    const attendue = app.lectures.get(name) ?? null;
+    if (attendue !== null) app.lectures.delete(name);
+    // Le cœur du multiplexeur — une lecture réelle, N destinataires — n'était visible nulle
+    // part : ni au journal, ni ailleurs qu'en compteur cumulé. Il l'est ici, et le repli des
+    // lignes identiques suffit à contenir une préparation, où la machine pousse toutes les 1 à
+    // 3 secondes. C'est aussi la seule trace de ce qu'une application a REÇU de nous.
+    LA("out", `état ${attendue !== null ? "servi" : "rediffusé"} · ${libelleEtat(m, name, value)}`, app, m);
+    pousserVersApp(m, app, corps, "/property/datapoint.json", attendue).catch(() => {});
   }
 }
 
@@ -1460,17 +1904,24 @@ function diffuserAuxApps(m, name, value) {
  * les distinguer est exactement ce que ce multiplexeur existe pour faire. C'est l'injoignabilité
  * qui retire une entrée, jamais l'arrivée d'une voisine.
  */
-function constaterEchecApp(m, app) {
+function constaterEchecApp(m, app, err = null) {
   if (!PROXY.registre.apps.has(cleApp(app.ip, app.port))) return;
+  // ⚠️ **Seul un REFUS compte.** C'était la justification de tout ce mécanisme — « le silence et le
+  // refus ne sont pas la même information » — et le code les confondait quand même, parce qu'un
+  // délai dépassé et un `ECONNREFUSED` arrivaient ici sous la même forme. Résultat mesuré sur la
+  // vraie application : évincée en 16 s après trois délais dépassés, revenue 9 s plus tard sur le
+  // MÊME port d'écoute — elle n'était jamais partie, elle s'était tue. Un téléphone qui verrouille
+  // son écran fait exactement cela. Le silence retombe donc sur `DELAI_APP_MUETTE`, sa règle.
+  if (!estRefus(err)) return;
   if (!echouer(app)) return;
-  retirerApp(app, m, `injoignable (${SEUIL_ECHECS} tentatives sans réponse), oubliée`);
+  retirerApp(app, m, `injoignable (${SEUIL_ECHECS} refus de connexion, ${err.code}), oubliée`);
 }
 
 /** Retire une application : sonde désarmée d'abord, sinon elle continuerait sur un objet oublié. */
 function retirerApp(app, m = null, motif = "retirée") {
   desarmerSondeApp(app);
   oublier(PROXY.registre, app);
-  L("sys", `app ${app.id} (${app.ip}:${app.port}) : ${motif}`, m);
+  LA("sys", motif, app, m);
 }
 
 /** Balayage des applications muettes. Le même raisonnement que le coupe-circuit de la file. */
@@ -1478,7 +1929,7 @@ setInterval(() => {
   if (!PROXY.actif) return;
   for (const app of expirer(PROXY.registre, Date.now())) {
     desarmerSondeApp(app);
-    L("sys", `app ${app.id} (${app.ip}:${app.port}) : muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`);
+    LA("sys", `muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`, app);
   }
 }, 10000).unref?.();
 
@@ -1516,12 +1967,12 @@ async function handleAppRegtoken(req, res) {
     else await probeRegtoken(m).catch(() => {});            // premier appel : on n'a pas le choix
   }
   if (m.regtokenBrut) {
-    L("in", `app ${peerAddress(req)} : regtoken demandé, nous resservons celui de la machine (${m.dsn})`, m);
+    LA("in", `regtoken demandé, nous resservons celui de la machine (${m.dsn})`, peerAddress(req), m);
     return raw(res, m.regtokenBrut.body, 200, "text/json");
   }
   // Repli : la machine est injoignable et nous n'avons jamais vu sa réponse. On sert le minimum,
   // et on le DIT — une application qui refuserait ici doit être diagnosticable.
-  L("in", `app ${peerAddress(req)} : regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite`, m);
+  LA("in", "regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite", peerAddress(req), m);
   return raw(res, JSON.stringify({ registered: 1, registration_type: "AP-Mode", host_symname: m.dsn }), 200, "text/json");
 }
 
@@ -1562,12 +2013,12 @@ async function handleAppReg(req, res) {
     // Refus explicite plutôt que rattachement au hasard : relayer vers la mauvaise cafetière est
     // exactement le genre d'erreur qu'on ne rattrape pas après coup.
     refuser(PROXY.registre, { from, motif: "dsnInconnu", detail: dsn }, Date.now());
-    L("in", `app ${from} : enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`);
+    LA("in", `enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`, from);
     return raw(res, JSON.stringify({ error: "unknown dsn" }), 412);
   }
   if (!m.lanKey.length) {
     refuser(PROXY.registre, { from, motif: "sansCle", detail: m.id }, Date.now());
-    L("in", `app ${from} : enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, m);
+    LA("in", `enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, from, m);
     return raw(res, JSON.stringify({ error: "no key" }), 412);
   }
 
@@ -1577,11 +2028,34 @@ async function handleAppReg(req, res) {
     Date.now(),
   );
   app.machineId = m.id;
+  /**
+   * ⚠️ **Le protocole ne transporte AUCUNE identité d'application.** `LocalReg` du SDK a
+   * exactement cinq champs — `ip`, `key`, `notify`, `port`, `uri` — et `key` n'est renseigné qu'en
+   * appairage (clé publique d'un appareil en cours de configuration). Le `key_id` de l'échange de
+   * clés est celui de la MACHINE, donc identique pour toutes les applications qui lui parlent. Ni
+   * nom, ni identifiant d'instance, ni identifiant d'utilisateur.
+   *
+   * Le seul signal supplémentaire disponible est **hors protocole** : l'en-tête `User-Agent` que
+   * le client HTTP de l'application met sur ses propres requêtes. Il ne distingue pas deux
+   * instances l'une de l'autre — deux téléphones avec la même version portent le même — mais il
+   * distingue une *nature* de client : l'application officielle, un script, notre `faux-app.mjs`.
+   * C'est précisément ce que la moitié « surveillance des usurpations » de la page réclame, et
+   * cela ne coûte rien : l'en-tête est déjà là, on le jetait.
+   *
+   * Borné, et traité comme la donnée non fiable qu'il est : n'importe qui peut écrire ce qu'il
+   * veut dedans. Il documente, il n'authentifie pas.
+   */
+  const ua = String(req.headers["user-agent"] ?? "").slice(0, 120) || null;
+  if (ua && ua !== app.ua) {
+    const avant = app.ua;
+    app.ua = ua;
+    if (avant) LA("in", `client changé — ${avant} → ${ua}`, app, m);
+  }
   // 202, comme la machine : c'est ce que l'app attend d'un `local_reg` accepté.
   raw(res, JSON.stringify({}), 202);
 
   if (nouvelle) {
-    L("in", `app ${app.id} : ${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})`, m);
+    LA("in", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})${ua ? ` · client ${ua}` : " · client anonyme"}`, app, m);
     // L'échange de clés part APRÈS la réponse : l'application n'a pas encore fini de traiter son
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.
@@ -1631,6 +2105,9 @@ function handleProperty(m, name, value) {
   // interroge. Le noter AVANT tout traitement, sinon un décodage raté ferait passer une machine
   // bavarde pour une machine muette.
   contactMachine(m.file, Date.now());
+  // Retenue AVANT tout décodage, et **brute** : c'est ce qu'une application redemandera, et une
+  // propriété qu'on ne sait pas décoder doit pouvoir être servie comme les autres.
+  m.dernieresValeurs.set(name, { at: Date.now(), valeur: value });
   // Rediffusion aux applications branchées, AVANT tout décodage : ce que nous savons décoder
   // n'a rien à voir avec ce qu'elles savent lire, et filtrer ici les priverait de propriétés
   // parfaitement valides que nous ignorons. Sans proxy actif, c'est un retour immédiat.
@@ -1648,6 +2125,18 @@ function handleProperty(m, name, value) {
     } catch (e) {
       L("in", `${name}: monitor illisible (${e.message})`, m);
     }
+    // ⚠️ **La poussée de monitor EST la réponse à `0x75`.** Ce retour se faisait sans jamais
+    // apparier, si bien qu'un pas « Présence » ne pouvait être satisfait que par un
+    // `data_response`… que la machine n'envoie pas pour cette commande. Mesuré trois fois de
+    // suite : monitor reçu à 16:19:58 et 16:20:11, tâche déclarée « sans réponse » à 16:20:01 puis
+    // « échouée : 1 sans réponse » à 16:20:15 — l'état était là, affiché à l'écran, et la tâche
+    // mourait quand même. Toute lecture d'état échouait ainsi, ce qui donne à l'usage l'impression
+    // d'une machine déconnectée alors que la liaison fonctionne.
+    //
+    // Apparié sur la commande, jamais largement : ces poussées sont aussi spontanées pendant une
+    // préparation, et valider un pas qui attend autre chose déclarerait lues des données jamais
+    // lues. Même quand le décodage échoue : la machine a répondu, c'est ce que le pas attendait.
+    apparier(m.file, { reponse: true, cmd: 0x75 }, Date.now());
     return;
   }
   if (name === "data_response") {
@@ -1676,8 +2165,18 @@ function handleProperty(m, name, value) {
     return;
   }
 
-  let cmd;
-  try { cmd = Buffer.from(value, "base64")[2]; } catch { cmd = undefined; }
+  // ⚠️ **Tester que c'est une trame AVANT d'en lire l'octet de commande.**
+  // `Buffer.from(x, "base64")` ne lève jamais : il ignore silencieusement ce qui n'en est pas et
+  // rend des octets qui ont l'air de quelque chose. Deux conséquences, l'une visible et l'autre
+  // pas. Visible : `device_connected = 1787407876` — un horodatage unix en clair, que la vraie
+  // application nous écrit — se journalisait « commande 0x3b non décodée — d7 bf 3b e3 4e fc ef »,
+  // sept octets inventés là où la valeur était lisible telle quelle. Invisible et pire : cet
+  // octet fabriqué sert à AIGUILLER le décodage, donc une valeur quelconque dont le troisième
+  // octet vaut par hasard 0xA2 partait chez `decodeParameters`, qui rangeait des compteurs
+  // imaginaires dans la base. `opReponse` vérifie la forme base64 puis l'en-tête ECAM (0xD0 ou
+  // 0x0D) et rend `null` sinon — ce qui envoie proprement la valeur au cas `default`.
+  const reponse = opReponse(value);
+  const cmd = reponse?.cmd;
   // Chaque branche écrit ce qu'elle a décodé, tout de suite : `done` ne fait plus que journaliser.
   const done = (msg) => {
     apparier(m.file, { prop: name }, Date.now());
@@ -1737,10 +2236,18 @@ function handleProperty(m, name, value) {
         noteReglages(m, st.entries, "propriété");
         return done(`réglages : ${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`);
       }
+      // Tout ce que nous ne savons pas décoder — et c'est une DÉCOUVERTE, pas une erreur : la
+      // valeur est conservée telle quelle, sans interprétation, parce qu'un outil qui a déjà
+      // décidé quoi jeter ne peut plus rien apprendre. Même règle que `chargeBrute`.
       default: {
-        const hex = Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim();
-        m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: cmd ?? null, hex });
-        return done(`commande 0x${(cmd ?? 0).toString(16)} non décodée — ${hex}`);
+        if (!reponse) {
+          // Pas une trame ECAM du tout : on garde la valeur, mot pour mot.
+          m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: null, valeur: String(value) });
+          return done(`valeur non-trame : ${String(value).slice(0, 120)}`);
+        }
+        const hex = reponse.trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+        m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd, hex });
+        return done(`commande ${hexCmd(cmd)} NON IDENTIFIÉE — ${hex}`);
       }
     }
   } catch (e) {
@@ -3311,6 +3818,9 @@ async function handleApi(req, res) {
       portOk: CFG.port === PORT_ATTENDU_PAR_APP,
       ...v,
       apps: v.apps.map((a) => ({ ...a, machine: a.machineId ?? null })),
+      // Le journal des applications voyage avec la vue qui le décrit, sur l'endpoint que
+      // /pilotage interroge déjà : le tracer ne coûte pas une requête de plus.
+      journal: LOG_APPS.slice(0, 120),
     }));
   }
 
@@ -3467,7 +3977,11 @@ async function handleApi(req, res) {
      * de boisson. Le drapeau ne connaît que ce que CE serveur a mis en file : une boisson lancée au
      * panneau de la machine reste invisible, comme avant la file.
      */
-    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, i18n: cleLibelle, meta: b.action === "dispense" ? { dispense: true } : null });
+    // Même règle que pour une commande relayée par une application, et c'est le point : deux
+    // sélections du même profil n'en font qu'une, qu'elles viennent d'un téléphone, de deux
+    // onglets, ou d'un téléphone et d'un onglet. Une règle par émetteur aurait fusionné ici et
+    // pas là, pour la même trame.
+    const t = startProgram(m, ecamB64, label, dur, sustain, { rang, cle: cleFusion(ecamB64), i18n: cleLibelle, meta: b.action === "dispense" ? { dispense: true } : null });
     // La file de lecture est écoulée quand aucun programme n'est actif : elle s'enchaîne donc
     // naturellement après la fenêtre du programme ci-dessus.
     if (refreshOrderFor) {
@@ -3543,7 +4057,7 @@ async function handleApi(req, res) {
     const taches = [];
     const ajouter = (r) => { if (r?.ok) taches.push({ id: r.taskId, position: r.position }); };
 
-    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } }));
+    ajouter(startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor", { cle: "presence", i18n: { k: "presence" } }));
     ajouter(startImport(m, [SERIAL_PROP], 0, { label: "Modèle (numéro de série)", i18n: { k: "model" } }));
     ajouter(startProgram(m, datapointValue(frameChecksums()), "Sommes de contrôle", 15000, "monitor", { cle: "checksums", i18n: { k: "checksums" } }));
 
@@ -3870,7 +4384,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ skipped: true, reason: "présence déjà demandée récemment", lastMonitor: m.lastMonitor }));
     }
     m.lastPresenceAt = now;
-    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", 12000, "monitor", { cle: "presence", i18n: { k: "presence" } });
+    const t = startProgram(m, datapointValue(frameMonitorRequest()), "Présence", DELAI_PRESENCE, "monitor", { cle: "presence", i18n: { k: "presence" } });
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ started: true, register: reg, ...tacheRendue(t) }));
   }

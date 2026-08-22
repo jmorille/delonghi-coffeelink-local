@@ -11,7 +11,7 @@
  */
 import { nouveauRegistre, annoncer, etablir, oublier, expirer, toucher, refuser, vue, cleApp,
          echouer, GARDE_REFUS, DELAI_APP_MUETTE, SEUIL_ECHECS } from "../src/lib/appregistry.mjs";
-import { analyserCommandes } from "../src/lib/appproxy.mjs";
+import { analyserCommandes, paquetAck, paquetDatapoint, cheminAvecCmd, CHEMIN_ACK, estRefus, porteUneCharge, encoreDesCommandes } from "../src/lib/appproxy.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -165,6 +165,24 @@ test("le champ `id` EST la demande d'accusé", () => {
   eq(analyserCommandes(c)[0].ackId, "a1b2c3d4", "identifiant d'accusé relevé");
 });
 
+test("l'accusé est dû même à une propriété que nous ne relayons PAS", () => {
+  // ⚠️ Relevé sur la vraie application, et ça bloquait tout : elle ouvre chaque session en
+  // écrivant `device_connected`, propriété que nous n'avons aucune raison de relayer à la
+  // cafetière — et le serveur sortait par la branche « ignorée » sans jamais accuser. Du point
+  // de vue du téléphone, la machine à qui il vient de se présenter ne répond pas : il n'allait
+  // pas plus loin et AUCUNE commande ne partait. Le registre le montrait sans qu'on sache le
+  // lire — session établie, datapoints reçus, `commandes = 0` pendant toute la vie de l'entrée.
+  //
+  // L'accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »). Le décodage de la
+  // charge est donc le seul juge de ce qui atteint l'appareil ; l'accusé, lui, est dû dans les
+  // deux cas dès que `id` est là.
+  const c = JSON.stringify({ properties: [{ property: { name: "device_connected", value: 1787413302, id: "d7e8" } }] });
+  const r = analyserCommandes(c)[0];
+  eq(r.type, "ecriture", "c'est bien une écriture");
+  eq(r.nom, "device_connected", "et elle ne porte pas de trame ECAM");
+  eq(r.ackId, "d7e8", "l'accusé reste dû : rien dans l'analyse ne dépend de ce qu'on relaie");
+});
+
 test("l'enveloppe {seq_no, data} est acceptée comme son contenu", () => {
   // `decapsulate` rend l'enveloppe entière ; certains appelants passent déjà `data`. Accepter les
   // deux évite un dépliage en double, qui rendrait « vide » une charge parfaitement valide.
@@ -231,5 +249,102 @@ test("un même téléphone sur deux ports reste DEUX applications", () => {
   eq([...r.apps.values()].map((a) => a.port), [10275], "seule l'injoignable est partie");
 });
 
+test("seul un REFUS compte comme échec — un délai dépassé est un silence", () => {
+  // La justification de toute l'éviction rapide, et le code la contredisait : un délai dépassé
+  // et un ECONNREFUSED arrivaient au même endroit sous la même forme. Mesuré sur la vraie
+  // application — évincée en 16 s après trois délais, revenue 9 s plus tard sur le MÊME port.
+  vrai(estRefus({ code: "ECONNREFUSED" }), "un port fermé est une preuve");
+  vrai(estRefus({ code: "EHOSTUNREACH" }), "un hôte injoignable aussi");
+  vrai(!estRefus({ code: "ETIMEDOUT" }), "un délai dépassé ne prouve rien : téléphone verrouillé");
+  vrai(!estRefus(null), "pas d'erreur, pas de refus");
+  vrai(!estRefus(new Error("délai dépassé")), "le message ne fait pas foi, seul le code compte");
+});
+
+test("206 porte une charge, exactement comme 200 — et c'est ce qui bloquait l'allumage", () => {
+  // ⚠️ La règle la plus chère de ce projet à ce jour. `AylaLanModule.getResponseCode()` rend
+  // `PARTIAL_CONTENT` dès qu'il RESTE des commandes en file, `OK` quand c'était la dernière :
+  // le statut annonce la suite, il ne qualifie pas le corps. Les deux portent le même bloc
+  // chiffré.
+  //
+  // N'accepter que le 200 jetait donc précisément les réponses qui transportaient une commande,
+  // et le jetait deux fois irréparablement : le SDK retire la commande de sa file au moment où
+  // il la CHIFFRE, sans réessai, et le message non déchiffré laisse notre flux AES un cran en
+  // arrière. Mesuré en direct : deux `HTTP 206 — non déchiffré`, puis le 200 suivant illisible.
+  vrai(porteUneCharge(206, '{"seq_no":3,"enc":"…"}'), "206 se déchiffre");
+  vrai(porteUneCharge(200, '{"seq_no":3,"enc":"…"}'), "200 aussi");
+  vrai(encoreDesCommandes(206), "206 veut dire : il en reste, reviens tout de suite");
+  vrai(!encoreDesCommandes(200), "200 veut dire : c'était la dernière");
+});
+
+test("ce qui ne porte rien de chiffré ne doit PAS être déchiffré", () => {
+  // Un corps vide n'avance aucun flux, et un 412 « pas de session » porte du texte en clair.
+  // Les déchiffrer ferait exactement le dégât qu'on vient de corriger, dans l'autre sens.
+  vrai(!porteUneCharge(200, ""), "corps vide");
+  vrai(!porteUneCharge(200, "   "), "corps blanc");
+  vrai(!porteUneCharge(412, '{"error":"no session"}'), "412 : erreur en clair");
+  vrai(!porteUneCharge(404, "Not found"), "404");
+});
+test("l'accusé : objet NU, ack_status 200, et un chemin qui finit par ack.json", () => {
+  // Les trois détails de `AylaLanModule.handleDatapointAck`, et chacun suffit à faire déclarer
+  // la commande en échec par l'application ALORS QUE l'appareil l'a exécutée. Symptôme vécu :
+  // la machine s'allume pour de bon et le téléphone affiche que la connexion a échoué.
+  const a = JSON.parse(paquetAck("AC000W0XXXXXXXX", "abcd"));
+  // 1. `fromJson(payload.data, CreateDatapointAck.class)` lit l'objet directement. Enveloppé
+  //    dans {properties:[{property:…}]}, Gson ne trouve ni `id` ni `ack_status` : l'identifiant
+  //    sort null, aucune commande ne correspond, PreconditionError.
+  vrai(a.properties === undefined, "aucune enveloppe properties");
+  eq(a.id, "abcd", "l'identifiant est à la racine");
+  eq(a.dsn, "AC000W0XXXXXXXX", "le dsn aussi");
+  // 2. Un code HTTP réemployé comme statut applicatif : `== Status.OK.getRequestStatus()`,
+  //    sinon `ServerError(…, "Datapoint NAK")`. Un 0 bien routé est lu comme un refus explicite.
+  eq(a.ack_status, 200, "200, surtout pas 0");
+  eq(a.ack_message, 0, "ack_message présent");
+  // 3. C'est l'URI, et elle seule, qui fait d'un POST un accusé :
+  //    `endsWith("ack.json") ? handleDatapointAck(…) : handlePropertyUpdateRequest(…)`.
+  vrai(CHEMIN_ACK.endsWith("ack.json"), "le chemin décide, pas la charge");
+});
+test("un datapoint poussé vers une application est un objet NU", () => {
+  // ⚠️ Même piège que l'accusé, en pire : il touchait TOUTES les rediffusions, c'est-à-dire le
+  // cœur du multiplexeur. `handlePropertyUpdateRequest` lit la charge à plat —
+  // `new JSONObject(payload.data).getString("name")` — donc une enveloppe
+  // `{properties:[{property:…}]}` lève une JSONException, la propriété n'est jamais appliquée,
+  // et l'application répond 400 « Bad message JSON ». Le journal disait « état rediffusé » et
+  // c'était vrai : ce qui manquait, c'est que rien n'arrivait de l'autre côté.
+  const d = JSON.parse(paquetDatapoint("AC000W0XXXXXXXX", "d302_monitor", "0FUP"));
+  vrai(d.properties === undefined, "aucune enveloppe properties");
+  eq(d.name, "d302_monitor", "le nom est à la racine");
+  eq(d.value, "0FUP", "la valeur aussi");
+  eq(d.dsn, "AC000W0XXXXXXXX", "le dsn est lu par optString(\"dsn\", null)");
+});
+
+test("une lecture n'est appariée que par le cmd_id de l'URL", () => {
+  // `AylaLanModule.getCommand()` ne regarde ni le corps ni le chemin :
+  //     String str = (String) jVar.c().get("cmd_id");   // c() == getParms()
+  // Sans ce paramètre, `command` vaut null, `setModuleResponse()` n'est jamais appelé, et la
+  // commande expire sur `defaultNetworkTimeoutMs` — 5 secondes, mesurées en direct :
+  //     E/LocalNetwork: Timed out waiting for command response:
+  //                     LanCmd[1]=property.json?name=d302_monitor
+  eq(cheminAvecCmd("/property/datapoint.json", 7), "/property/datapoint.json?cmd_id=7",
+     "le cmd_id part en paramètre d'URL");
+  // Un cmd_id de 0 est un identifiant valide — `__nextLanCommandId` commence à zéro. Le tester
+  // par sa véracité l'aurait transformé en poussée spontanée, donc en commande expirée.
+  eq(cheminAvecCmd("/property/datapoint.json", 0), "/property/datapoint.json?cmd_id=0",
+     "zéro est un identifiant, pas une absence");
+  // Une poussée spontanée n'en porte pas, et c'est correct : getCommand() rend null et la
+  // propriété est appliquée quand même.
+  eq(cheminAvecCmd("/property/datapoint.json", null), "/property/datapoint.json",
+     "une rediffusion spontanée reste sans cmd_id");
+});
+
+test("une lecture d'application est nommée avec son cmd_id", () => {
+  // C'est `analyserCommandes` qui doit le remonter : sans lui, rien en aval ne peut apparier.
+  const [i] = analyserCommandes(JSON.stringify({ cmds: [{ cmd: {
+    cmd_id: 4, method: "GET", resource: "property.json?name=d302_monitor",
+    data: "", uri: "/local_lan/property/datapoint.json",
+  } }] }));
+  eq(i.type, "lecture", "reconnue comme une lecture");
+  eq(i.nom, "d302_monitor", "la propriété demandée");
+  eq(i.cmdId, 4, "l'identifiant est conservé");
+});
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

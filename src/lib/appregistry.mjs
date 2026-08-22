@@ -91,6 +91,27 @@ export function annoncer(reg, { ip, port, uri, notify, keyId }, maintenant) {
     commandes: 0,
     /** Échecs de contact CONSÉCUTIFS. Remis à zéro par le moindre succès (voir `toucher`). */
     echecs: 0,
+    /**
+     * **Les lectures que cette application attend, par propriété → `cmd_id`.**
+     *
+     * Une commande `GET property.json?name=X` n'est PAS dénouée par une réponse HTTP : elle
+     * l'est par un POST de datapoint que nous initions, et le SDK ne le rattache à la commande
+     * que par le paramètre d'URL `cmd_id` (`AylaLanModule.getCommand()` lit
+     * `session.getParms().get("cmd_id")`). Sans lui la commande reste en attente et meurt sur
+     * `defaultNetworkTimeoutMs` — 5 secondes, mesurées.
+     *
+     * On retient donc l'identifiant jusqu'à ce qu'on ait la valeur : soit tout de suite depuis
+     * le cache, soit quand la machine pousse la propriété. Une seule entrée par propriété — un
+     * réessai remplace le `cmd_id` précédent, qui a déjà expiré côté application.
+     */
+    lectures: new Map(),
+    /**
+     * `User-Agent` du client, quand il en met un. **Hors protocole et non fiable** : `local_reg`
+     * ne transporte aucune identité (voir `handleAppReg`), et n'importe qui peut écrire ce qu'il
+     * veut dans cet en-tête. Il documente la NATURE du client — application officielle, script,
+     * notre faux-app — il n'authentifie personne et ne sépare pas deux instances identiques.
+     */
+    ua: null,
     dernierMotif: null,
   };
   reg.apps.set(cle, app);
@@ -191,6 +212,7 @@ export function vue(reg, maintenant) {
     port: a.port,
     etat: a.etat,
     keyId: a.keyId,
+    ua: a.ua ?? null,
     notify: a.notify,
     creeA: a.creeA,
     vueA: a.vueA,

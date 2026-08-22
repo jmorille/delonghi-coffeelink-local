@@ -76,6 +76,7 @@ node scripts/fausse-machine.mjs --serveur 127.0.0.1:3099         # pushes one st
 # Regenerate the extracted tables from the APK (do not hand-edit their JSON output).
 node scripts/extract-catalogs.mjs   # → src/lib/machine-catalogs.json
 node scripts/extract-models.mjs     # → src/lib/machine-models.json
+node scripts/extract-images.mjs     # → src/lib/beverage-images.json + public/boissons/ (gitignoré)
 ```
 
 `pnpm-workspace.yaml` exists solely to **refuse** the install scripts of `@parcel/watcher` and
@@ -293,7 +294,15 @@ POST returns as soon as `local_reg` is sent, and the *machine* pushes the value 
 meant re-downloading the whole list every 2 s to see one field change, and getting the timing wrong
 anyway. **The trigger is the log**: every meaningful state change in this server already goes through
 `L()`, so `sseTouch()` hooks there — no instrumenting twenty call sites and no forgetting the
-twenty-first. Coalesced over 250 ms (an import logs one line per property). `sseWatch()` covers the
+twenty-first. ⚠️ **That sentence was false in exactly one place, and it was the most visible one:
+the key exchange logged nothing.** `/local_lan/key_exchange.json` set `m.session` and returned, so
+opening a LAN session — the most structuring event of the link — was both untraceable in the journal
+and invisible to every subscriber: `/pilotage` kept showing "session LAN : en attente" while
+`/api/status` had answered `active: true` since the exchange. Reloading the page fixed the display,
+which made a real hole look like a browser quirk. It now logs one line (`session LAN
+établie/rouverte (key_id N)`), which floods nothing — a session opens once — and if it reopens in a
+loop that is precisely what one needs to see, folded with its count. The rule to keep: **a state
+change that writes no log line is a state change no browser will ever learn about.** Coalesced over 250 ms (an import logs one line per property). `sseWatch()` covers the
 one thing the log cannot say: a window that **expires** without the machine ever connecting writes no
 line, so without it the "lecture…" badge would hang forever; it runs only while something is open and
 stops after one final broadcast. `fenetreOuverte()` judges liveness on the **duration**, not on the
@@ -316,11 +325,25 @@ A **task** is a list of **steps** plus a policy. An import of 21 properties is o
 "Allumer" is a task of one step; a bean sweep is one task of six — where it used to be six separate
 programs chained by a guessed `setTimeout(11000)`, with a two-second dead zone between each. Three
 kinds of wait, because the machine does not answer the same way for everything: `prop` (it will push
-that property), `reponse` (a `data_response` will come — true of `0x75`, `0xA2`, `0xA3`, `0xA6`,
+that property), `reponse` (an answer will come — true of `0x75`, `0xA2`, `0xA3`, `0xA6`,
 `0xB0`, `0xBA`), and `fenetre` (it has nothing to answer — `0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`).
 For `fenetre`, `ms` is a **sustained-presence duration, not a failure deadline: reaching it is
 success.** The kind is derived from `ECAM_OPS` via `natureTrame()`, so no call site decides it and
 there is no second table to keep in sync.
+
+⚠️ **`0x75` does NOT answer with a `data_response` — it answers with a `d302_monitor` datapoint
+push**, and this file said the opposite for a long time. The consequence was not subtle: the monitor
+branch of `handleProperty` returned without ever calling `apparier`, so a "Présence" step could only
+be satisfied by a message the machine never sends for that command. Measured three times running —
+monitor received at 16:19:58 and 16:20:11, the task declared "sans réponse" at 16:20:01 and "échouée
+: 1 sans réponse" at 16:20:15. The state was there, decoded and on screen, and the task died anyway.
+**Every state read failed**, which in use reads exactly like a disconnected machine while the link is
+working perfectly. The match is deliberately **narrow** — a step now carries its ECAM `cmd` and
+`reponse(file, {reponse: true, cmd})` only completes a step that asked for that command: monitor
+pushes are *also* spontaneous (one every 1–3 s during a brew), so matching broadly would mark a
+pending statistics step as answered and file counters as read that were never read. Without `cmd`
+the old permissive behaviour stands, on purpose: the byte-for-byte correspondence has not been
+verified for every command, and narrowing blindly would break reads that work today.
 
 **Four ranks, one preemption rule**: a task may be suspended at a **step boundary** by a task of
 strictly higher rank. `URGENT` (0) is `stop` alone — it preempts even a running dispense, at a cost
@@ -782,9 +805,23 @@ bounds are `d001_rec_espresso` … `d021_rec_brew_over_ice` in the same order. T
 keeping straight: **the 21 is a constant of the app, not the model's recipe count** (an earlier
 version of this file asserted the opposite and refused to switch catalogs on that basis — the
 inference was wrong), and switching a catalog **invalidates no cached read**, since names never move.
-Custom recipes are `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06` with **profile 1 hard-coded**:
-the app writes those names literally and has no builder that varies the profile, so asking for
-`d200_2_…` would be inventing a name.
+**Custom recipes ARE per-profile, stride 6** — `d{200 + (p−1)×6 + (slot−1)}_{p}_cstm_recipe_{slot}`.
+This file long asserted the opposite ("profile 1 hard-coded… asking for `d200_2_…` would be
+inventing a name") from a fact that is itself correct: the app only ever writes six literals,
+`C1("d200_1_cstm_recipe_01")` … `C1("d205_1_cstm_recipe_06")`, and has no profile-varying builder.
+**The inference from it was wrong — what the app cannot ask for, the machine still publishes.**
+Measured 2026-08-22 19:41 in the app journal: after a recipe write (`0x83`) the appliance pushed
+all five profiles on its own — `d202_1`, `d208_2`, `d214_3`, `d220_4`, `d226_5`, each carrying
+`d0 17 a6 f0 0P e8 …` whose **profile byte agrees with the digit in the name**, and `0xE8` = 232 =
+"Recette perso 3". Stride 6 is the Bean System's (`t()`, base 160), and `200 + 5×6 = 230` lands
+exactly where the custom-recipe beverage ids begin — no collision.
+⚠️ **This was not a missing journal label: forcing profile 1 meant reading `d202_1_…` for profiles
+2-5, i.e. showing profile 1's recipe as theirs.** Same shape as the bean-system missing-stride bug
+above, but nastier — that one answered empty and looked absent, this one answered a plausible
+value. And it surfaced the same way three other defects did today: the discovery marker fired
+(`PROPRIÉTÉ NON IDENTIFIÉE`) on names the **machine** sent us and our own builder could not
+reproduce. `profilePropForSlug` in `beverages.mjs` is the single builder; the inverse used for
+naming derives from it, so fixing it fixes both directions at once.
 
 What the table supports, and it is not everything — say so rather than guessing:
 - **10 models** (5 PD_SOUL of 28 beverages, 5 PD_SOUL_BETTER of 22, 3 profiles, 3 custom slots) are
@@ -1197,10 +1234,134 @@ makes N independent applications possible where the machine allows one.
   the APK**: `{"cmds":[{"cmd":{…}}]}` for a read or `delete_session`, `{"properties":[{"property":
   {…}}]}` for a datapoint write. A property's `id` field **is** the ack request — its presence is
   the only signal, and not answering leaves the app waiting then concluding failure.
+- ⚠️⚠️ **`206 Partial Content` is a NORMAL command response — dropping it is what stopped the
+  official app from turning the machine on.** `AylaLanModule.getResponseCode()` returns
+  `_pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK`: the status does not qualify the body,
+  it announces **what comes next**. `206` means "I have more queued", `200` means "that was the
+  last one", and both carry the same valid encrypted payload. A `rep.status !== 200` guard
+  therefore discards precisely the responses that carry a command, keeping only the last of a
+  batch — and the loss is irreparable twice over (the SDK already dropped the command when it
+  encrypted it; our stream is left a message behind). Measured: the app queues `0x84` and, one
+  millisecond later, a whole alarms batch, so the turn-on came back as `206` and went in the bin
+  with no journal line. `porteUneCharge`-style checks must accept **200 and 206**. And `206` must
+  be re-polled immediately, inside the existing probe lock — a ten-command batch served at probe
+  cadence takes twenty seconds to arrive, and the user just pressed a button.
+- ⚠️ **A "bloc illisible" means "exactly one message vanished just before" — not "the stream is
+  broken".** This file and `doc/` both claimed a one-message CBC offset "ne se rattrape pas". That
+  is false and it sent the investigation to the wrong place. In CBC, block *n* of a message chains
+  from ciphertext *n−1* of the **same** message; only the very first block depends on what came
+  before. So a skipped message dirties the **16 first bytes** of the next message read and nothing
+  else — the stream re-aligns by itself, whether one message was skipped or nine. That is the
+  `…a":{}}` signature: garbage stops dead at the first block, the JSON tail is intact.
+  `verif-lansession.mjs` pins both facts. The consequence that matters: a single unreadable block
+  is not a benign isolated glitch, it is the only visible trace of a command that evaporated —
+  look **upstream** for what ate the message, never at the block itself. The re-key behind it
+  repairs nothing that was lost; it only avoids the next dirtied block.
+- ⚠️ **An app's LAN command queue is AT-MOST-ONCE, and the app cannot tell.**
+  `AylaLanModule.handleLanCommandRequest` removes the command from `_pendingLanCommands` the
+  instant it **encrypts** it into the HTTP response — not when it is received, and there is no
+  retry. One lost response therefore produces both symptoms at once, which is what made them
+  impossible to connect: the command is gone for good, **and** the app's outbound AES stream has
+  advanced by a message we never consumed, so everything after it is unreadable (`…ta":{}}`,
+  leading block only). Measured end to end: the official app logged `AylaDatapoint sent to SDK:
+  0d 07 84 0f 02 01` (turn on) then `onCreateDatapointOk`, while our side recorded
+  `commandes = 0` and, twenty seconds later, one unreadable block — and the appliance, read
+  minutes afterwards, had not moved, so it had not gone via the cloud either.
+  **`onCreateDatapointOk` proves nothing about delivery**: the app says "delivered" on the
+  strength of its own queue, which it emptied by encrypting.
+- **The poll itself is journalled, on CHANGE only.** Fourteen probes in twenty-eight seconds used
+  to write not one line, so one could not tell whether the loop was even running, what the app was
+  answering, or where a block went missing. `noterSondage()` logs a transition — HTTP status, body
+  size, and the shape of the intentions parsed — so an empty queue says so once and goes quiet.
+  Logging every probe would drown the journal: it beats every 2 s. The early return that skips
+  decryption (non-200, empty body) goes through it too — it is one of the places a message can
+  vanish without a trace.
+- **The Ayla SDK is silent in logcat.** A full process capture contains no `LanModule`,
+  `CreateDPCommand` or `AylaLog` tag; what is observable phone-side stops at De'Longhi's own
+  service. Everything below that has to be instrumented here.
+- ⚠️ **An app's property READ is not resolved by the HTTP response — it is resolved by a datapoint
+  WE post, and only if that POST carries `?cmd_id=<n>` in its URL.** `AylaLanModule.getCommand()`
+  reads `session.getParms().get("cmd_id")` and nothing else; without it the command dies on
+  `defaultNetworkTimeoutMs` — **5 s**, measured — as `Timed out waiting for command response:
+  LanCmd[1]=property.json?name=d302_monitor`. The app then retries forever, which is what
+  `lecture d302_monitor (×72)` in the journal actually was: one request, retried, not 72.
+  **And the datapoint itself is a BARE object** — `new JSONObject(payload.data).getString("name")`
+  — so our `{properties:[{property:…}]}` wrapper raised a `JSONException` and the app answered
+  `400 Bad message JSON`: the multiplexer's whole point, one real read for N recipients, had been
+  pushing messages nobody could read, while the journal truthfully said "état rediffusé".
+  `paquetDatapoint()` and `cheminAvecCmd()` in `appproxy.mjs` hold both rules, `verif-apps.mjs`
+  pins them, and `faux-app.mjs` now reports the read's verdict in three branches (appariée / sans
+  cmd_id / jamais répondue).
+- ⚠️ **5 s is shorter than a round trip to the appliance**, which takes one command per visit every
+  2.5 s — so waiting for the machine before answering IS not answering. `m.dernieresValeurs` keeps
+  the last **raw** value per property (kept before any decoding: a value we cannot decode must
+  still be servable), the read is answered from it immediately, and a refresh is queued only when
+  that value is older than `FRAICHEUR_LECTURE_APP` (10 s). When we hold nothing, the `cmd_id` is
+  parked in `app.lectures` and consumed by the machine's eventual push — so the pairing happens on
+  both paths. **`d302_monitor` is read with `0x75`, not as an Ayla property**, and an app's request
+  therefore joins the very task `/pilotage`'s "Lire l'état" queues, merging on `cle: "presence"`:
+  the button, `/`, and every connected phone watch that one value — one real read, N recipients.
+- ⚠️⚠️ **A datapoint ack has THREE things to get right, and each one alone makes the app call the
+  command failed while the appliance actually did it.** Symptom seen live: the machine turns on
+  for real, the phone says the connection failed. From `AylaLanModule.handleDatapointAck`:
+  **(1) the URI decides** — `PropertyUpdateHandler.post()` does `endsWith("ack.json") ?
+  handleDatapointAck(…) : handlePropertyUpdateRequest(…)`, so an ack posted to
+  `/property/datapoint.json` is read as a property write, nothing is resolved, and the app's
+  `_ackTimeout` (10 s) fires `TimeoutError`; **(2) the payload is the BARE object**, not
+  `{properties:[{property:…}]}` — the SDK does `fromJson(payload.data, CreateDatapointAck.class)`,
+  so a wrapped ack yields `id = null`, matches no command, and raises `PreconditionError`;
+  **(3) `ack_status` must be `200`**, an HTTP code reused as an application status —
+  `if (ack.ack_status == Status.OK.getRequestStatus())` succeeds, anything else becomes
+  `ServerError(…, "Datapoint NAK")`, so `0` is read as an explicit refusal. `CHEMIN_ACK` and
+  `paquetAck()` in `appproxy.mjs` hold all three, `verif-apps.mjs` pins them, and `faux-app.mjs`
+  now routes on the URI like the real SDK — it used to accept an ack on `datapoint.json`, so it
+  was blind to exactly this.
+- ⚠️ **The ack is owed to any property carrying an `id`, INCLUDING one we do not relay.** It says
+  "received", not "executed" — it is a transport ack, and treating it as a business validation is
+  what broke the real app. Measured: the official app opens **every** session by writing
+  `device_connected`, a property we have no reason to relay to the appliance — and the ignore
+  branch `return`ed without acking. From the phone's side the machine it had just introduced
+  itself to did not answer, so it went no further and **not one command was ever sent**. The
+  registry showed it and nobody could read it: session established, datapoints received,
+  `commandes = 0` for the whole life of the entry. `accuserSiDemande()` now handles both paths
+  and the journal line says `· accusée`, because "ignorée" alone reads as "unanswered" when the
+  opposite is what happens. `faux-app.mjs` opens its session the same way and prints whether the
+  ack came back, so the bench can fail on this rule; `verif-apps.mjs` pins it on the pure side.
+- **A timed-out poll invalidates the session, because a response we never read may have been
+  produced.** `commands.json` is polled with a 4 s deadline; if the request reached the phone, the
+  phone encrypted its answer and **its outbound stream advanced while ours did not** — nothing
+  recovers from that. It used to surface two polls later as an unreadable block, with no line
+  linking it to the expiry that caused it. `ETIMEDOUT` now re-keys immediately, behind the same
+  15 s debounce; a key exchange never touches the appliance. Same treatment when `decapsulate`
+  itself refuses (bad padding) — that path logged and went back to polling a stream that would
+  never become readable again.
+- **`relancerSessionApp` logs the MOTIVE, not just the verdict**, and the unreadable block is kept
+  verbatim. "Désynchronisé" was observed three times a session for days with no line saying what
+  had caused it, which left the cause at the rank of a hypothesis. The CBC signature is readable
+  by eye — a wrong chaining value dirties only the leading block, hence garbage ending cleanly in
+  `…a":{}}`.
 - `POST /local_reg.json` carries **`?dsn=`** on the first registration only (`!_isActive` branch).
   It is the one moment the protocol says out loud which appliance the app believes it is talking
   to, hence the only chance to refuse a request that is not ours. A `PUT` carries none, but always
   follows a `POST`.
+- ⚠️ **A relayed command carried NO merge key, so an app piled up.** Reported from real use: six
+  identical `sélection de profil (0xa9) · profil 1` tasks waiting in the queue, each one about to
+  tell the machine what the one before it had just told it — the official app asserts its current
+  profile at every session open, and it opens several. `cleFusion()` in `ecam-args.mjs` now
+  supplies the key, and it lives there because **idempotence is a property of the protocol, not a
+  policy of the caller**: `0xA9` (re-asserting a profile) and any frame whose `ECAM_OPS` nature is
+  `lecture` (asking twice is asking once) get one; `0x75` deliberately returns the `"presence"`
+  key the queue already uses everywhere, so an app's state request and `/pilotage`'s "Lire l'état"
+  are one task. **Everything else returns `null`, and that is a decision rather than an omission** —
+  asking for two coffees is not asking for one, so a dispense, a stop and an on/off each keep their
+  own line, and so does a command absent from the table (a frame we cannot name is a frame whose
+  effect we do not know; merging it would delete a command on a guess). Both emitters read the same
+  rule — the relay and `/api/command` — or the same frame would merge on one path and not the other.
+  Two limits worth knowing: the other *named* read keys (`checksums`, `bean:n`, `reglages95:…`) are
+  unchanged, so the same read asked by an app and by a page still makes two tasks; and merging never
+  takes the **running** task, only waiting ones, so the worst case is two copies, not N. The merge
+  is on the TASK and never on the ack — `accuserSiDemande` still fires once per request, which is
+  correct: the ack carries transport, not execution.
 - **App commands go through the same queue as everything else**, rank `COMMANDE`. An app request
   is worth a UI request, no more; and the scheduler guarantees they do not collide — which the
   machine's single slot emphatically does not. ⚠️ **A relayed write reaches a real appliance**: it
@@ -1226,15 +1387,201 @@ consecutive identical entries with a `×N` count, same rule as the journal. **No
 leaves `vueApps()`**: a session is derived from the LAN key, so "no endpoint returns the key"
 applies to what descends from it.
 
+**There are TWO journals, and the boundary is the point: the main one keeps what REACHES the
+appliance, `LOG_APPS` keeps the conversation with the phones.** A connected app is chatty — it
+re-announces, it polls, and every state the machine pushes is re-broadcast to each of them; poured
+into the main journal that traffic drives off screen, in seconds, the very lines one opens the page
+for, namely what the coffee machine answered. `LA()` is `L()`'s twin (same folding of consecutive
+identical lines — never drop the `repetitions` count when rendering — same `sseTouch()`, without
+which the page would not know there is anything new), with one difference: the app id is a
+**column**, not a message prefix, which is what lets you follow one phone among three. It accepts a
+registry entry *or* a bare address, because refusals happen before an entry exists — and those are
+the ones you most want to see. It travels on `GET /api/apps`, which `/pilotage` already polls, so
+tracing costs no extra request.
+
+**It renders as its own full-width section, the twin of the machine journal** — same `pleine`, same
+`card log`, same line rendering — and sits immediately *above* it. Two chronologies of equal rank:
+what the coffee machine answered on one side, what the phones asked on the other, and reading them
+side by side is exactly what one does when an app command does not go through. As a sub-heading
+inside the "Applications branchées" card it read as an appendix to the list; it is that list's
+counterpart. It comes first because the phone's conversation is upstream — it is what triggers
+whatever the machine ends up answering. Unlike the panel above it, it is rendered **only when the
+multiplexer is active**: that panel has to be able to say "we are not looking", which no journal
+line can say, and once that sentence is on screen an empty journal would only repeat it, less
+clearly.
+
+One line is deliberately written to **both**: `app aN a imposé le profil P`. The active profile is
+a state of the *appliance*, so it belongs to the machine's chronology; and a third party decided
+it, so it belongs to the apps' one too. A relayed command therefore appears on both sides under two
+angles — "a1 asked for this" here, "the task leaves for the machine" there — which is not a
+duplicate: the first says who wanted it, the second says what became of it.
+
+Writing that journal is also what finally made the **state re-broadcast** visible: the very heart of
+the multiplexer — one real read, N recipients — was logged nowhere, surviving only as a cumulative
+counter. It is also the only trace of what an application RECEIVED from us.
+
+**`src/lib/ecam-args.mjs` is THE ECAM referential** — pure, proven by `scripts/verif-args.mjs` in
+CI (20 assertions). It holds the operation table (`ECAM_OPS`), the reading of a frame going **out**
+(`opTrame`, and `natureTrame` / `describeFrame` / `profilVise` over it), the reading of one coming
+**in** (`opReponse`), the 16-bit parameter table (`TWO`), and the argument decoder. Everything in
+`server.mjs` that names a command reads that one table: the two journals, the task labels, and the
+**scheduler** — `natureTrame` is what decides whether a step waits for a response or for a presence
+window, so the table is not decoration, it changes behaviour.
+
+It was assembled out of three places that each held a copy. `TWO` existed **three** times
+(`server.mjs`, `beverages.mjs` as `TWO_BYTE`, and the decoder); `ECAM_OPS` and `opTrame` lived in
+`server.mjs` where only that file could reach them. A duplicated protocol table diverges at the
+first addition **without raising anything** — you get plausible, wrong values, which in a journal
+used to decide whether a real appliance just poured a coffee or overwrote a recipe is the worst
+possible outcome. `beverages.mjs` now re-exports `TWO` under its old name rather than declaring it.
+
+**The decoder is the inverse of this file's frame builders**, each case naming the one it mirrors.
+What is not protocol is **injected** (a beverage's name for this machine, a setting's name), so the
+module knows neither a model's catalog nor the names typed on the appliance. Arguments are inserted
+**before** the hex, because that is the order one reads them in; the bytes never disappear.
+`describeFrame(f, { octets: false })` drops them for a **task label** — the Activité panel says what
+is going to the machine, it is not a byte dumper, and both journals carry the bytes anyway.
+
+⚠️ **Never guess, and say so loudly when you cannot.** An unhandled command returns `null` from the
+argument decoder and keeps its raw bytes; an operation absent from `ECAM_OPS` renders as **`commande
+NON IDENTIFIÉE (0x..)`**, in capitals, **and keeps its bytes even in the short form** — a short label
+for a frame nobody recognises would say nothing at all. That is not an error path, it is the
+discovery path: see the reverse-engineering section below.
+
+**The three places a relayed command is now readable.** `App a2 · commande` said nothing about what
+was reaching the appliance, and it was the only line the Activité panel showed — one could watch a
+task go by without being able to tell a coffee from a recipe being overwritten. The decoded
+description now travels as a **parameter** of the `appWrite` message (`App {app} · {commande}`), and
+it stays French from the server for the same reason journal lines do: it is the same text, produced
+by the same table, and two wordings for one frame would contradict each other at the first protocol
+change. `startProgram`'s journal line gained the arguments too, so the machine journal and the app
+journal describe one frame the same way.
+
+**Rebroadcast states are named, both halves of them.** The app journal used to print `état rediffusé
+· d263_3_rec_priority` — a property name and nothing else, unreadable to anyone who does not know
+the table by heart, and silent about what the value contained. `libelleEtat()` names the **property**
+(via `nomPropriete()`, which inverts the catalog's own `boundsProp` / `profileProp` builders rather
+than copying a second table of names, plus `profilePropInfo`, `REGLAGE_PROPS` and the bean-slot
+pattern) **and the command its frame carries** (via `opReponse`, same `ECAM_OPS`). Two deliberate
+limits: the **monitor prints only its state byte and idle/running** — adding the percentage would
+break `LA()`'s folding of identical lines during a preparation, where the machine pushes every 1–3 s
+and every push goes to every app, drowning the journal in a progression the machine journal already
+shows; and **bytes are attached only to the unknown**, since elsewhere they would repeat, worse, what
+the machine journal decodes.
+
+**The same guard was missing on the OUTGOING side, where it matters more — the value gets relayed
+to a real appliance.** Seen live in the app journal: `commande NON IDENTIFIÉE (0x37) · trame 45 da
+37 88 …`, while an ECAM frame starts `0x0D` and that one starts `0x45`. It was not an unknown
+command, it was **not a frame at all**, and `0x37` was merely the byte that happened to sit there.
+`opTrame` decoded base64 with no shape or header check — the same `Buffer.from(x, "base64")` trap
+fixed months earlier on the incoming side and never carried across. The filter now lives once, in
+`octetsEcam()`, and both directions read it; `describeFrame()` answers `valeur non-trame` with the
+bytes **unstripped** (the 4 trailing bytes are timestamps only inside a frame) plus the original
+base64. The stake is the discovery signal itself: a mislabelled value **manufactures a finding that
+does not exist** and hides the one true fact, that this is not a frame. That value has since been
+identified — `p097j6.d.s0()`, a constant hardcoded in the app (`doc/commandes-cafe.md` § 14.5), sent
+once per Wi-Fi session; it is **named, not decoded**, and deliberately kept OUT of `ECAM_OPS`, since
+`0x37` is not a command byte.
+**The wrong hypothesis it produced is worth keeping, because it was the reasonable one.** Twelve
+bytes shown, four stripped: sixteen, exactly one AES block — this file's own signature for a
+dirtied leading block — and a probe timeout was indeed recorded on that same session. "Not
+application bytes at all, look upstream" was a sound reading, and it was false. Three independent
+proofs killed it: the phone logs the bytes **before encryption** (a dirtied CBC block cannot appear
+in the sender's own log), their CRC-CCITT/`0x1D0F` over bytes 0-9 equals bytes 10-11, and they sit
+verbatim in the binary, identical across three sessions. The method rule to carry forward: **when
+"it is noise" and "it is signal" compete, the signal hypothesis is the one that is refutable
+cheaply — test it first.** Verifying a CRC on the bytes in hand costs three lines; hunting a
+journal for what might have gone missing upstream can run for hours and conclude nothing. The
+stripping, incidentally, turned into the confirmation: the CRC only lands if the split was right,
+so the four removed bytes were the timestamp `Y1()` appends to **every** value (`finalPacket size :
+16` = 12 + 4). It was right by coincidence — it assumed an ECAM frame where there was none — and
+not stripping what you cannot read remains the rule.
+**A property whose value is not a frame no longer gets one invented — and that was misrouting, not
+just a bad label.** `handleProperty` read its command byte with `Buffer.from(value, "base64")[2]`,
+and that call **never throws**: it ignores what is not base64 and returns bytes that look like
+something. Visible half: `device_connected = 1787407876`, a plain unix timestamp the real app writes
+to us, was journalled as `commande 0x3b non décodée — d7 bf 3b e3 4e fc ef` — seven invented bytes
+where the value was readable as it stood. Invisible half, and the worse one: that fabricated byte is
+what **dispatches** the decoding, so any value whose third byte happened to be `0xA2` went to
+`decodeParameters` and filed imaginary counters in the database. Dispatch now goes through
+`opReponse`, which checks the base64 shape *then* the ECAM header (`0xD0` or `0x0D`) and returns
+`null` otherwise, sending the value cleanly to `default` where it is kept verbatim.
+
+**Treat it as a reverse-engineering instrument, not just a status panel.** The official app is the
+only emitter in the world that produces frames we have never seen, and it does not replay them — so
+whatever is not captured as it goes past is lost. Two consequences already in the code. A write to a
+property we do not relay is ignored *for the appliance* but **not for the journal**: its payload is
+recorded verbatim by `chargeBrute()`, where the line used to name the property and drop the bytes —
+and a property we do not relay is by definition protocol we do not yet know, i.e. exactly what one
+comes here for. And `chargeBrute()` deliberately does **no** interpretation, unlike `describeFrame()`
+which strips the 4 trailing timestamp bytes: stripping is right when you know what you are looking
+at and wrong the moment you do not, because a tool that has already decided what to discard can no
+longer teach you anything (same lesson as `/regtoken.json`, where rebuilding the "obvious" response
+meant betting on a field list nobody knew). It prints both hex — to compare against the tables in
+`doc/commandes-cafe.md` — and the original base64, which pastes straight into a test or a replay,
+with the truncation **stated** rather than silent. For the same reason an unrecognised request is
+logged at 400 characters, not 160: a request truncated to 160 cannot be analysed. The other half of
+the round trip — what the machine answered — stays in the machine journal by the boundary above; the
+two sections sit one under the other precisely so the correlation is a glance.
+
+**That is what the decoding is FOR: finding what is not in the referential yet.** Naming what we
+already know is only half of it — the other half is that everything we do *not* know now stands out
+instead of blending in. Three markers, all in capitals so they survive a scroll: `commande NON
+IDENTIFIÉE (0x..)` for an operation absent from `ECAM_OPS`, `PROPRIÉTÉ NON IDENTIFIÉE` for an Ayla
+property `nomPropriete()` cannot name, and `valeur non-trame` for a value that is not ECAM at all.
+Each keeps its bytes, in both hex (to compare against `doc/commandes-cafe.md`) and base64 (to paste
+into a test). The corollary is a rule about the table itself: **an entry missing from `ECAM_OPS` for
+a response the server decodes perfectly would produce a false discovery signal**, so
+`verif-args.mjs` asserts that every command byte `handleProperty` routes has an entry
+(`0xA1 0xA2 0xA3 0xA4 0xA6 0xA8 0xAA 0xB0 0xBA 0x95`). Adding a decoder means adding its line to the
+table in the same breath.
+
+⚠️ **`scripts/faux-app.mjs` must stay faithful on the response bodies, and one line proves why.** It
+used to answer `datapoint.json` with an `encapsulate("{}")`, where the real SDK returns an **empty**
+body (`AylaLanModule.handlePropertyUpdateRequest` → `newFixedLengthResponse(getResponseCode(),
+MIME_JSON, "")`). That advanced the fake app's outbound AES stream by one message the server never
+decrypted — it discards that POST's body, as the protocol allows — so the server's inbound stream
+stayed one message behind and the **first block** of the next `commands.json` came out as garbage
+while the rest read perfectly: in CBC a wrong chaining value only dirties the leading block, the
+following ones re-align on the ciphertext preceding them inside the same message. Hence the very
+recognisable `…a":{}}` tail after unreadable bytes — **the exact signature seen with the real app,
+but from a completely different cause** (two concurrent polls, fixed since). A bench that is
+unfaithful on precisely one point manufactures the symptom it exists to catch; that is the worst
+service it can render. When a demo run shows a desync, check for a stray `faux-app.mjs` from an
+earlier run first — a process holding port 8888 from before an edit runs the OLD code, and the new
+one dies on `EADDRINUSE` while the old one keeps answering.
+
 **Two scripts prove the chain without hardware**, and they are the pattern to follow:
 `scripts/faux-app.mjs` plays a client, `scripts/fausse-machine.mjs` plays the appliance. Run
 together against a `PROXY_APPS=1` server they demonstrate the central claim — **one datapoint from
 the machine, two applications served, each in its own stream** (verified). `faux-app` is
 deliberately read-only: it cannot build an ECAM frame and never will.
 
-**What is still NOT proven**, and no local test can close it: that a *real* De'Longhi app will
-accept us. It may check things our fake client does not. The mDNS responder (spec step 1) is also
-unwritten, so an app cannot yet find us by itself.
+**The central claim is now PROVEN with real clients, on 2026-08-22 at 19:38.** Two official
+De'Longhi apps — a Pixel 7 Pro (`a1`) and a Galaxy Tab (`a2`), different Android versions —
+held simultaneous sessions against one appliance whose local-peer slot fits exactly one. Every
+state read once off the machine left twice, each in its own AES stream, both readable, with no
+unreadable block and no key-exchange loop:
+
+```
+19:38:55  OUT a1  état rediffusé · sélection de profil (0xa9)
+19:38:55  OUT a2  état rediffusé · sélection de profil (0xa9)
+19:38:56  OUT a1  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+19:38:56  OUT a2  état rediffusé · réponse ECAM · sélection de profil (0xa9)
+```
+
+That is the inference this file and `doc/spec-proxy-multi-app.md` both flagged as unclosable by
+any local test — a real app might check what `faux-app.mjs` does not. It does not.
+
+**What is still NOT proven**: the mDNS responder (spec step 1) is unwritten, so an app cannot
+find us by itself — both apps above reached us through a **binat** rewriting the appliance's
+`ip:80` to the server. That is a deployment answer, not a protocol one, and it is the remaining
+gap. Worth recording from the same session: the SDK's own startup errors are transient and
+identified — `404 No device found` (15 B) and `404 No LAN module found` (19 B) from
+`CommandHandler.get()`, and a `500` of 60 B that is **not** an `AylaLanModule` error body but
+NanoHTTPD's router catching an exception (`"Error: " + class + " : " + message`, plaintext).
+None of them carries an encrypted payload, so `porteUneCharge()` correctly leaves the stream
+untouched — at the cost of discarding a body that was readable as it stood.
 
 ## Internationalisation
 

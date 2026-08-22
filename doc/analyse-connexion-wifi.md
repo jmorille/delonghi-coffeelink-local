@@ -921,3 +921,407 @@ JWT Gigya, token Ayla, `app_id`/`app_secret` de l'application, identifiants mach
 personnelles restituées par le cloud.
 
 Ce fichier-ci ne contient donc plus de secret et peut être versionné.
+
+### 7quater bis. L'accusé de datapoint — ce qui bloquait l'application officielle
+
+**Relevé sur la vraie application, et ça bloquait tout.** Elle ouvre **chaque** session en
+écrivant `device_connected` dans son bloc `commands.json`, avec un champ `id` — donc en demandant
+un accusé :
+
+```json
+{"properties":[{"property":{"name":"device_connected","value":1787413302,"id":"…"}}]}
+```
+
+`device_connected` n'est pas une propriété de transport ECAM : lan-server n'a aucune raison de la
+relayer à la cafetière, et il ne le fait pas. Mais il **sortait de cette branche sans accuser**.
+
+> ⚠️ **L'accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »).** Il est donc dû dès
+> que `id` est présent, que la propriété soit relayée ou ignorée. Les confondre laisse
+> l'application attendre un message qui ne viendra jamais.
+
+Du point de vue du téléphone, la machine à laquelle il vient de se présenter ne répond pas : il
+n'allait pas plus loin, et **aucune commande ne partait**. Le symptôme côté utilisateur est
+« l'application n'arrive pas à allumer la machine » ; le symptôme côté serveur était visible sans
+être lisible — session établie, datapoints reçus, et `commandes = 0` pendant toute la vie de
+l'entrée dans le registre.
+
+### 7quater ter. Une sonde expirée casse le flux, définitivement
+
+Le serveur sonde `commands.json` toutes les 2 s avec une échéance de 4 s. Si la requête **atteint**
+le téléphone et que la réponse se perd ensuite, l'application a produit et **chiffré** sa réponse :
+son flux sortant a avancé, le nôtre non — et la commande qu'il portait est perdue, le SDK l'ayant
+retirée de sa file en la chiffrant.
+
+On le découvrait deux sondes plus tard, sous la forme d'un bloc illisible, sans qu'aucune ligne ne
+relie les deux événements. Désormais un `ETIMEDOUT` relance l'échange de clés tout de suite, et le
+journal porte le **motif** de la relance :
+
+| motif journalisé | ce qui l'a déclenché |
+|---|---|
+| `sonde expirée, réponse peut-être perdue` | la sonde `commands.json` a dépassé 4 s |
+| `déchiffrement refusé` | `decapsulate` a refusé le corps (remplissage invalide) |
+| `bloc illisible, flux désynchronisé` | déchiffré, mais ce n'est pas du JSON |
+
+Le bloc illisible est **conservé tel quel** dans le journal : c'est la seule preuve de ce qui s'est
+passé, et sa signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, la
+suite se recale seule, d'où des octets illisibles finissant proprement par `…a":{}}`.
+
+Un échange de clés ne touche pas la cafetière : il ne recrée que le chiffrement entre
+l'application et nous. Rouvrir tôt ne coûte donc rien, et un verrou de 15 s empêche l'emballement
+si le téléphone est seulement lent.
+
+
+### 7quater quater. La file de commandes d'une application est à AU PLUS UNE remise
+
+Relevé dans le SDK décompilé (`AylaLanModule.handleLanCommandRequest`), et c'est la propriété la
+plus lourde de conséquences de tout ce chemin :
+
+```java
+String payload = lanCommandPeek.getPayload();
+String enc = this._encryption.encryptEncapsulateSign(payload);   // le flux AES avance ICI
+if (!lanCommandPeek.expectsModuleRequest()) {
+    lanCommandPeek.setModuleResponse("");
+    this._pendingLanCommands.remove(lanCommandPeek);             // et la commande part de la file
+}
+return newFixedLengthResponse(getResponseCode(), MIME_JSON, enc);
+```
+
+> ⚠️ **La commande quitte la file au moment où elle est CHIFFRÉE, pas quand elle est reçue.** Il
+> n'y a aucun réessai : si cette réponse HTTP se perd, la commande est perdue **définitivement**,
+> et le flux AES de l'application a avancé d'un message que nous n'avons jamais consommé.
+
+Une seule réponse perdue produit donc les deux symptômes à la fois, et c'est ce qui les rendait
+impossibles à relier :
+
+1. **la commande n'arrive jamais** — l'application, elle, la croit remise ;
+2. **tout ce qui suit est illisible** — un flux CBC persistant décalé d'un message ne se rattrape
+   pas ; d'où la signature `…ta":{}}`, où seul le bloc de tête est sali.
+
+Conséquences pour ce serveur, toutes déjà appliquées :
+
+- une sonde `commands.json` qui **expire** doit être traitée comme un flux douteux et forcer un
+  nouvel échange de clés, pas comme un simple silence ;
+- un retour anticipé qui saute le déchiffrement (statut ≠ 200, corps vide) doit être **journalisé** :
+  c'est un endroit où un message peut disparaître sans laisser de trace ;
+- la sonde elle-même doit se voir dans le journal. Une transition par changement — statut, taille,
+  forme des intentions — suffit, et journaliser chaque sonde noierait tout : elle bat toutes les 2 s.
+
+**Ce que cela ne dit pas.** Rien ici ne permet de savoir *pourquoi* une réponse s'est perdue : le
+SDK Ayla n'écrit pas ses journaux dans logcat (aucun tag `LanModule` ni `CreateDPCommand` dans une
+capture complète), donc le seul point d'observation est notre côté. C'est précisément ce que la
+trace de sonde existe pour combler.
+
+### 7quater quinquies. Un relevé complet, côté téléphone, d'un allumage qui n'arrive pas
+
+Capture `adb logcat` de l'application officielle, tampon vidé juste avant. Les horodatages sont
+ceux du téléphone.
+
+```
+18:04:07   local_reg → session établie avec nous
+18:04:09   VIP: Dispositivo entrato in modalità LAN     ← l'app nous accepte comme l'appareil
+18:04:09   onSingleChangeProperty device_connected sameLan: true
+18:04:14   turnMachineOn / getPacketForTurnOn / sendCommand
+18:04:14   AylaDatapoint sent to SDK:  0d 07 84 0f 02 01 55 12      ← ALLUMER
+18:04:14   encodedPacket DQeEDwIBVRJqich+
+18:04:21   onCreateDatapointOk                          ← l'app la croit remise (6,5 s plus tard)
+```
+
+Côté serveur, sur la même session : `commandes = 0`, aucune ligne `data_request`, puis à 18:04:35
+un bloc illisible finissant par `…ta":{}}`. Et la machine, interrogée sept minutes plus tard,
+n'avait pas bougé — donc la commande n'est pas passée par le cloud non plus.
+
+Deux enseignements de méthode :
+
+- **`onCreateDatapointOk` ne prouve rien sur la remise.** L'application affiche « remise » sur la
+  foi de sa propre file, qu'elle a vidée en chiffrant. Ne jamais s'en servir comme preuve.
+- **Le SDK Ayla est muet dans logcat.** Une capture complète du processus ne contient aucun tag
+  `LanModule`, `CreateDPCommand` ou `AylaLog`. Ce qu'on peut observer du côté téléphone s'arrête
+  au service De'Longhi ; tout le reste doit être instrumenté ici.
+
+
+### 7quinquies. `206 Partial Content` — la réponse qu'il ne fallait surtout pas jeter
+
+**C'est la cause de l'allumage qui n'arrivait jamais depuis l'application officielle**, et elle
+tient en une méthode du SDK (`AylaLanModule.getResponseCode`) :
+
+```java
+private Status getResponseCode() {
+    return this._pendingLanCommands.size() > 0 ? PARTIAL_CONTENT : OK;
+}
+```
+
+> ⚠️ **Le statut ne qualifie pas le corps, il annonce la SUITE.** `206` veut dire « il me reste des
+> commandes en file », `200` « c'était la dernière ». Les deux portent la même charge chiffrée,
+> parfaitement valide.
+
+Un serveur qui ne traite que le `200` jette donc **exactement** les réponses qui transportent une
+commande, et n'en garde que la dernière d'un lot. Le coût est double et irréparable :
+
+1. la commande est perdue — le SDK l'a retirée de sa file au moment où il l'a **chiffrée**
+   (§ 7quater quater), sans réessai ;
+2. le message chiffré non déchiffré laisse notre flux AES-CBC un message en arrière.
+
+**Relevé de bout en bout.** L'application empile `0x84` (allumer) puis, une milliseconde plus tard,
+tout un lot d'alarmes (`startAlarmsBatch`). Dès qu'il y a deux commandes en file, la première
+revient en `206` — et partait à la poubelle sans une ligne de journal. Vu du téléphone,
+`AylaDatapoint sent to SDK: 0d 07 84 0f 02 01` puis `onCreateDatapointOk` ; vu du serveur,
+`commandes = 0` ; vue de la cafetière, aucun changement d'état sept minutes plus tard.
+
+Conséquence sur la cadence : `206` doit être **rebouclé tout de suite**, dans le même passage. Un
+lot de dix commandes servi au rythme de la sonde met vingt secondes à arriver, alors que
+l'utilisateur vient d'appuyer sur un bouton. L'enchaînement se fait à l'intérieur du verrou de
+sonde : jamais deux lectures concurrentes sur le même flux AES.
+
+### 7sexies. Ce qu'un « bloc illisible » veut dire au juste
+
+Ce document a longtemps affirmé qu'un flux AES-CBC persistant décalé d'un message « ne se rattrape
+pas ». **C'est faux, et le croire menait l'enquête au mauvais endroit.**
+
+En CBC, le bloc *n* d'un message se déchiffre avec le chiffré *n−1* du **même** message. Seul le
+tout premier bloc dépend de ce qui précédait. Donc, mesuré (`scripts/verif-lansession.mjs`, deux
+assertions) :
+
+| ce qu'on saute | ce qui est abîmé | ce qui suit |
+|---|---|---|
+| un message | les **16 premiers octets** du prochain message lu | parfaitement lisible |
+| n messages d'affilée | les 16 premiers octets du prochain message lu | parfaitement lisible |
+
+D'où la signature `…a":{}}` : le charabia s'arrête net au premier bloc et la queue du JSON reste
+mot pour mot. Et d'où la lecture correcte de la ligne de journal :
+
+> **Un bloc illisible ne dit pas « le flux est cassé ». Il dit « exactement un message a disparu
+> juste avant » — et ce message portait peut-être une commande, elle, définitivement perdue.**
+
+Un seul bloc illisible au journal n'est donc pas un incident isolé et bénin : c'est le seul indice
+visible d'une commande évaporée. C'est en **amont** qu'il faut chercher ce qui a mangé le message,
+jamais dans le bloc lui-même. Le nouvel échange de clés qu'on déclenche derrière ne répare rien de
+perdu — il évite seulement le bloc sali suivant.
+
+
+### 7septies. L'accusé de datapoint — trois détails, et chacun suffit
+
+Symptôme : **la machine s'allume pour de bon, et le téléphone affiche que la connexion a
+échoué.** L'ordre est passé, l'appareil l'a exécuté, et l'application le compte comme un échec.
+
+L'accusé est ce qui dénoue l'attente de l'application. `CreateDatapointCommand` le réclame quand
+la propriété est `ack_enabled` (le champ `id` dans la charge **est** la demande), place la
+commande dans `_commandsPendingResponses`, et arme `_ackTimeout` — 10 s par défaut — au bout
+duquel elle lève `TimeoutError("Timed out waiting for datapoint ack")`.
+
+Trois choses doivent être justes, et elles se lisent dans `AylaLanModule.handleDatapointAck` :
+
+| ce qu'il faut | ce que nous faisions | ce que l'application en concluait |
+|---|---|---|
+| poster sur un chemin finissant par **`ack.json`** | `/property/datapoint.json` | ce n'est pas un accusé, c'est une écriture de propriété — rien n'est dénoué, `TimeoutError` au bout de 10 s |
+| une charge qui est **l'objet nu** | `{properties:[{property:{…}}]}` | Gson ne trouve ni `id` ni `ack_status`, aucune commande n'est appariée, `PreconditionError` |
+| **`ack_status: 200`** | `0` | `ServerError(0, "Datapoint NAK")` — un refus explicite |
+
+**C'est l'URI, et elle seule, qui fait d'un POST un accusé.** Les deux routes tombent sur le même
+gestionnaire, qui tranche sur la fin du chemin :
+
+```java
+// PropertyUpdateHandler.post()
+return gVar.c().endsWith("ack.json")
+     ? lanModule.handleDatapointAck(gVar, map, jVar)
+     : lanModule.handlePropertyUpdateRequest(gVar, map, jVar);
+```
+
+Et le statut est un **code HTTP réemployé comme statut applicatif** — ce qui n'est devinable
+d'aucune façon :
+
+```java
+if (createDatapointAck.ack_status == Status.OK.getRequestStatus()) {   // == 200
+    ... succès, la propriété est mise à jour, le successListener part ...
+} else {
+    ... errorListener.onErrorResponse(new ServerError(ack_status, null, "Datapoint NAK", null));
+}
+```
+
+> ⚠️ **Un accusé porte le TRANSPORT (« reçu »), pas l'exécution (« fait »).** Il est donc dû dès
+> que `id` est présent, y compris sur une propriété que nous ne relayons pas à la cafetière —
+> `device_connected`, que l'application officielle écrit à l'ouverture de chaque session.
+
+Vérifié sur le banc, `faux-app.mjs` routant désormais sur l'URI comme le vrai SDK :
+
+```
+→ commande servie : device_connected (accusé demandé) (206, il en reste 2)
+← accusé faux-app-presence statut 200
+→ commande servie : lot 1 (206, il en reste 1)
+→ commande servie : lot 2 (200, dernière)
+device_connected : accusé REÇU.   file de commandes : entièrement servie.
+```
+
+Le banc acceptait auparavant un accusé sur `datapoint.json` : il ne pouvait donc pas attraper ce
+défaut. Même leçon que la réponse vide de `datapoint.json` (§ plus haut) — **un banc infidèle sur
+un seul point est aveugle exactement là.**
+
+
+### 7octies. Une lecture d'application : la réponse ne passe pas par la réponse
+
+Symptôme, une fois l'allumage réglé : la machine obéit, l'accusé arrive en 39 ms, et
+l'application affiche toujours un échec de connexion. Au journal des applications, la même ligne
+en boucle — `lecture d302_monitor (×72)` — et côté téléphone :
+
+```
+E/LocalNetwork: Timed out waiting for command response: LanCmd[1]=property.json?name=d302_monitor
+```
+
+**Les soixante-douze demandes n'en étaient qu'une, réessayée.**
+
+#### Ce qu'une lecture attend vraiment
+
+Le SDK construit sa commande en désignant lui-même l'endroit où il attend la réponse :
+
+```java
+public static AylaLanCommand newGetPropertyCommand(String name) {
+    return new AylaLanCommand("GET", "property.json?name=" + name, null,
+                              "/local_lan/property/datapoint.json");
+}
+```
+
+> ⚠️ **Servir la commande ne la dénoue pas.** `handleLanCommandRequest` la déplace dans
+> `_commandsPendingResponses` et arme son délai ; ce qui la termine est un **POST de datapoint que
+> l'appareil initie**, et lui seul.
+
+Et l'appariement ne regarde ni le corps, ni le chemin :
+
+```java
+private LanCommand getCommand(a.j jVar) {
+    String str = (String) jVar.c().get("cmd_id");        // c() == getParms(), la query string
+    AylaLanCommand queued = str != null ? getQueuedCommand(Integer.parseInt(str)) : null;
+    if (queued == null) { AylaLog.d(…, "No matching command found in the queue"); return null; }
+    ...
+}
+```
+
+Sans `?cmd_id=<n>` dans l'URL, `command` vaut `null`, `setModuleResponse()` n'est jamais appelé, et
+la commande meurt sur `getRequestTimeout()` — `defaultNetworkTimeoutMs`, **5 secondes** mesurées
+entre la commande servie et le `Timed out`. Une poussée spontanée, elle, n'en porte pas : c'est
+correct, `getCommand()` rend `null` et la propriété est appliquée quand même.
+
+#### Et le datapoint est un objet NU
+
+Défaut jumeau, trouvé dans la foulée et **plus grave, parce qu'il touchait toutes les
+rediffusions** :
+
+```java
+// AylaLanModule.handlePropertyUpdateRequest
+JSONObject jSONObject = new JSONObject(payload.data);
+String string = jSONObject.getString("name");
+Object obj    = jSONObject.get("value");
+String dsn    = jSONObject.optString("dsn", null);
+```
+
+Nous poussions `{"properties":[{"property":{…}}]}` — la forme que l'application emploie pour
+*écrire*, pas celle que l'appareil emploie pour *répondre*. `getString("name")` lève alors une
+`JSONException`, la commande reçoit un `JsonError`, et l'application répond **400 « Bad message
+JSON »**. Autrement dit le cœur du multiplexeur — une lecture réelle, N destinataires — poussait
+depuis toujours des messages que personne ne pouvait lire. Le journal disait « état rediffusé », et
+c'était vrai ; ce qui manquait, c'est que rien n'arrivait de l'autre côté.
+
+#### Répondre à temps est impossible en allant chercher la valeur
+
+Cinq secondes, c'est moins qu'un aller-retour vers la cafetière : elle ne prend **qu'une commande
+par visite**, et elle ne visite que toutes les 2,5 s. Attendre la machine pour répondre revient
+donc à ne pas répondre.
+
+D'où le cache : `m.dernieresValeurs`, la dernière valeur **brute** de chaque propriété, retenue
+avant tout décodage — une valeur qu'on ne sait pas décoder doit pouvoir être servie comme les
+autres. Trois règles en découlent :
+
+- **On répond tout de suite avec ce qu'on a**, et on demande le rafraîchissement ensuite.
+- **En deçà de `FRAICHEUR_LECTURE_APP` (10 s), on ne redemande rien** : deux applications qui
+  interrogent le monitor à trois secondes d'intervalle valent une lecture réelle, pas deux.
+- **Si la valeur est inconnue, l'identifiant est retenu** (`app.lectures`, propriété → `cmd_id`) et
+  consommé par la poussée que la machine finira par produire. L'appariement a lieu dans les deux
+  cas.
+
+#### `d302_monitor` a trois lecteurs, et une seule lecture
+
+> ⚠️ **Le monitor ne se lit pas comme une propriété : il se DEMANDE, avec `0x75`**, et sa réponse
+> arrive en poussée de `d302_monitor`. Une lecture de propriété Ayla sur ce nom-là ne déclenche
+> rien.
+
+C'est le même geste que « Lire l'état » de `/pilotage` : la demande d'une application part donc
+dans la **même tâche**, avec la même clé de fusion `presence`. Le bouton, la page `/` et chaque
+téléphone branché regardent tous cette valeur — une lecture réelle vers la cafetière, N
+destinataires. Une tâche par téléphone, à côté de celle du bouton, pour aller chercher ce que
+l'autre rapportait déjà, aurait été la négation même du multiplexeur.
+
+#### Vérifié sur le banc
+
+```
+→ commande servie : lecture d302_monitor (200, dernière)
+← datapoint d302_monitor = 0BJ1DwQAAAAAAAAAAAAAAAAA (réponse à la commande 1)
+lecture d302_monitor : RÉPONDUE et appariée (cmd_id 1).
+```
+
+et, côté serveur, les deux chemins l'un après l'autre :
+
+```
+APP a1 · lecture d302_monitor · valeur inconnue, demandée à la machine
+OUT t1 · Présence — lecture · monitor (0x75) · trame 0d 05 75 0f da 25
+APP a1 · état servi · d302_monitor · état machine 0x04 · au repos
+…
+APP a2 · lecture d302_monitor · servie du cache, rafraîchissement demandé
+```
+
+Le banc a d'abord annoncé « jamais appariée » alors que le serveur envoyait bien le `cmd_id` : il
+lisait la requête sur une URL dont il avait lui-même retiré la query string. Même leçon qu'aux
+§ précédents — **un banc infidèle sur un seul point est aveugle exactement là**, et cette fois il
+accusait à tort.
+
+
+### 7nonies. Une commande relayée sans clé de fusion : l'application empile
+
+Relevé en usage réel, dans le panneau « Activité » :
+
+```
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+App a1 · action · sélection de profil (0xa9) · profil 1   commande  1 pas
+…six fois
+```
+
+Six tâches en attente pour une seule question. L'application officielle **impose son profil
+courant à chaque ouverture de session** — c'est la toute première commande qu'elle nous a jamais
+relayée — et elle en ouvre plusieurs. Chacune de ces six tâches allait redire à la cafetière ce
+que la précédente venait de lui dire.
+
+La cause est nue : la commande relayée appelait `startProgram` **sans `cle`**, et `enfiler` ne
+fusionne que sur `cle`.
+
+#### Ce qui peut fusionner, et ce qui ne doit surtout pas
+
+> ⚠️ **L'absence de clé est une décision, pas un oubli.** Demander deux cafés n'est pas demander
+> un café. Poser une clé sur tout aurait supprimé des commandes.
+
+La règle vit donc dans `cleFusion()`, côté `ecam-args.mjs`, parce que **l'idempotence est une
+propriété du protocole et non une politique de l'appelant** :
+
+| trame | clé | pourquoi |
+|---|---|---|
+| `0xA9` sélection de profil | `profil:<n>` | une affirmation d'état ; réaffirmer le même profil ne fait rien de plus |
+| `0x75` monitor | `presence` | le nom que la file emploie déjà — la demande d'une application et le bouton « Lire l'état » deviennent une tâche |
+| toute autre `lecture` | `lecture:<hex>` | demander deux fois la même chose, c'est la demander une fois |
+| `0x83` préparation, `0x84` marche/arrêt, écritures | **aucune** | l'effet se cumule, ou son idempotence n'est pas établie |
+| commande hors table, valeur non-trame | **aucune** | une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet |
+
+La nature vient d'`ECAM_OPS`, donc aucun site d'appel n'en décide et il n'existe pas de seconde
+table à tenir à jour.
+
+#### Trois points à ne pas regretter plus tard
+
+- **Les deux émetteurs lisent la même règle** — la commande relayée et `/api/command`. Une règle
+  par émetteur aurait fusionné d'un côté et pas de l'autre, pour la même trame.
+- **La fusion porte sur la tâche, jamais sur l'accusé.** `accuserSiDemande` part une fois par
+  demande, y compris pour celle qui vient de fusionner — et c'est exact : l'accusé porte le
+  transport, pas l'exécution.
+- **La fusion ne prend jamais la tâche en cours**, seulement celles en attente (`enfiler` :
+  « celle-là a déjà servi une partie de ses pas »). Le pire cas est donc deux exemplaires — celui
+  qui tourne et celui qui attend, lequel absorbe tous les suivants — jamais N.
+
+Limite assumée : les autres lectures **nommées** côté serveur (`checksums`, `bean:n`,
+`reglages95:…`) gardent leur clé propre, donc une même lecture demandée par une application et par
+une page fera toujours deux tâches. Pinné par `verif-args.mjs`.
+

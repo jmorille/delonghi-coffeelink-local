@@ -132,13 +132,38 @@ const BS_PROFILE_STRIDE = 6;
  * Recettes personnalisées : bornes `d028_rec_custom_1` … `d033_rec_custom_6`, valeurs
  * `d200_1_cstm_recipe_01` … `d205_1_cstm_recipe_06`.
  *
- * ⚠️ **Le profil est toujours 1**, et ce n'est pas un raccourci de notre part : l'app écrit ces
- * noms en dur (`DeLonghiWifiConnectService`, `C1("d200_1_cstm_recipe_01")`) et il n'existe aucune
- * fonction qui les construise avec un profil variable, contrairement aux recettes standard et au
- * Bean System. Demander `d200_2_cstm_recipe_01` serait inventer un nom.
+ * ⚠️ **Elles SONT par profil, pas de 6 — et l'inverse a longtemps été écrit ici.**
+ *
+ * L'ancienne note disait « le profil est toujours 1 », en s'appuyant sur un fait exact : l'app
+ * n'écrit que six littéraux, `C1("d200_1_cstm_recipe_01")` … `C1("d205_1_cstm_recipe_06")`, et
+ * ne possède aucun constructeur à profil variable. L'inférence tirée de ce fait était fausse :
+ * ce que l'application ne sait pas demander, la machine sait néanmoins le publier.
+ *
+ * Constaté le 2026-08-22 à 19:41, dans le journal des applications, après une écriture de
+ * recette (`0x83`) — la cafetière a poussé d'elle-même les CINQ profils :
+ *
+ * ```
+ * d202_1_cstm_recipe_03   trame d0 17 a6 f0 01 e8 …
+ * d208_2_cstm_recipe_03   trame d0 17 a6 f0 02 e8 …
+ * d214_3_cstm_recipe_03   trame d0 17 a6 f0 03 e8 …
+ * d220_4_cstm_recipe_03   trame d0 17 a6 f0 04 e8 …
+ * d226_5_cstm_recipe_03   trame d0 17 a6 f0 05 e8 …
+ * ```
+ *
+ * Deux confirmations indépendantes dans chaque ligne : le numéro suit `200 + (p−1)×6 + (slot−1)`
+ * pour les cinq, et **l'octet de profil de la trame** (`f0 0P`) concorde avec le chiffre du nom.
+ * `0xE8` = 232 = « Recette perso 3 » dans la table ci-dessus. Le pas de 6 est celui du Bean
+ * System (`t()`, base 160), et `200 + 5×6 = 230` tombe pile là où commencent les identifiants de
+ * boisson des recettes perso : aucune collision.
+ *
+ * ⚠️ Ce n'était pas qu'une étiquette manquante au journal : en imposant le profil 1, on lisait
+ * `d202_1_…` pour les profils 2 à 5, donc on **affichait la recette du profil 1 en la présentant
+ * comme la leur**. Exactement le défaut du Bean System sans pas, corrigé plus haut — à ceci près
+ * que celui-là répondait vide et se voyait, alors que celui-ci répondait une valeur plausible.
  */
 const CUSTOM_BOUNDS_BASE = 28; // d028 = perso 1
 const CUSTOM_PROFILE_BASE = 200; // d200 = perso 1, profil 1
+const CUSTOM_PROFILE_STRIDE = 6; // six emplacements perso par profil, comme le Bean System
 const CUSTOM_SLOT = { cstm_recipe_01: 1, cstm_recipe_02: 2, cstm_recipe_03: 3, cstm_recipe_04: 4, cstm_recipe_05: 5, cstm_recipe_06: 6 };
 
 const d = (n) => `d${String(n).padStart(3, "0")}`;
@@ -161,8 +186,8 @@ function profilePropForSlug(slug, profileId = 1) {
     return `${d(BS_PROFILE_BASE + (p - 1) * BS_PROFILE_STRIDE)}_${p}_bs_recipe_01`;
   }
   if (CUSTOM_SLOT[slug] !== undefined) {
-    // Profil 1 imposé : voir le commentaire de CUSTOM_PROFILE_BASE.
-    return `${d(CUSTOM_PROFILE_BASE + CUSTOM_SLOT[slug] - 1)}_1_${slug}`;
+    // Pas de 6 par profil — mesuré sur la machine, voir le commentaire de CUSTOM_PROFILE_BASE.
+    return `${d(CUSTOM_PROFILE_BASE + (p - 1) * CUSTOM_PROFILE_STRIDE + CUSTOM_SLOT[slug] - 1)}_${p}_${slug}`;
   }
   return null;
 }
@@ -301,7 +326,13 @@ export const paramInfo = (id) => PARAMS[id] ?? { name: String(id), label: `Param
  * → `z.Z(id)` : `length > 1`). Sur cette famille ce sont les quantités liquides ;
  * confirmé par le décodage exact de `d001_rec_espresso` (parcours tombant sur le CRC).
  */
-export const TWO_BYTE = new Set([1, 9, 15]);
+// La table vit dans `ecam-args.mjs`, qui est le référentiel du protocole ECAM. Elle a existé en
+// TROIS exemplaires — ici, dans `server.mjs` et dans le décodeur d'arguments — et trois copies
+// d'une table de largeurs d'octets divergent au premier ajout sans lever la moindre erreur : on
+// obtient des valeurs plausibles et fausses. Réexportée sous son ancien nom, les deux décodeurs
+// ci-dessous s'en servant sous celui-là.
+import { TWO as TWO_BYTE } from "./ecam-args.mjs";
+export { TWO_BYTE };
 
 /**
  * Décode une propriété de bornes (trame ECAM `0xB0`) — port de `p097j6.d.X()`.

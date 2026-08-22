@@ -310,9 +310,66 @@ pas celle qu'on devine à la lecture des trames :
 
 | famille | commandes | la machine… |
 |---|---|---|
-| **lecture** | `0x75`, `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA`, `0x60`, `0x70` | renvoie un `data_response` |
-| **action** | `0x83`, `0x84`, `0xA9`, `0xB9` | ne répond **rien** |
+| **lecture** | `0x95`, `0xA2`, `0xA3`, `0xA6`, `0xB0`, `0xBA` | renvoie un `data_response` |
+| **lecture (monitor)** | `0x75`, `0x60`, `0x70` | pousse un datapoint `d302_monitor` — **pas** de `data_response` |
+| **action** | `0x83`, `0x84`, `0xB9` | ne répond **rien** |
+| **action acquittée** | `0xA9` | répond `D0 07 A9 F0 <profil> <statut> <crc>` |
 | **écriture** | `0x90`, `0xA5`, `0xAB`, `0xAD`, `0xBB` | ne répond **rien** non plus |
+
+> ⚠️ **`0xA9` ACQUITTE, et ce document affirmait le contraire.** Relevé deux fois, à deux sessions
+> distinctes, chaque fois environ une seconde après que la trame a été servie :
+>
+> ```
+> →  0d 06 a9 f0 01 d7 c0          demande : profil 1
+> ←  d0 07 a9 f0 01 00 3b 3c       réponse : profil 1, statut 00
+> ```
+>
+> La réponse reprend le profil demandé à l'octet 4 et porte un second octet à `00` — vu à `00`
+> dans les deux relevés, donc sa signification reste **inconnue** : ne pas l'appeler « statut »
+> ailleurs que par commodité tant qu'une valeur non nulle n'aura pas été observée.
+>
+> Conséquence pratique, et elle est coûteuse : une sélection de profil rangée parmi les actions
+> « sans réponse » est attendue par **fenêtre de présence**. Mesuré le 2026-08-22 — trame servie à
+> 16:48:16, acquittée à 16:48:17, tâche close à 16:49:31 : **quatre-vingts secondes** de présence
+> maintenue pour une commande confirmée en une. Pendant tout ce temps la file est occupée et le
+> keep-alive tourne à 2,5 s. La preuve d'exécution existe, elle n'était simplement pas lue.
+
+
+> ⚠️ **La ligne « monitor » a été séparée le 2026-08-22, et c'est une correction, pas une nuance.**
+> Ce document rangeait `0x75` avec les lectures qui renvoient un `data_response`. C'est faux :
+> la machine répond à une demande de monitor en **poussant la propriété `d302_monitor`**, jamais
+> par un `data_response`. Mesuré trois fois de suite sur l'appareil, monitor reçu et décodé —
+> `état=0x02`, capteurs, alarmes — pendant que la tâche qui l'avait demandé était déclarée « sans
+> réponse » puis « échouée ». Aucun `d0 .. 75 ..` n'a jamais été observé, alors que les
+> `d0 41 a2 0f …` des statistiques abondent dans le même journal.
+>
+> Conséquence pratique pour qui écrit un client : **une lecture d'état ne s'attend pas comme les
+> autres lectures.** L'attendre sous forme de `data_response` la fait échouer à tous les coups, et
+> le symptôme est trompeur — l'état arrive et s'affiche, mais la commande est comptée en échec, ce
+> qui ressemble à s'y méprendre à une machine déconnectée.
+>
+> Et le corollaire qui compte autant : ces poussées de monitor sont **aussi spontanées**. Pendant
+> une préparation la machine en émet une toutes les 1 à 3 secondes sans que rien ne l'ait demandée
+> (voir § 11.5). Un client qui apparierait n'importe quelle poussée à n'importe quelle lecture en
+> attente déclarerait donc lues des données jamais reçues. L'appariement doit porter sur la
+> commande demandée.
+>
+> **Cadence mesurée de la poussée `d302_monitor` : 12 à 13 secondes.** Relevé le 2026-08-22 sur
+> quatre intervalles consécutifs — 13 s, 12 s, 13 s, puis 12,4 s au chronomètre (16:36:42,297 puis
+> 16:36:54,740). La première poussée arrive à **l'ouverture de session**, avant même qu'une trame
+> `0x75` ait été servie : ce n'est donc pas une réponse, c'est une horloge.
+>
+> Conséquence pour qui attend une lecture d'état : **le délai d'attente doit dépasser cette cadence,
+> pas l'égaler.** Une échéance de 12 s en fait un tirage au sort selon l'endroit où la demande tombe
+> dans le cycle. Et le coût d'entrée s'y ajoute : sur une session froide, la machine consomme
+> d'abord une visite pour `device_connected` — 2,7 s mesurées entre la mise en file et le moment où
+> la trame `0x75` lui est enfin servie, une visite valant une commande.
+>
+> C'est ce qui explique l'asymétrie déroutante avec les statistiques : `0xA2` répond dans la **même
+> seconde**, parce qu'il rend un vrai `data_response`. Les deux lectures n'attendent pas la même
+> chose — l'une une réponse, l'autre un battement.
+
+
 
 Les deux dernières familles se distinguent par ce qu'elles laissent derrière (une écriture est
 persistante dans l'appareil), pas par leur comportement en réponse : **aucune des deux n'accuse
@@ -1239,8 +1296,292 @@ journalisent la réponse brute sans la décoder.
 
 ### 14.5 Restant non porté
 
-- `0xE8` — `getPacketForRefreshAppId`, trame fixe `0D 06 E8 F0 00 ED 7C <crc16>`, variante Striker.
-  En classic l'app envoie à la place un blob de 12 octets qui **ne commence pas par `0x0D`** (donc
-  pas une trame ECAM). Rôle non établi.
+- `0xE8` — trame fixe `0D 06 E8 F0 00 ED 7C <crc16>`, **variante Striker uniquement**. Le site
+  d'appel est `DeLonghiWifiConnectService.C()` :
+
+  ```java
+  public void C() {
+      byte[] bArrZ0 = p258z7.s.r() ? p097j6.d.z0() : p097j6.d.s0();   // r() == modèle « striker »
+      Y1(bArrZ0);
+  }
+  ```
+
+  **En classic, c'est donc `s0()` — et ce n'est pas une trame ECAM.** Identifiée :
+
+  ```java
+  public static byte[] s0() {
+      byte[] bArr = {69, -38, 55, -120, 52, -21, -81, -1, -1, -6, (byte)((I >> 8) & 255), (byte)(I & 255)};
+      int I9 = I(bArr);
+      return bArr;
+  }
+  ```
+
+  soit `45 DA 37 88 34 EB AF FF FF FA 93 81`, **codée en dur**, sans paramètre. Trois choses la
+  caractérisent, toutes vérifiées :
+
+  - **son CRC est valide.** `I()` est la routine CRC-CCITT d'initialisation `0x1D0F` employée par
+    toutes les trames ; sur les dix premiers octets elle rend `0x9381`, soit exactement les deux
+    derniers. Ce n'est donc pas du bruit : c'est un paquet De'Longhi, simplement **pas de la
+    famille ECAM** — l'octet 1 vaudrait une longueur de 218 pour un paquet de 12 octets.
+  - **elle part une fois par session**, à l'ouverture de l'écran d'accueil quand la connexion est
+    en Wi-Fi (`HomeRecipeActivity.onCreate()` → `B.f("WIFI")` → `C()`). Relevé dans un logcat
+    complet : **1 occurrence**, contre 7 `0D 06 A9 F0 01` (sélection de profil) et 5
+    `0D 07 84 0F 02 01` (allumage).
+  - **elle est rigoureusement constante** — octet pour octet sur trois sessions séparées
+    (14:20:54, 14:49:44, 18:48:56), seul l'horodatage 4 octets que `Y1()` ajoute derrière change.
+
+  Son **rôle reste non établi**, et rien ne le devine ici. Elle est seulement *nommée*, dans
+  `CONSTANTES_NON_ECAM` : laissée « inconnue », elle déclencherait le marqueur de découverte à
+  chaque session et finirait par masquer le prochain vrai inconnu. Elle n'entre pas dans
+  `ECAM_OPS` — `0x37` n'est pas un octet de commande, c'est l'octet qui se trouve là.
+
+  > Ce que le journal montrait avant identification : `commande NON IDENTIFIÉE (0x37) · trame
+  > 45 da 37 88 …`. C'est le cas d'école du § 15.1 — une valeur qui n'est pas une trame et à
+  > laquelle on attribuait une commande.
 - `0xA1` en LECTURE de paramètres : `d.r0(addr, qty)` choisit `0xA1` quand `qty > 4` et `0x95`
   sinon. On ne sait pas ce que la première forme change.
+
+## 15. Le référentiel des commandes, et comment il se complète
+
+Ce document est la table de référence ; `lan-server/src/lib/ecam-args.mjs` en est la forme
+exécutable. Un seul module y porte **tout** ce qui nomme une commande ECAM :
+
+| ce qu'il porte | à quoi ça sert |
+|---|---|
+| `ECAM_OPS` | la nature (lecture / action / écriture) et le nom de chaque octet de commande |
+| `opTrame(b64)` | lire une trame **sortante** — celles que nous émettons portent 4 octets d'horodatage en queue, retirés ici |
+| `opReponse(valeur)` | lire une trame **entrante** — une réponse n'en porte pas, et la valeur est d'abord vérifiée |
+| `natureTrame` | décide si un pas attend une réponse ou une fenêtre de présence (§ 5.1) |
+| `describeFrame` | l'opération et les octets ; `{ octets: false }` pour un libellé de tâche |
+| `profilVise` | le profil visé, `0xA9` octet 4 ou `0x83` `(profil << 2) \| action` (§ 1.3) |
+| `argumentsTrame` | les arguments en clair — l'inverse exact des constructeurs de trames |
+| `TWO` | les paramètres de recette sur 16 bits (§ 3) |
+
+Une table de protocole dupliquée diverge au premier ajout **sans lever la moindre erreur** : on
+obtient des valeurs plausibles et fausses. `TWO` a existé en trois exemplaires avant d'être
+ramenée ici.
+
+### 15.1 Ce qui n'y est pas se voit — c'est le but
+
+L'application officielle est le seul émetteur au monde à produire des trames que nous n'avons
+jamais vues, et **elle ne les rejoue pas** : ce qui n'est pas relevé au passage est perdu. Le
+multiplexeur (§ 7 de `analyse-connexion-wifi.md`) est donc un instrument de relevé, et ses deux
+journaux marquent l'inconnu en capitales plutôt que de le laisser se fondre dans le reste :
+
+| marqueur | ce qu'il signale | ce qu'il conserve |
+|---|---|---|
+| `commande NON IDENTIFIÉE (0x..)` | un octet de commande absent d'`ECAM_OPS` | la trame complète, en hexadécimal |
+| `PROPRIÉTÉ NON IDENTIFIÉE` | une propriété Ayla que le serveur ne sait pas nommer | hexadécimal **et** base64 d'origine |
+| `valeur non-trame : …` | une valeur qui n'est pas de l'ECAM du tout | la valeur, mot pour mot |
+
+L'hexadécimal se compare aux tables de ce document ; le base64 se recolle tel quel dans un test
+ou un rejeu. Aucun des trois n'interprète quoi que ce soit : un outil qui a déjà décidé quoi
+jeter ne peut plus rien apprendre.
+
+**Une valeur n'est lue comme une trame qu'après vérification de sa forme.** `Buffer.from(x,
+"base64")` ne lève jamais : il ignore ce qui n'en est pas et rend des octets qui ont l'air de
+quelque chose. Relevé en direct : `device_connected = 1787407876`, un horodatage unix en clair
+que la vraie application nous écrit, se journalisait « commande 0x3b non décodée — d7 bf 3b e3
+4e fc ef ». Sept octets inventés là où la valeur était lisible telle quelle — et surtout, cet
+octet fabriqué servait à **aiguiller** le décodage. La vérification est donc : forme base64,
+puis en-tête `0xD0` (réponse) ou `0x0D` (requête), sinon ce n'est pas une trame.
+
+### 15.2 L'invariant à tenir en ajoutant un décodeur
+
+> ⚠️ **Une réponse que le serveur décode parfaitement mais qui manque à `ECAM_OPS` produit un
+> faux signal de découverte** : le journal la crie « NON IDENTIFIÉE » alors qu'elle est connue,
+> et le marqueur perd sa valeur d'alerte.
+
+Ajouter un décodeur, c'est donc ajouter sa ligne à la table dans le même geste.
+`lan-server/scripts/verif-args.mjs` le vérifie en CI sur les octets effectivement routés :
+`0xA1`, `0xA2`, `0xA3`, `0xA4`, `0xA6`, `0xA8`, `0xAA`, `0xB0`, `0xBA`, `0x95`.
+
+### 15.3 Commandes connues de l'app mais absentes de la table
+
+Elles sont listées ici pour être **reconnues quand elles passeront**, pas pour être décodées :
+voir § 14.5 pour `0xE8` et pour `0xA1` en lecture de paramètres. Tant qu'aucune n'a été observée
+en mode LAN, elles n'entrent pas dans `ECAM_OPS` — une entrée inventée ferait taire le marqueur
+qui doit justement se déclencher le jour où l'une d'elles arrive.
+
+
+#### 15.1. « Non identifiée » ne doit jamais vouloir dire « pas une trame »
+
+Relevé en direct, dans le journal des applications, pendant une session de la vraie application :
+
+```
+18:48:54  IN a1  commande NON IDENTIFIÉE (0x37) · trame 45 da 37 88 34 eb af ff ff fa 93 81
+```
+
+Une trame ECAM commence par `0x0D`. Celle-ci commence par `0x45`. Ce n'était donc pas une commande
+inconnue : **ce n'était pas une trame du tout**, et le troisième octet — `0x37` — n'était le code
+d'aucune opération, seulement l'octet qui se trouvait là.
+
+> ⚠️ **`Buffer.from(x, "base64")` ne lève jamais.** Il ignore ce qui n'est pas du base64 et rend
+> des octets d'allure plausible. Toute valeur ressort donc avec un « octet de commande », qu'elle
+> en ait un ou non.
+
+Le défaut était déjà connu **dans l'autre sens** : `device_connected = 1787407876`, un horodatage
+unix, avait été journalisé « commande 0x3b non décodée — d7 bf 3b e3 4e fc ef », sept octets
+inventés là où la valeur se lisait telle quelle. Il avait été corrigé côté entrant (`opReponse`) et
+**pas côté sortant**, où il compte pourtant davantage : c'est une valeur qu'on relaie à une vraie
+cafetière.
+
+Le filtre vit maintenant en un seul endroit, `octetsEcam()`, et les deux sens le lisent — forme
+base64 valide, longueur suffisante, en-tête `0x0D` (requête) ou `0xD0` (réponse). Hors de là,
+`describeFrame()` répond :
+
+```
+valeur non-trame · 45 da 37 88 34 eb af ff ff fa 93 81 · b64 Rdo3iDTrr///+pOB
+```
+
+Trois choix dans cette ligne, chacun pour une raison :
+
+- **aucun octet n'est rogné.** `describeFrame()` retire les 4 octets d'horodatage d'une trame —
+  c'est juste quand on sait ce qu'on regarde, et faux dès qu'on ne le sait pas ;
+- **l'hexadécimal**, pour se comparer aux tables de ce document ;
+- **le base64 d'origine**, parce qu'il se recolle tel quel dans un test ou un rejeu.
+
+L'enjeu n'est pas cosmétique. Ce marqueur existe pour faire ressortir ce que le référentiel ne
+connaît pas encore ; une valeur mal nommée y **fabrique une découverte qui n'existe pas**, et
+masque du même coup la seule information vraie — que cette valeur n'est pas une trame.
+
+Celle-ci a depuis été identifiée : c'est `p097j6.d.s0()`, une constante codée en dur de
+l'application — voir § 14.5. Ce qui rendait le marqueur juste, et ce qui suit ne l'était pas.
+
+#### La mauvaise piste, et pourquoi elle était plausible
+
+Douze octets affichés, quatre rognés : **seize, exactement un bloc AES**. Le § 7sexies de
+`analyse-connexion-wifi.md` décrit cette signature — en CBC, un message sauté ne salit que les
+16 premiers octets du suivant —, et une expiration de sonde a bel et bien été relevée sur la même
+session. L'hypothèse « ce ne sont pas des octets applicatifs, l'information est en amont » était
+donc raisonnable. **Elle était fausse**, et trois preuves indépendantes l'écartent :
+
+1. **le téléphone les journalise avant tout chiffrement** — un bloc CBC sali ne peut pas figurer
+   dans le log de l'émetteur :
+   ```
+   finalPacket size : 16
+   AylaDatapoint sent to SDK:  45 da 37 88 34 eb af ff ff fa 93 81
+   encodedPacket Rdo3iDTrr///+pOBaonS+A==
+   ```
+2. **le CRC est juste** : CRC-CCITT init `0x1D0F` sur les dix premiers octets donne `0x9381`,
+   soit les deux derniers. Une corruption ne forge pas un CRC De'Longhi ;
+3. **les octets sont dans le binaire**, à l'octet près, et identiques sur trois sessions séparées.
+
+> ⚠️ **Un CRC valide vaut mieux qu'une absence d'indice.** Chercher dans le journal ce qui aurait
+> pu manquer en amont aurait pu durer longtemps sans rien conclure ; vérifier le CRC des octets
+> qu'on a sous les yeux coûte trois lignes et tranche. Quand une hypothèse « c'est du bruit » et
+> une hypothèse « c'est du signal » s'affrontent, **c'est la seconde qui est réfutable la
+> première** — commencer par elle.
+
+Et le rognage se retourne en confirmation : le CRC ne tombe juste que si le découpage l'était.
+Les quatre octets retirés étaient l'horodatage que `Y1()` ajoute derrière **chaque** valeur —
+`finalPacket size : 16` = 12 + 4 — donc la ligne montrait la commande entière. Le rognage tombait
+juste, mais par coïncidence : il supposait une trame ECAM là où il n'y en avait pas, et ne rien
+retirer de ce qu'on ne sait pas lire reste la bonne règle.
+
+
+### 6.1. Les recettes personnalisées sont par profil, pas de 6
+
+Longtemps noté ici et dans le code comme « profil 1 imposé ». **C'est faux**, et la façon dont
+l'erreur tenait mérite d'être gardée : elle reposait sur un fait exact.
+
+L'application n'écrit que six littéraux, sans aucun constructeur à profil variable :
+
+```java
+// it.delonghi.service.DeLonghiWifiConnectService
+C1("d200_1_cstm_recipe_01");  …  C1("d205_1_cstm_recipe_06");
+```
+
+> ⚠️ **Ce que l'application ne sait pas demander, la machine sait néanmoins le publier.** Lire le
+> binaire dit ce que l'app fait, pas ce que l'appareil accepte. Les deux ne coïncident pas.
+
+Relevé le 2026-08-22 à 19:41 : après une écriture de recette (`0x83`), la cafetière a poussé
+d'elle-même les cinq profils.
+
+| propriété | trame | profil |
+|---|---|---|
+| `d202_1_cstm_recipe_03` | `d0 17 a6 f0 01 e8 …` | 1 |
+| `d208_2_cstm_recipe_03` | `d0 17 a6 f0 02 e8 …` | 2 |
+| `d214_3_cstm_recipe_03` | `d0 17 a6 f0 03 e8 …` | 3 |
+| `d220_4_cstm_recipe_03` | `d0 17 a6 f0 04 e8 …` | 4 |
+| `d226_5_cstm_recipe_03` | `d0 17 a6 f0 05 e8 …` | 5 |
+
+Chaque ligne porte **deux confirmations indépendantes** : le numéro suit
+`200 + (p−1)×6 + (slot−1)`, et l'octet de profil de la trame (`f0 0P`) concorde avec le chiffre du
+nom. `0xE8` = 232 = « Recette perso 3 » (§ 2). Le pas de 6 est celui du Bean System (`t()`, base
+160), et `200 + 5×6 = 230` tombe pile au début des identifiants de boisson des recettes perso :
+aucune collision.
+
+D'où la formule :
+
+```
+d{200 + (p−1)×6 + (slot−1)}_{p}_cstm_recipe_{slot}      p = 1…5, slot = 1…6
+```
+
+**Le coût de l'erreur n'était pas cosmétique.** En imposant le profil 1, on lisait `d202_1_…` pour
+les profils 2 à 5 : la recette du profil 1 était affichée comme étant la leur. C'est le défaut du
+Bean System sans pas (§ plus haut), en plus vicieux — celui-là répondait vide et se voyait, celui-ci
+répondait une valeur plausible.
+
+**Et c'est le marqueur de découverte qui l'a trouvé**, pas une relecture du code : `PROPRIÉTÉ NON
+IDENTIFIÉE` s'est allumé sur des noms que la **machine** nous envoyait et que notre propre
+constructeur ne savait pas reproduire. C'est exactement ce pour quoi il existe.
+
+
+**Valeurs observées mais non expliquées** — consignées telles quelles, pour qu'une prochaine
+capture puisse les recouper :
+
+| paramètre | valeur | contexte |
+|---|---|---|
+| `ACCESSORIO(28)` | **2** | recette perso lactée écrite depuis l'application officielle, 2026-08-22 |
+| `TASTE(2)`, `BLEND(4)` | **255** | même trame, sur une recette **sans café** |
+
+⚠️ Le nom du paramètre est établi, **pas le sens de ces valeurs**. Pour `255`, le protocole emploie
+bien `NOT_SET(255)` ailleurs (`mugSize`, § plus haut), ce qui rend « sans objet » plausible et ne le
+démontre pas. Pour `ACCESSORIO = 2`, rien. Ne pas gloser : c'est ainsi qu'une lecture devient un
+fait sans que personne ne l'ait vérifiée.
+
+
+### 10.1. Adresse 194 — le nombre de niveaux de température
+
+Relevée le 2026-08-22 à 19:51 : l'application officielle lit une adresse **hors de notre table**,
+juste avant d'ouvrir son écran de température.
+
+```
+0d 08 95 0f 00 c2 01 4e 1e        → 0x00C2 = 194, quantité 1
+```
+
+Son rôle se lit sans ambiguïté dans `MachineSettingsCoffeeTemperatureFragment.U()` :
+
+```java
+Log.d("TEST", "temperature size is " + num);
+if (num.intValue() > 3) { strArr = { VIEW_C12_TEMP_0, _1, _2, _3 }; }   // 4 niveaux
+else                    { strArr = { VIEW_C12_TEMP_0, _1, _2 };      }   // 3 niveaux
+```
+
+et la valeur est chargée avec un défaut explicite (`p018b7/d.java`) :
+
+```java
+if (parameter.a() == 194) {
+    this.f14715m.l(Integer.valueOf(((int) parameter.b()) > 0 ? (int) parameter.b() : 4));
+}
+```
+
+> **194 = le nombre de niveaux de température du café que la machine propose**, 3 ou 4, avec **4**
+> quand la lecture rend 0.
+
+⚠️ **Conséquence pour nous, et c'est un défaut latent.** `REGLAGES` fixe
+`{ addr: 61, cle: "temperature", min: 0, max: 3 }` en dur — quatre niveaux, quelle que soit la
+machine. Sur un modèle à trois niveaux, `/reglages` offrirait un quatrième choix qui n'existe pas,
+et l'écrirait. Le bon `max` est `lecture(194) − 1`, avec 3 par défaut.
+
+**Non implémenté à dessein** : cela suppose une lecture supplémentaire au chargement de la page, et
+`REGLAGES` gouverne aussi les ÉCRITURES — `0x90` écrit quatre octets à une adresse arbitraire dans
+la configuration d'un vrai appareil. Y ajouter 194 le rendrait inscriptible, ce que rien ne
+justifie : l'application ne fait que le lire. Si on l'implémente, ce doit être une entrée en
+**lecture seule**, distincte de la table des réglages modifiables.
+
+Corollaire de méthode : cette adresse a été trouvée parce que le multiplexeur journalise ce qu'une
+application officielle demande. Aucune relecture du code ne l'aurait signalée — nous ne cherchions
+pas, nous n'avions pas de raison de chercher.
+

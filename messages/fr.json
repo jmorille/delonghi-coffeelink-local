@@ -881,7 +881,7 @@
     "monitorMode": "Mode moniteur {mode} (0x{hex})",
     "readOne": "Lecture {prop}",
     "readMany": "Lecture de {count} propriétés",
-    "appWrite": "App {app} · commande",
+    "appWrite": "App {app} · {commande}",
     "appRead": "App {app} · lecture {prop}"
   },
   "profilesWhat": {
@@ -903,6 +903,8 @@
     "machine": "pilote {machine}",
     "traffic": "{datapoints} état(s) transmis · {commandes} commande(s) relayée(s)",
     "seen": "vue il y a {age} s",
+    "journalHeading": "Journal des applications",
+    "journalNone": "Aucun échange enregistré.",
     "refusHeading": "Demandes refusées",
     "refusNone": "Aucune demande refusée.",
     "refusLine": "{from} — {motif}",
