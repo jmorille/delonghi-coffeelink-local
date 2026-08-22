@@ -1,5 +1,6 @@
 /**
- * Vérifie le décodage des arguments de trames ECAM — sans machine, sans réseau.
+ * Vérifie **le référentiel des commandes ECAM** — table des opérations, lecture d'une trame,
+ * décodage de ses arguments — sans machine, sans réseau.
  *
  * Cinquième script de cette famille, après `verif-tasks`, `verif-monitor`, `verif-lansession` et
  * `verif-apps`, et il existe pour la même raison : `ecam-args.mjs` est pur, donc il se prouve.
@@ -14,7 +15,9 @@
  *
  * Aucune dépendance : `node scripts/verif-args.mjs`.
  */
-import { TWO, argumentsTrame } from "../src/lib/ecam-args.mjs";
+import {
+  ECAM_OPS, TWO, argumentsTrame, describeFrame, natureTrame, opReponse, profilVise,
+} from "../src/lib/ecam-args.mjs";
 
 let ko = 0;
 const test = (nom, fn) => {
@@ -136,5 +139,93 @@ test("une commande sans argument, ou inconnue, rend null", () => {
   eq(lire([0x0d]), null, "trame tronquée");
 });
 
+console.log("\n— la table des opérations, qui décide aussi comment on ATTEND la machine —");
+
+// `datapointValue` ajoute 4 octets d'horodatage à ce que NOUS envoyons ; `opTrame` et ses
+// dérivées les retirent. Les oublier ici testerait autre chose que ce qui tourne.
+const sortante = (t) => Buffer.from([...t, 1, 2, 3, 4]).toString("base64");
+
+test("la nature d'une trame décide de l'attente : réponse ou fenêtre de présence", () => {
+  // C'est `startProgram` qui lit ceci. Une lecture classée « action » attendrait une fenêtre au
+  // lieu de la réponse qui arrive — et l'inverse ferait expirer un pas que rien ne satisfera.
+  eq(natureTrame(sortante(frameParamRead(3001, 10))), "lecture", "0xA2 est une lecture");
+  eq(natureTrame(sortante([0x0d, 0x05, 0x75, 0x0f, 0, 0])), "lecture", "0x75 est une lecture");
+  eq(natureTrame(sortante(frameTurnOn())), "action", "0x84 agit");
+  eq(natureTrame(sortante(frameBeanSave(1, 4, 2, 5))), "écriture", "0xBB écrit dans l'appareil");
+  // Une trame jamais vue est traitée comme une action : choix prudent, il fait tenir la présence
+  // au lieu d'attendre une réponse qui ne viendra peut-être jamais.
+  eq(natureTrame(sortante([0x0d, 0x06, 0xc7, 0xf0, 1, 0, 0])), "action", "commande inconnue");
+});
+
+test("0x83 change de nature selon son octet de mode, et c'est tout ce qui sépare", () => {
+  // ⚠️ Le MÊME octet de commande prépare un café et écrase une recette dans l'appareil.
+  eq(natureTrame(sortante(frameDispense(1, 3, 0, 1, [{ id: 1, value: 30 }]))), "écriture", "SAVE");
+  eq(natureTrame(sortante(frameDispense(1, 3, 1, 2, [{ id: 1, value: 30 }]))), "action", "préparation");
+});
+
+test("describeFrame : la forme courte perd les octets, jamais l'opération", () => {
+  const t = sortante(frameTurnOn());
+  eq(describeFrame(t, { octets: false }), "action · marche / arrêt (0x84)", "forme courte");
+  eq(describeFrame(t).startsWith("action · marche / arrêt (0x84) · trame 0d 07 84 0f 02 01"), true, "forme longue");
+  // Les 4 octets d'horodatage ne sont PAS des octets de commande : les afficher tromperait qui
+  // compare la ligne aux tables de `doc/commandes-cafe.md`.
+  eq(describeFrame(t).includes("01 02 03 04"), false, "horodatage retiré");
+});
+
+test("une commande hors table est CRIÉE et garde ses octets, même en forme courte", () => {
+  // C'est le matériau de la rétro-ingénierie : l'application officielle est le seul émetteur au
+  // monde à produire des trames que nous n'avons jamais vues, et elle ne les rejoue pas. Une
+  // ligne discrète les perdrait.
+  const t = sortante([0x0d, 0x06, 0xc7, 0xf0, 0x01, 0, 0]);
+  eq(describeFrame(t, { octets: false }), "commande NON IDENTIFIÉE (0xc7) · trame 0d 06 c7 f0 01 00 00", "courte");
+  eq(describeFrame(t).includes("NON IDENTIFIÉE"), true, "longue");
+});
+
+test("profilVise lit les DEUX dispositions, et rien d'autre", () => {
+  // La toute première commande qu'une application officielle nous a relayée était une sélection
+  // de profil : sans cette lecture, un téléphone qui se branche déplace le profil actif de
+  // l'appareil pendant que nos pages affichent l'ancien.
+  eq(profilVise(sortante([0x0d, 0x06, 0xa9, 0xf0, 0x03, 0, 0])), 3, "0xA9, octet 4 en clair");
+  eq(profilVise(sortante(frameDispense(1, 4, 1, 2, [{ id: 1, value: 30 }]))), 4, "0x83, (profil << 2) | action");
+  eq(profilVise(sortante(frameTurnOn())), null, "une trame qui ne vise aucun profil");
+});
+
+console.log("\n— les trames ENTRANTES : ce que la machine répond, ce qu'une app reçoit —");
+
+// Une réponse ne porte PAS les 4 octets d'horodatage : c'est nous qui les ajoutons.
+const entrante = (t) => Buffer.from(t).toString("base64");
+
+test("opReponse nomme la commande d'une réponse, sans rien retirer", () => {
+  const r = opReponse(entrante([0xd0, 0x08, 0xa2, 0x0f, 0x0b, 0xb9, 0, 0, 0, 1, 0, 0]));
+  eq(r.cmd, 0xa2, "octet de commande");
+  eq(r.op.nom, "paramètres et compteurs", "nom lu dans la table");
+  eq(r.trame.length, 12, "aucun octet retiré");
+});
+
+test("opReponse refuse ce qui n'est pas une trame plutôt que d'inventer des octets", () => {
+  // ⚠️ `Buffer.from(x, "base64")` ne lève JAMAIS : il ignore ce qui n'en est pas et rend des
+  // octets qui ont l'air de quelque chose. Relevé en direct sur la vraie application, qui écrit
+  // `device_connected = 1787407876` — un horodatage unix en clair, affiché « d7 bf 3b e3 4e fc ».
+  eq(opReponse("1787407876"), null, "un nombre en clair");
+  eq(opReponse(""), null, "vide");
+  eq(opReponse(null), null, "absent");
+  // Un base64 valide dont l'en-tête n'est ni 0x0D ni 0xD0 n'est pas de l'ECAM.
+  eq(opReponse(entrante([0x01, 0x02, 0x03, 0x04])), null, "en-tête étranger");
+});
+
+test("une réponse hors table rend son octet, pas une glose", () => {
+  const r = opReponse(entrante([0xd0, 0x06, 0xc7, 0xf0, 1, 0, 0]));
+  eq(r.cmd, 0xc7, "l'octet est rendu");
+  eq(r.op, undefined, "et rien n'est inventé autour");
+});
+
+test("les réponses que le serveur sait décoder sont TOUTES nommées", () => {
+  // Les octets de réponse qu'`handleProperty` route vers un décodeur. Une entrée manquante ici
+  // ferait dire « commande NON IDENTIFIÉE » d'une trame que le serveur décode parfaitement —
+  // c'est-à-dire un faux signal de découverte, exactement ce que ce mécanisme ne doit pas produire.
+  for (const cmd of [0xa1, 0xa2, 0xa3, 0xa4, 0xa6, 0xa8, 0xaa, 0xb0, 0xba, 0x95]) {
+    if (!ECAM_OPS[cmd]) throw new Error(`0x${cmd.toString(16)} absente de ECAM_OPS`);
+  }
+});
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

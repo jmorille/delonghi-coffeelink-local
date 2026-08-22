@@ -18,7 +18,13 @@ import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
 import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
-import { TWO, argumentsTrame as argsEcam } from "./src/lib/ecam-args.mjs";
+// Le référentiel du protocole ECAM : la table des opérations, la lecture d'une trame sortante
+// (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
+// commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
+import {
+  TWO, argumentsTrame as argsEcam, describeFrame, hexCmd,
+  natureTrame, opReponse, opTrame, profilVise,
+} from "./src/lib/ecam-args.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
 import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
@@ -859,41 +865,6 @@ function prochainePaquet(m) {
 }
 
 /**
- * Opérations ECAM, par octet de commande. Sert à **nommer** ce qu'un programme fait dans le
- * journal : « 0x83 » ne dit rien à la relecture, « préparation ou enregistrement de recette » si.
- *
- * La nature — lecture ou action — est ce qui compte le plus au moment où l'on cherche pourquoi une
- * machine a fait quelque chose : une lecture n'a aucun effet physique, une action en a un.
- */
-const ECAM_OPS = {
-  // `nature` est le VERBE, `nom` l'objet : les deux se lisent à la suite (« lecture · monitor »).
-  // Les mettre tous les deux au complet donnait « lecture lecture d'un profil de grains ».
-  0x75: { nature: "lecture", nom: "monitor" },
-  // 0x83 est affiné par son octet de mode : voir `describeFrame`. La distinction compte — le même
-  // octet de commande sert à préparer une boisson, à arrêter, et à ÉCRIRE une recette dans un profil.
-  0x83: { nature: "action", nom: "recette" },
-  0x84: { nature: "action", nom: "marche / arrêt" },
-  0xa2: { nature: "lecture", nom: "paramètres et compteurs" },
-  0xa3: { nature: "lecture", nom: "sommes de contrôle" },
-  0xa6: { nature: "lecture", nom: "recette d'un profil" },
-  0xa9: { nature: "action", nom: "sélection de profil" },
-  0xb0: { nature: "lecture", nom: "bornes d'une recette" },
-  0xb9: { nature: "action", nom: "sélection du grain actif" },
-  0xba: { nature: "lecture", nom: "profil de grains" },
-  // Les écritures persistantes de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
-  0xbb: { nature: "écriture", nom: "profil de grains" },
-  0x90: { nature: "écriture", nom: "réglage machine" },
-  0xa5: { nature: "écriture", nom: "noms de profils" },
-  0xab: { nature: "écriture", nom: "noms de recettes perso" },
-  0xad: { nature: "écriture", nom: "ordre des favoris" },
-  // `0x95` lit un réglage machine — pendant exact de l'écriture `0x90`.
-  0x95: { nature: "lecture", nom: "réglage machine" },
-  // Les deux autres modes de monitor. Nature « lecture » : ils attendent une réponse, comme 0x75.
-  0x60: { nature: "lecture", nom: "monitor mode 0" },
-  0x70: { nature: "lecture", nom: "monitor mode 1" },
-};
-
-/**
  * **Les réglages machine, par adresse** — relevés dans le view-model de l'app
  * (`p018b7/d.java`), où chaque écran de configuration appelle `readParameter(addr, 1)` puis
  * `writeParameter(addr, valeur)`.
@@ -949,56 +920,6 @@ function reglageProp(m, r) {
 }
 
 /**
- * Décrit la trame qu'on est en train d'envoyer : opération, nature, et octets.
- *
- * `ecamB64` porte la trame **suivie de 4 octets d'horodatage** (voir `datapointValue`) : on les
- * retire, sinon le journal afficherait quatre octets qui n'appartiennent pas à la commande.
- */
-/**
- * L'opération que porte une trame — extrait de `describeFrame`, parce que deux choses en ont
- * besoin : le journal, pour la nommer, et l'ordonnanceur, pour savoir si la machine RÉPONDRA.
- * Une seule table, un seul endroit où `0x83` est affiné par son mode.
- */
-function opTrame(ecamB64) {
-  const buf = Buffer.from(ecamB64, "base64");
-  const trame = buf.subarray(0, Math.max(0, buf.length - 4));
-  const cmd = trame[2];
-  // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
-  // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
-  if (cmd === 0x83) {
-    const mode = trame[5] & 0x7f;
-    const op =
-      mode === 0x00
-        ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
-        : mode === 0x02
-          ? { nature: "action", nom: "arrêt de la préparation" }
-          : { nature: "action", nom: "préparation d'une boisson" };
-    return { cmd, op, trame };
-  }
-  return { cmd, op: ECAM_OPS[cmd], trame };
-}
-
-/**
- * « lecture », « action » ou « écriture ». C'est ce qui décide si le pas attend un `data_response`
- * ou seulement une fenêtre de présence — voir `startProgram`. Une trame illisible est traitée comme
- * une action : c'est le choix prudent, il fait tenir la présence au lieu d'attendre une réponse qui
- * ne viendra peut-être jamais.
- */
-function natureTrame(ecamB64) {
-  try { return opTrame(ecamB64).op?.nature ?? "action"; } catch { return "action"; }
-}
-
-function describeFrame(ecamB64) {
-  try {
-    const { cmd, op, trame } = opTrame(ecamB64);
-    const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
-    return `${op ? `${op.nature} · ${op.nom}` : "opération inconnue"} (0x${(cmd ?? 0).toString(16).padStart(2, "0")}) · trame ${hex}`;
-  } catch {
-    return "trame illisible";
-  }
-}
-
-/**
  * Les arguments d'une trame, en clair. Le décodage vit dans `src/lib/ecam-args.mjs`, **pur et
  * vérifié en CI** ; ici on ne fournit que ce qui n'est pas du protocole : le nom d'une boisson
  * pour CETTE machine — un nom tapé sur l'appareil prime sur le libellé du catalogue — et le nom
@@ -1027,9 +948,13 @@ function nomReglage(addr) {
  * commande venue d'un tiers — *quelle boisson, quel profil, quels réglages* — et les octets
  * viennent après, pour vérifier ou pour rétro-concevoir. Ils ne disparaissent jamais : c'est la
  * seule trace exploitable d'une trame que nous ne saurions pas encore décoder.
+ *
+ * `octets: false` rend la forme courte — l'opération et ses arguments, sans les octets. C'est ce
+ * qu'un libellé de tâche demande : le panneau « Activité » dit ce qui part vers la machine, il
+ * n'est pas un dumper d'octets, et ceux-ci sont de toute façon dans les deux journaux.
  */
-function decrireCommande(m, ecamB64) {
-  const base = describeFrame(ecamB64);
+function decrireCommande(m, ecamB64, { octets = true } = {}) {
+  const base = describeFrame(ecamB64, { octets });
   let args = null;
   try { args = argumentsTrame(m, ecamB64); } catch { /* décodage douteux : la trame suffit */ }
   if (!args) return base;
@@ -1073,30 +998,6 @@ function chargeBrute(valeur, max = 120) {
 }
 
 /**
- * Le profil que vise une trame, ou `null` si elle n'en vise aucun.
- *
- * Existe pour le multiplexeur, et pour une raison concrète : la **toute première** commande qu'une
- * application officielle nous a relayée était `0D 06 A9 F0 01 …` — une sélection de profil. L'app
- * impose son profil courant à l'appareil dès l'ouverture de session, et ce profil vient d'une
- * préférence stockée dans le téléphone, avec 1 par défaut. Sans cette lecture, une application qui
- * se branche déplace le profil actif de la machine **et notre interface continue d'annoncer
- * l'ancien** — exactement ce que la règle « toute commande qui vise un profil doit poser
- * `m.activeProfile` » existe pour empêcher.
- *
- * Deux dispositions, relevées dans les constructeurs de trames de ce fichier :
- * - `0xA9` : `0D 06 A9 F0 <profil> <crc>` — le profil est en clair à l'octet 4 ;
- * - `0x83` : le profil est encodé `(profil << 2) | action` dans le dernier octet avant le CRC.
- */
-function profilVise(ecamB64) {
-  try {
-    const { cmd, trame } = opTrame(ecamB64);
-    if (cmd === 0xa9) return trame[4] ?? null;
-    if (cmd === 0x83) return (trame[trame.length - 3] ?? 0) >> 2;
-  } catch { /* trame illisible : aucun profil à en tirer */ }
-  return null;
-}
-
-/**
  * Met une COMMANDE ECAM en file. Signature conservée : quinze sites d'appel l'utilisent, et les
  * réécrire tous en même temps que l'ordonnanceur aurait mêlé deux changements dans un seul pas.
  *
@@ -1108,7 +1009,7 @@ function profilVise(ecamB64) {
  * - une trame qui **agit** (`0x84`, `0x83`, `0xA9`, `0xBB`, `0xB9`) n'a rien à répondre :
  *   `durationMs` reste la durée de présence soutenue, et l'atteindre est un SUCCÈS.
  *
- * La nature se déduit de la table `ECAM_OPS` que `describeFrame` exploite déjà : aucun site d'appel
+ * La nature se déduit de la table `ECAM_OPS` de `src/lib/ecam-args.mjs` : aucun site d'appel
  * n'a à trancher, et il n'y a pas de deuxième table à tenir à jour.
  */
 function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
@@ -1120,7 +1021,7 @@ function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor"
   const pas = [pasTrame(label, ecamB64, lecture
     ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain, cmd }
     : { attente: "fenetre", ms: durationMs, sustain, cmd })];
-  return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${describeFrame(ecamB64)} · présence ${sustain}`);
+  return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${decrireCommande(m, ecamB64)} · présence ${sustain}`);
 }
 
 /** Met une LECTURE de propriétés Ayla en file : une tâche, un pas par propriété. */
@@ -1525,10 +1426,18 @@ async function executerPourApp(m, app, intention) {
         L("sys", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
         LA("sys", `profil ${profil} imposé${avant && avant !== profil ? ` (était ${avant})` : ""}`, app, m);
       }
-      startProgram(m, intention.valeur, `App ${app.id} · ${describeFrame(intention.valeur)}`, 75000, "monitor", {
+      // Le libellé de la tâche porte la commande DÉCODÉE, arguments compris — sans octets, ils
+      // sont déjà dans les deux journaux. « App a2 · commande » ne disait rien de ce qui partait
+      // vers l'appareil, alors que c'est la seule ligne que le panneau « Activité » affiche : on
+      // y voyait passer une tâche sans pouvoir distinguer un café lancé d'une recette écrasée.
+      // La description voyage en PARAMÈTRE et reste en français, au même titre que les lignes de
+      // journal : c'est le même texte, produit par la même table, et deux formulations pour une
+      // même trame se contrediraient à la première évolution du protocole.
+      const decrite = decrireCommande(m, intention.valeur, { octets: false });
+      startProgram(m, intention.valeur, `App ${app.id} · ${decrite}`, 75000, "monitor", {
         rang: RANG.COMMANDE,
         meta: { app: app.id },
-        i18n: { k: "appWrite", p: { app: app.id } },
+        i18n: { k: "appWrite", p: { app: app.id, commande: decrite } },
       });
       // L'accusé n'est dû que si la propriété portait un `id` : sa présence EST la demande.
       // L'application attend dessus, et son absence lui fait conclure à un échec.
@@ -1628,6 +1537,98 @@ function pousserVersApp(m, app, corpsJson) {
  * mutualisé. Réutiliser un chiffré d'une session dans une autre ne produirait pas une erreur mais
  * du bruit, et désynchroniserait le flux du destinataire pour de bon.
  */
+/**
+ * **Inverse des constructeurs de noms de propriétés** : `d263_3_rec_priority` → « ordre des
+ * favoris · profil 3 ». Construit une fois par catalogue et mémorisé sur lui, parce qu'il faut
+ * énumérer 28 boissons × 6 formes pour l'obtenir et qu'une rediffusion se produit à chaque
+ * poussée de la machine.
+ *
+ * Les noms sont bâtis par `boundsProp` / `profileProp` du catalogue, jamais recopiés ici : une
+ * deuxième table de noms de propriétés dériverait de la première sans que rien ne le signale.
+ */
+const INVERSE_BOISSONS = new WeakMap();
+function inverseBoissons(m) {
+  let idx = INVERSE_BOISSONS.get(m.catalog);
+  if (idx) return idx;
+  idx = new Map();
+  for (const b of m.catalog.beverages) {
+    const bornes = m.catalog.boundsProp(b.slug);
+    if (bornes) idx.set(bornes, { id: b.id, kind: "bounds" });
+    for (let p = 1; p <= 5; p++) {
+      const prop = m.catalog.profileProp(b, p);
+      if (prop && !idx.has(prop)) idx.set(prop, { id: b.id, kind: "values", profileId: p });
+    }
+  }
+  INVERSE_BOISSONS.set(m.catalog, idx);
+  return idx;
+}
+
+/**
+ * Le nom d'une propriété Ayla, en clair — ou `null` quand nous ne la connaissons pas.
+ *
+ * ⚠️ `null` est une **information**, pas un échec : une propriété que ce serveur ne sait pas
+ * nommer est du protocole que nous n'avons pas encore relevé, et l'application officielle est le
+ * seul émetteur au monde à en produire. Les appelants la disent en capitales plutôt que de la
+ * laisser passer pour une propriété ordinaire.
+ */
+function nomPropriete(m, name) {
+  if (name === m.mon || name.startsWith("d302_monitor")) return "état machine";
+  if (name === m.send) return "commande";
+  // `data_response` ne porte aucun sens par son nom : tout est dans la trame, que l'appelant lit.
+  if (name === "data_response" || name === "app_data_response") return "réponse ECAM";
+  if (name === SERIAL_PROP) return "numéro de série et modèle";
+  if (name === "device_connected") return "présence du serveur";
+  const pi = profilePropInfo(name);
+  if (pi) {
+    if (pi.kind === "priority") return `ordre des favoris · profil ${pi.profileId}`;
+    return `${pi.kind === "profileNames" ? "noms de profils" : "noms de recettes perso"} ${pi.first}+`;
+  }
+  const reg = Object.entries(REGLAGE_PROPS).find(([, e]) => e.classic === name || e.striker === name);
+  if (reg) return nomReglage(Number(reg[0]));
+  const bev = inverseBoissons(m).get(name);
+  if (bev) return bev.kind === "bounds" ? `bornes · ${bevLabel(m, bev.id)}` : `recette · ${bevLabel(m, bev.id)} · profil ${bev.profileId}`;
+  const grain = /^d2\d\d_beansystem_(\d)$/.exec(name);
+  if (grain) return `profil de grains ${grain[1]}`;
+  return null;
+}
+
+/**
+ * **Ce qu'une application reçoit de nous, en une ligne lisible.**
+ *
+ * Le journal disait `état rediffusé · d263_3_rec_priority`, c'est-à-dire un nom de propriété et
+ * rien d'autre : illisible pour qui ne connaît pas la table par cœur, et surtout muet sur ce que
+ * la valeur contient. On nomme donc les deux — la propriété **et** la commande que porte sa
+ * trame, via la même `ECAM_OPS` que le reste du serveur.
+ *
+ * Deux choix qui sont le propos de la fonction :
+ *
+ * - **le monitor ne dit que son état et le repos.** Y mettre le pourcentage romprait le pliage
+ *   des lignes identiques de `LA()` pendant une préparation, où la machine pousse toutes les 1 à
+ *   3 secondes et où chaque poussée part vers chaque application : le journal des applications
+ *   se remplirait de la progression, qui est déjà dans celui de la machine, à sa place.
+ * - **l'inconnu est CRIÉ et garde ses octets.** Une propriété que nous ne savons pas nommer, ou
+ *   une trame dont l'octet de commande n'est pas dans la table, sont exactement ce que ce
+ *   multiplexeur permet de découvrir — l'application officielle produit des trames que nous
+ *   n'avons jamais vues et ne les rejoue pas. Une ligne discrète les perd ; une ligne en
+ *   capitales avec son hexadécimal se retrouve et se recolle dans `doc/commandes-cafe.md`.
+ */
+function libelleEtat(m, name, value) {
+  const nom = nomPropriete(m, name);
+  if (nom === "état machine") {
+    try {
+      const mo = decodeMonitor(value);
+      return `${name} · état machine 0x${mo.stateByte.toString(16).padStart(2, "0")} · ${mo.auRepos ? "au repos" : "préparation en cours"}`;
+    } catch { /* monitor illisible : on retombe sur le traitement générique, octets compris */ }
+  }
+  const r = opReponse(value);
+  const parts = [name];
+  parts.push(nom ?? "PROPRIÉTÉ NON IDENTIFIÉE");
+  if (r) parts.push(r.op ? `${r.op.nom} (${hexCmd(r.cmd)})` : `commande ${hexCmd(r.cmd)} NON IDENTIFIÉE`);
+  // Les octets ne sont joints que sur de l'inconnu : ailleurs ils feraient une ligne de deux cents
+  // caractères qui répète ce que le journal machine décode déjà, mieux.
+  if (!nom || (r && !r.op)) parts.push(chargeBrute(value, 64));
+  return parts.join(" · ");
+}
 function diffuserAuxApps(m, name, value) {
   if (!PROXY.actif) return;
   const cibles = appsEtablies().filter((a) => a.machineId === m.id);
@@ -1639,7 +1640,7 @@ function diffuserAuxApps(m, name, value) {
     // part : ni au journal, ni ailleurs qu'en compteur cumulé. Il l'est ici, et le repli des
     // lignes identiques suffit à contenir une préparation, où la machine pousse toutes les 1 à
     // 3 secondes. C'est aussi la seule trace de ce qu'une application a REÇU de nous.
-    LA("out", `état rediffusé · ${name}`, app, m);
+    LA("out", `état rediffusé · ${libelleEtat(m, name, value)}`, app, m);
     pousserVersApp(m, app, corps).catch(() => {});
   }
 }
@@ -1916,8 +1917,18 @@ function handleProperty(m, name, value) {
     return;
   }
 
-  let cmd;
-  try { cmd = Buffer.from(value, "base64")[2]; } catch { cmd = undefined; }
+  // ⚠️ **Tester que c'est une trame AVANT d'en lire l'octet de commande.**
+  // `Buffer.from(x, "base64")` ne lève jamais : il ignore silencieusement ce qui n'en est pas et
+  // rend des octets qui ont l'air de quelque chose. Deux conséquences, l'une visible et l'autre
+  // pas. Visible : `device_connected = 1787407876` — un horodatage unix en clair, que la vraie
+  // application nous écrit — se journalisait « commande 0x3b non décodée — d7 bf 3b e3 4e fc ef »,
+  // sept octets inventés là où la valeur était lisible telle quelle. Invisible et pire : cet
+  // octet fabriqué sert à AIGUILLER le décodage, donc une valeur quelconque dont le troisième
+  // octet vaut par hasard 0xA2 partait chez `decodeParameters`, qui rangeait des compteurs
+  // imaginaires dans la base. `opReponse` vérifie la forme base64 puis l'en-tête ECAM (0xD0 ou
+  // 0x0D) et rend `null` sinon — ce qui envoie proprement la valeur au cas `default`.
+  const reponse = opReponse(value);
+  const cmd = reponse?.cmd;
   // Chaque branche écrit ce qu'elle a décodé, tout de suite : `done` ne fait plus que journaliser.
   const done = (msg) => {
     apparier(m.file, { prop: name }, Date.now());
@@ -1977,10 +1988,18 @@ function handleProperty(m, name, value) {
         noteReglages(m, st.entries, "propriété");
         return done(`réglages : ${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`);
       }
+      // Tout ce que nous ne savons pas décoder — et c'est une DÉCOUVERTE, pas une erreur : la
+      // valeur est conservée telle quelle, sans interprétation, parce qu'un outil qui a déjà
+      // décidé quoi jeter ne peut plus rien apprendre. Même règle que `chargeBrute`.
       default: {
-        const hex = Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim();
-        m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: cmd ?? null, hex });
-        return done(`commande 0x${(cmd ?? 0).toString(16)} non décodée — ${hex}`);
+        if (!reponse) {
+          // Pas une trame ECAM du tout : on garde la valeur, mot pour mot.
+          m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: null, valeur: String(value) });
+          return done(`valeur non-trame : ${String(value).slice(0, 120)}`);
+        }
+        const hex = reponse.trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+        m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd, hex });
+        return done(`commande ${hexCmd(cmd)} NON IDENTIFIÉE — ${hex}`);
       }
     }
   } catch (e) {

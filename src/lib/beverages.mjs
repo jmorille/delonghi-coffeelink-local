@@ -301,7 +301,13 @@ export const paramInfo = (id) => PARAMS[id] ?? { name: String(id), label: `Param
  * → `z.Z(id)` : `length > 1`). Sur cette famille ce sont les quantités liquides ;
  * confirmé par le décodage exact de `d001_rec_espresso` (parcours tombant sur le CRC).
  */
-export const TWO_BYTE = new Set([1, 9, 15]);
+// La table vit dans `ecam-args.mjs`, qui est le référentiel du protocole ECAM. Elle a existé en
+// TROIS exemplaires — ici, dans `server.mjs` et dans le décodeur d'arguments — et trois copies
+// d'une table de largeurs d'octets divergent au premier ajout sans lever la moindre erreur : on
+// obtient des valeurs plausibles et fausses. Réexportée sous son ancien nom, les deux décodeurs
+// ci-dessous s'en servant sous celui-là.
+import { TWO as TWO_BYTE } from "./ecam-args.mjs";
+export { TWO_BYTE };
 
 /**
  * Décode une propriété de bornes (trame ECAM `0xB0`) — port de `p097j6.d.X()`.

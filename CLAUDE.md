@@ -1273,20 +1273,65 @@ Writing that journal is also what finally made the **state re-broadcast** visibl
 the multiplexer — one real read, N recipients — was logged nowhere, surviving only as a cumulative
 counter. It is also the only trace of what an application RECEIVED from us.
 
-**Relayed commands are DECODED, not just named** — `src/lib/ecam-args.mjs`, pure, proven by
-`scripts/verif-args.mjs` in CI. `describeFrame()` gives the operation and the bytes, which is
-enough when you know the frame by heart and unreadable otherwise: "préparation d'une boisson"
-says neither which drink, nor which profile, nor with what settings — and a relayed write reaches
-a real appliance, so the line has to distinguish a coffee being poured from a recipe being
-overwritten. The decoder is the **inverse of this file's frame builders**, each case naming the
-one it mirrors, and `TWO` (the 16-bit recipe parameters) now lives in that module so builder and
-decoder read the same table — a one-byte drift between them raises nothing and yields plausible,
-wrong values. What is not protocol is **injected** (a beverage's name for this machine, a
-setting's name), so the module knows neither a model's catalog nor the names typed on the
-appliance. Arguments are inserted **before** the hex, because that is the order one reads them in;
-the bytes never disappear. ⚠️ **Never guess**: an unhandled command returns `null` and keeps its
-raw bytes, which is the useful material — inventing a plausible argument for a never-observed
-frame would produce a journal line that reads like a fact.
+**`src/lib/ecam-args.mjs` is THE ECAM referential** — pure, proven by `scripts/verif-args.mjs` in
+CI (20 assertions). It holds the operation table (`ECAM_OPS`), the reading of a frame going **out**
+(`opTrame`, and `natureTrame` / `describeFrame` / `profilVise` over it), the reading of one coming
+**in** (`opReponse`), the 16-bit parameter table (`TWO`), and the argument decoder. Everything in
+`server.mjs` that names a command reads that one table: the two journals, the task labels, and the
+**scheduler** — `natureTrame` is what decides whether a step waits for a response or for a presence
+window, so the table is not decoration, it changes behaviour.
+
+It was assembled out of three places that each held a copy. `TWO` existed **three** times
+(`server.mjs`, `beverages.mjs` as `TWO_BYTE`, and the decoder); `ECAM_OPS` and `opTrame` lived in
+`server.mjs` where only that file could reach them. A duplicated protocol table diverges at the
+first addition **without raising anything** — you get plausible, wrong values, which in a journal
+used to decide whether a real appliance just poured a coffee or overwrote a recipe is the worst
+possible outcome. `beverages.mjs` now re-exports `TWO` under its old name rather than declaring it.
+
+**The decoder is the inverse of this file's frame builders**, each case naming the one it mirrors.
+What is not protocol is **injected** (a beverage's name for this machine, a setting's name), so the
+module knows neither a model's catalog nor the names typed on the appliance. Arguments are inserted
+**before** the hex, because that is the order one reads them in; the bytes never disappear.
+`describeFrame(f, { octets: false })` drops them for a **task label** — the Activité panel says what
+is going to the machine, it is not a byte dumper, and both journals carry the bytes anyway.
+
+⚠️ **Never guess, and say so loudly when you cannot.** An unhandled command returns `null` from the
+argument decoder and keeps its raw bytes; an operation absent from `ECAM_OPS` renders as **`commande
+NON IDENTIFIÉE (0x..)`**, in capitals, **and keeps its bytes even in the short form** — a short label
+for a frame nobody recognises would say nothing at all. That is not an error path, it is the
+discovery path: see the reverse-engineering section below.
+
+**The three places a relayed command is now readable.** `App a2 · commande` said nothing about what
+was reaching the appliance, and it was the only line the Activité panel showed — one could watch a
+task go by without being able to tell a coffee from a recipe being overwritten. The decoded
+description now travels as a **parameter** of the `appWrite` message (`App {app} · {commande}`), and
+it stays French from the server for the same reason journal lines do: it is the same text, produced
+by the same table, and two wordings for one frame would contradict each other at the first protocol
+change. `startProgram`'s journal line gained the arguments too, so the machine journal and the app
+journal describe one frame the same way.
+
+**Rebroadcast states are named, both halves of them.** The app journal used to print `état rediffusé
+· d263_3_rec_priority` — a property name and nothing else, unreadable to anyone who does not know
+the table by heart, and silent about what the value contained. `libelleEtat()` names the **property**
+(via `nomPropriete()`, which inverts the catalog's own `boundsProp` / `profileProp` builders rather
+than copying a second table of names, plus `profilePropInfo`, `REGLAGE_PROPS` and the bean-slot
+pattern) **and the command its frame carries** (via `opReponse`, same `ECAM_OPS`). Two deliberate
+limits: the **monitor prints only its state byte and idle/running** — adding the percentage would
+break `LA()`'s folding of identical lines during a preparation, where the machine pushes every 1–3 s
+and every push goes to every app, drowning the journal in a progression the machine journal already
+shows; and **bytes are attached only to the unknown**, since elsewhere they would repeat, worse, what
+the machine journal decodes.
+
+**A property whose value is not a frame no longer gets one invented — and that was misrouting, not
+just a bad label.** `handleProperty` read its command byte with `Buffer.from(value, "base64")[2]`,
+and that call **never throws**: it ignores what is not base64 and returns bytes that look like
+something. Visible half: `device_connected = 1787407876`, a plain unix timestamp the real app writes
+to us, was journalled as `commande 0x3b non décodée — d7 bf 3b e3 4e fc ef` — seven invented bytes
+where the value was readable as it stood. Invisible half, and the worse one: that fabricated byte is
+what **dispatches** the decoding, so any value whose third byte happened to be `0xA2` went to
+`decodeParameters` and filed imaginary counters in the database. Dispatch now goes through
+`opReponse`, which checks the base64 shape *then* the ECAM header (`0xD0` or `0x0D`) and returns
+`null` otherwise, sending the value cleanly to `default` where it is kept verbatim.
 
 **Treat it as a reverse-engineering instrument, not just a status panel.** The official app is the
 only emitter in the world that produces frames we have never seen, and it does not replay them — so
@@ -1304,6 +1349,18 @@ with the truncation **stated** rather than silent. For the same reason an unreco
 logged at 400 characters, not 160: a request truncated to 160 cannot be analysed. The other half of
 the round trip — what the machine answered — stays in the machine journal by the boundary above; the
 two sections sit one under the other precisely so the correlation is a glance.
+
+**That is what the decoding is FOR: finding what is not in the referential yet.** Naming what we
+already know is only half of it — the other half is that everything we do *not* know now stands out
+instead of blending in. Three markers, all in capitals so they survive a scroll: `commande NON
+IDENTIFIÉE (0x..)` for an operation absent from `ECAM_OPS`, `PROPRIÉTÉ NON IDENTIFIÉE` for an Ayla
+property `nomPropriete()` cannot name, and `valeur non-trame` for a value that is not ECAM at all.
+Each keeps its bytes, in both hex (to compare against `doc/commandes-cafe.md`) and base64 (to paste
+into a test). The corollary is a rule about the table itself: **an entry missing from `ECAM_OPS` for
+a response the server decodes perfectly would produce a false discovery signal**, so
+`verif-args.mjs` asserts that every command byte `handleProperty` routes has an entry
+(`0xA1 0xA2 0xA3 0xA4 0xA6 0xA8 0xAA 0xB0 0xBA 0x95`). Adding a decoder means adding its line to the
+table in the same breath.
 
 ⚠️ **`scripts/faux-app.mjs` must stay faithful on the response bodies, and one line proves why.** It
 used to answer `datapoint.json` with an `encapsulate("{}")`, where the real SDK returns an **empty**

@@ -1,5 +1,12 @@
 /**
- * Décodage des ARGUMENTS d'une trame ECAM — l'inverse des constructeurs de `server.mjs`.
+ * **Le référentiel des commandes ECAM** : la table des opérations, la lecture d'une trame, et le
+ * décodage de ses arguments — l'inverse des constructeurs de `server.mjs`.
+ *
+ * Une SEULE table, et c'est le propos. `ECAM_OPS` décide à la fois du libellé d'une ligne de
+ * journal ET de la façon dont l'ordonnanceur attend la machine (`natureTrame`) ; `TWO` est lue
+ * par le constructeur de trames, par le décodeur de recettes et par le décodeur d'arguments.
+ * Chacune a vécu en plusieurs exemplaires, et une table de protocole dupliquée diverge au
+ * premier ajout **sans lever la moindre erreur** : on obtient des valeurs plausibles et fausses.
  *
  * ⚠️ Ce module TOURNE. Ce n'est pas une des copies `.ts` shadowées : `server.mjs` l'importe.
  *
@@ -101,4 +108,161 @@ export function argumentsTrame(t, { boisson, reglage, params = {} }) {
     // 0xA3, 0x75, 0x60, 0x70 n'ont pas d'argument. Le reste : on ne devine pas.
     default: return null;
   }
+}
+
+/**
+ * **La table des opérations, par octet de commande.** `nature` est le VERBE, `nom` l'objet : les
+ * deux se lisent à la suite (« lecture · monitor »). Les mettre tous les deux au complet donnait
+ * « lecture lecture d'un profil de grains ».
+ *
+ * La nature — lecture, action ou écriture — est ce qui compte le plus quand on cherche pourquoi
+ * une machine a fait quelque chose : une lecture n'a aucun effet physique, une action en a un.
+ * Elle ne sert d'ailleurs pas qu'au libellé : c'est elle qui décide si un pas de la file attend
+ * une réponse ou seulement une fenêtre de présence (voir `startProgram`).
+ *
+ * ⚠️ **Ce qui n'est pas dans cette table est une découverte, pas une erreur.** L'application
+ * officielle est le seul émetteur au monde à produire des trames que nous n'avons jamais vues,
+ * et elle ne les rejoue pas : une commande absente d'ici doit se voir dans le journal, en
+ * capitales et avec ses octets, plutôt que de se fondre dans les autres lignes.
+ */
+export const ECAM_OPS = {
+  0x75: { nature: "lecture", nom: "monitor" },
+  // 0x83 est affiné par son octet de mode : voir `opTrame`. La distinction compte — le même octet
+  // de commande sert à préparer une boisson, à arrêter, et à ÉCRIRE une recette dans un profil.
+  0x83: { nature: "action", nom: "recette" },
+  0x84: { nature: "action", nom: "marche / arrêt" },
+  0xa2: { nature: "lecture", nom: "paramètres et compteurs" },
+  0xa3: { nature: "lecture", nom: "sommes de contrôle" },
+  0xa4: { nature: "lecture", nom: "noms de profils" },
+  0xa6: { nature: "lecture", nom: "recette d'un profil" },
+  0xa8: { nature: "lecture", nom: "ordre des favoris" },
+  0xa9: { nature: "action", nom: "sélection de profil" },
+  0xaa: { nature: "lecture", nom: "noms de recettes perso" },
+  0xb0: { nature: "lecture", nom: "bornes d'une recette" },
+  0xb9: { nature: "action", nom: "sélection du grain actif" },
+  0xba: { nature: "lecture", nom: "profil de grains" },
+  // Les écritures persistantes de cette table, et c'est ce qu'il faut voir d'un coup d'œil.
+  0xbb: { nature: "écriture", nom: "profil de grains" },
+  0x90: { nature: "écriture", nom: "réglage machine" },
+  0xa5: { nature: "écriture", nom: "noms de profils" },
+  0xab: { nature: "écriture", nom: "noms de recettes perso" },
+  0xad: { nature: "écriture", nom: "ordre des favoris" },
+  // `0x95` lit un réglage machine — pendant exact de l'écriture `0x90`.
+  0x95: { nature: "lecture", nom: "réglage machine" },
+  // Les deux autres modes de monitor. Nature « lecture » : ils attendent une réponse, comme 0x75.
+  0x60: { nature: "lecture", nom: "monitor mode 0" },
+  0x70: { nature: "lecture", nom: "monitor mode 1" },
+  // `0xA1` n'a pas de décodeur d'arguments : la valeur se lit positionnellement (numéro de série).
+  0xa1: { nature: "lecture", nom: "numéro de série" },
+};
+
+/** L'octet de commande en hexadécimal à deux chiffres, tel qu'il s'écrit dans `doc/`. */
+export const hexCmd = (c) => `0x${Number(c ?? 0).toString(16).padStart(2, "0")}`;
+
+/**
+ * L'opération que porte une trame SORTANTE — le journal, pour la nommer, et l'ordonnanceur, pour
+ * savoir si la machine RÉPONDRA.
+ *
+ * ⚠️ `ecamB64` porte la trame **suivie de 4 octets d'horodatage** (voir `datapointValue`) : on
+ * les retire, sinon le journal afficherait quatre octets qui n'appartiennent pas à la commande.
+ * C'est vrai de ce que NOUS envoyons ; une réponse de la machine n'en porte pas — voir
+ * `chargeBrute`, qui ne retire rien parce qu'elle sert à regarder ce qu'on ne comprend pas encore.
+ */
+export function opTrame(ecamB64) {
+  const buf = Buffer.from(ecamB64, "base64");
+  const trame = buf.subarray(0, Math.max(0, buf.length - 4));
+  const cmd = trame[2];
+  // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
+  // Le bit 0x80 est le drapeau « vérification » (`check`), il ne change pas la nature.
+  if (cmd === 0x83) {
+    const mode = trame[5] & 0x7f;
+    const op =
+      mode === 0x00
+        ? { nature: "écriture", nom: "recette enregistrée dans un profil" }
+        : mode === 0x02
+          ? { nature: "action", nom: "arrêt de la préparation" }
+          : { nature: "action", nom: "préparation d'une boisson" };
+    return { cmd, op, trame };
+  }
+  return { cmd, op: ECAM_OPS[cmd], trame };
+}
+
+/**
+ * « lecture », « action » ou « écriture ». Décide si le pas attend une réponse ou seulement une
+ * fenêtre de présence — voir `startProgram`. Une trame illisible est traitée comme une action :
+ * c'est le choix prudent, il fait tenir la présence au lieu d'attendre une réponse qui ne
+ * viendra peut-être jamais.
+ */
+export function natureTrame(ecamB64) {
+  try { return opTrame(ecamB64).op?.nature ?? "action"; } catch { return "action"; }
+}
+
+/**
+ * L'opération et les octets, sans les arguments — voir `decrireCommande` côté serveur, qui
+ * insère ces derniers. `octets: false` rend la forme courte, pour un libellé de tâche : le
+ * panneau « Activité » nomme ce qui part vers la machine, il n'est pas un dumper d'octets.
+ *
+ * Une commande absente de la table se dit **NON IDENTIFIÉE**, en capitales et avec ses octets.
+ * C'est délibéré : c'est le matériau de la rétro-ingénierie, et une ligne discrète se perd.
+ */
+export function describeFrame(ecamB64, { octets = true } = {}) {
+  try {
+    const { cmd, op, trame } = opTrame(ecamB64);
+    const nom = op ? `${op.nature} · ${op.nom}` : "commande NON IDENTIFIÉE";
+    // Une commande inconnue garde ses octets même en forme courte : sans eux la ligne ne dit
+    // rien du tout, alors que c'est justement celle qu'on veut pouvoir analyser.
+    if (!octets && op) return `${nom} (${hexCmd(cmd)})`;
+    const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+    return `${nom} (${hexCmd(cmd)}) · trame ${hex}`;
+  } catch {
+    return "trame illisible";
+  }
+}
+
+/**
+ * Le profil que vise une trame, ou `null` si elle n'en vise aucun.
+ *
+ * Existe pour le multiplexeur, et pour une raison concrète : la **toute première** commande qu'une
+ * application officielle nous a relayée était `0D 06 A9 F0 01 …` — une sélection de profil. L'app
+ * impose son profil courant à l'appareil dès l'ouverture de session, et ce profil vient d'une
+ * préférence stockée dans le téléphone, avec 1 par défaut. Sans cette lecture, une application qui
+ * se branche déplace le profil actif de la machine **et notre interface continue d'annoncer
+ * l'ancien** — exactement ce que la règle « toute commande qui vise un profil doit poser
+ * `m.activeProfile` » existe pour empêcher.
+ *
+ * Deux dispositions, relevées dans les constructeurs de trames de `server.mjs` :
+ * - `0xA9` : `0D 06 A9 F0 <profil> <crc>` — le profil est en clair à l'octet 4 ;
+ * - `0x83` : le profil est encodé `(profil << 2) | action` dans le dernier octet avant le CRC.
+ */
+export function profilVise(ecamB64) {
+  try {
+    const { cmd, trame } = opTrame(ecamB64);
+    if (cmd === 0xa9) return trame[4] ?? null;
+    if (cmd === 0x83) return (trame[trame.length - 3] ?? 0) >> 2;
+  } catch { /* trame illisible : aucun profil à en tirer */ }
+  return null;
+}
+
+/**
+ * **L'opération que porte une trame ENTRANTE** — une réponse de la machine, ou la valeur d'une
+ * propriété Ayla rediffusée à une application.
+ *
+ * Distincte d'`opTrame` sur deux points qui comptent : rien n'est retiré (une réponse ne porte
+ * pas les 4 octets d'horodatage que NOUS ajoutons), et la valeur est d'abord **testée** avant
+ * d'être décodée. `Buffer.from(x, "base64")` ne lève jamais : il ignore silencieusement ce qui
+ * n'en est pas et rend des octets qui ont l'air de quelque chose — c'est ainsi que
+ * `device_connected = 1787407876`, un horodatage unix en clair, s'est affiché « d7 bf 3b e3 ».
+ *
+ * Rend `null` quand la valeur n'est pas une trame ; sinon `{ cmd, op, trame }`, `op` valant
+ * `undefined` pour une commande que la table ne connaît pas — ce qui est une découverte, pas une
+ * erreur, et doit se voir.
+ */
+export function opReponse(valeur) {
+  const v = String(valeur ?? "");
+  if (!v || v.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v)) return null;
+  const trame = Buffer.from(v, "base64");
+  // `0xD0` en réponse, `0x0D` en requête : hors de ces deux en-têtes ce ne sont pas des octets
+  // ECAM, et les lire comme tels inventerait une commande.
+  if (trame.length < 4 || (trame[0] !== 0xd0 && trame[0] !== 0x0d)) return null;
+  return { cmd: trame[2], op: ECAM_OPS[trame[2]], trame };
 }

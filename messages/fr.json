@@ -881,7 +881,7 @@
     "monitorMode": "Mode moniteur {mode} (0x{hex})",
     "readOne": "Lecture {prop}",
     "readMany": "Lecture de {count} propriétés",
-    "appWrite": "App {app} · commande",
+    "appWrite": "App {app} · {commande}",
     "appRead": "App {app} · lecture {prop}"
   },
   "profilesWhat": {

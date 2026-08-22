@@ -1301,3 +1301,66 @@ journalisent la réponse brute sans la décoder.
   pas une trame ECAM). Rôle non établi.
 - `0xA1` en LECTURE de paramètres : `d.r0(addr, qty)` choisit `0xA1` quand `qty > 4` et `0x95`
   sinon. On ne sait pas ce que la première forme change.
+
+## 15. Le référentiel des commandes, et comment il se complète
+
+Ce document est la table de référence ; `lan-server/src/lib/ecam-args.mjs` en est la forme
+exécutable. Un seul module y porte **tout** ce qui nomme une commande ECAM :
+
+| ce qu'il porte | à quoi ça sert |
+|---|---|
+| `ECAM_OPS` | la nature (lecture / action / écriture) et le nom de chaque octet de commande |
+| `opTrame(b64)` | lire une trame **sortante** — celles que nous émettons portent 4 octets d'horodatage en queue, retirés ici |
+| `opReponse(valeur)` | lire une trame **entrante** — une réponse n'en porte pas, et la valeur est d'abord vérifiée |
+| `natureTrame` | décide si un pas attend une réponse ou une fenêtre de présence (§ 5.1) |
+| `describeFrame` | l'opération et les octets ; `{ octets: false }` pour un libellé de tâche |
+| `profilVise` | le profil visé, `0xA9` octet 4 ou `0x83` `(profil << 2) \| action` (§ 1.3) |
+| `argumentsTrame` | les arguments en clair — l'inverse exact des constructeurs de trames |
+| `TWO` | les paramètres de recette sur 16 bits (§ 3) |
+
+Une table de protocole dupliquée diverge au premier ajout **sans lever la moindre erreur** : on
+obtient des valeurs plausibles et fausses. `TWO` a existé en trois exemplaires avant d'être
+ramenée ici.
+
+### 15.1 Ce qui n'y est pas se voit — c'est le but
+
+L'application officielle est le seul émetteur au monde à produire des trames que nous n'avons
+jamais vues, et **elle ne les rejoue pas** : ce qui n'est pas relevé au passage est perdu. Le
+multiplexeur (§ 7 de `analyse-connexion-wifi.md`) est donc un instrument de relevé, et ses deux
+journaux marquent l'inconnu en capitales plutôt que de le laisser se fondre dans le reste :
+
+| marqueur | ce qu'il signale | ce qu'il conserve |
+|---|---|---|
+| `commande NON IDENTIFIÉE (0x..)` | un octet de commande absent d'`ECAM_OPS` | la trame complète, en hexadécimal |
+| `PROPRIÉTÉ NON IDENTIFIÉE` | une propriété Ayla que le serveur ne sait pas nommer | hexadécimal **et** base64 d'origine |
+| `valeur non-trame : …` | une valeur qui n'est pas de l'ECAM du tout | la valeur, mot pour mot |
+
+L'hexadécimal se compare aux tables de ce document ; le base64 se recolle tel quel dans un test
+ou un rejeu. Aucun des trois n'interprète quoi que ce soit : un outil qui a déjà décidé quoi
+jeter ne peut plus rien apprendre.
+
+**Une valeur n'est lue comme une trame qu'après vérification de sa forme.** `Buffer.from(x,
+"base64")` ne lève jamais : il ignore ce qui n'en est pas et rend des octets qui ont l'air de
+quelque chose. Relevé en direct : `device_connected = 1787407876`, un horodatage unix en clair
+que la vraie application nous écrit, se journalisait « commande 0x3b non décodée — d7 bf 3b e3
+4e fc ef ». Sept octets inventés là où la valeur était lisible telle quelle — et surtout, cet
+octet fabriqué servait à **aiguiller** le décodage. La vérification est donc : forme base64,
+puis en-tête `0xD0` (réponse) ou `0x0D` (requête), sinon ce n'est pas une trame.
+
+### 15.2 L'invariant à tenir en ajoutant un décodeur
+
+> ⚠️ **Une réponse que le serveur décode parfaitement mais qui manque à `ECAM_OPS` produit un
+> faux signal de découverte** : le journal la crie « NON IDENTIFIÉE » alors qu'elle est connue,
+> et le marqueur perd sa valeur d'alerte.
+
+Ajouter un décodeur, c'est donc ajouter sa ligne à la table dans le même geste.
+`lan-server/scripts/verif-args.mjs` le vérifie en CI sur les octets effectivement routés :
+`0xA1`, `0xA2`, `0xA3`, `0xA4`, `0xA6`, `0xA8`, `0xAA`, `0xB0`, `0xBA`, `0x95`.
+
+### 15.3 Commandes connues de l'app mais absentes de la table
+
+Elles sont listées ici pour être **reconnues quand elles passeront**, pas pour être décodées :
+voir § 14.5 pour `0xE8` et pour `0xA1` en lecture de paramètres. Tant qu'aucune n'a été observée
+en mode LAN, elles n'entrent pas dans `ECAM_OPS` — une entrée inventée ferait taire le marqueur
+qui doit justement se déclencher le jour où l'une d'elles arrive.
+
