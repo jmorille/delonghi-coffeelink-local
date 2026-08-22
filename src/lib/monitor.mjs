@@ -54,8 +54,8 @@ export const MONITOR_SWITCHES = [
   { group: 0, bit: 5, name: "KNOB", label: "molette" },
   { group: 0, bit: 6, name: "WATER_LEVEL_LOW", label: "niveau d'eau bas" },
   { group: 0, bit: 7, name: "COFFEE_JUG", label: "verseuse" },
-  { group: 1, bit: 0, name: "IFD_CARAFFE", label: "carafe à lait" },
-  { group: 1, bit: 1, name: "CIOCCO_TANK", label: "bac chocolat" },
+  { group: 1, bit: 0, name: "IFD_CARAFFE", label: "carafe à lait (hors nettoyage)" },
+  { group: 1, bit: 1, name: "CIOCCO_TANK", label: "carafe à lait (nettoyage)" },
   { group: 1, bit: 2, name: "CLEAN_KNOB", label: "molette nettoyage" },
   { group: 1, bit: 5, name: "DOOR_OPENED", label: "porte ouverte" },
   { group: 1, bit: 6, name: "PREGROUND_DOOR_OPENED", label: "trappe café moulu ouverte" },
@@ -73,9 +73,9 @@ export const MONITOR_SWITCHES = [
  * (lait) à 7 (café) en cours de route. Le pourcentage, lui, couvre la boisson ENTIÈRE — relevé
  * sur la machine : le lait le mène à 38, puis le café reprend à 40 et va jusqu'à 100.
  *
- * ⚠️ **`f=7, e=0` est le repos, et c'est le seul signal de fin fiable.** Un lait chaud a été
- * relevé s'arrêtant à 90 % avant de retomber directement au repos : une barre qui attendrait
- * `pourcent === 100` resterait bloquée. Voir `doc/commandes-cafe.md` § 11.5.
+ * ⚠️ **Le retour au repos (`e = 0`, voir `ETAPE_REPOS`) est le seul signal de fin fiable.** Un
+ * lait chaud a été relevé s'arrêtant à 90 % avant de retomber directement au repos : une barre
+ * qui attendrait `pourcent === 100` resterait bloquée. Voir `doc/commandes-cafe.md` § 11.5.
  *
  * Les libellés `VIEW_C13_PREPARING_STATUS_<f>_<e>` de l'app viennent de son CMS, pas de l'APK :
  * ceux-ci sont les nôtres, déduits des illustrations que `BrewBeveragesViewModel.D()/E()`
@@ -83,7 +83,21 @@ export const MONITOR_SWITCHES = [
  * `null`** — l'app y garde simplement l'illustration précédente, et inventer un nom pour un
  * octet jamais observé est exactement ce que ce projet paie cher ailleurs.
  */
-export const ETAPE_REPOS = { fonction: 7, etape: 0 };
+/**
+ * **Le repos se lit sur l'ÉTAPE seule, pas sur le couple.**
+ *
+ * L'app teste `f == 7 && e == 0` (son predicat `o()`), et c'est ce qu'on faisait. C'est trop
+ * etroit : mesure du 2026-08-22, **carafe a lait branchee, machine au repos, la trame dit
+ * `f=12, e=0`** — une fonction qui n'apparait dans aucune des quatre preparations enregistrees.
+ * Retirer la carafe la ramene a `f=7, e=0` (capture `carafe.json`). Avec la regle de l'app, une
+ * machine au repos avec sa carafe en place etait donc lue « preparation en cours, 0 % », et la
+ * barre restait affichee en permanence.
+ *
+ * `e === 0` suffit et se verifie : sur les cinq captures, l'etape 0 n'apparait QUE au repos —
+ * jamais au milieu d'une preparation, dont les etapes relevees vont de 1 a 14.
+ * `scripts/verif-monitor.mjs` le reverifie a chaque execution.
+ */
+export const ETAPE_REPOS = { etape: 0 };
 export const MONITOR_ETAPES = {
   // Fonction 5 : chauffe (table de l'app, non observée ici).
   5: { 2: "chauffe", 4: "chauffe", 6: "chauffe" },
@@ -108,9 +122,32 @@ export const MONITOR_ETAPES = {
  * 9, 10, 11     progression        fonction, étape, pourcentage (voir MONITOR_ETAPES)
  * ```
  *
- * ⚠️ Les octets 5-6 étaient nommés « progress » dans une première version : c'était faux. La
- * valeur 256 relevée sur cette machine signifie « groupe 1, bit 0 » = carafe à lait connectée,
- * ce que l'écran confirmait. La vraie progression est aux octets 9-11, voir `MONITOR_ETAPES`.
+ * ⚠️ Les octets 5-6 étaient nommés « progress » dans une première version : c'était faux, ce sont
+ * les capteurs. La vraie progression est aux octets 9-11, voir `MONITOR_ETAPES`.
+ *
+ * ⚠️ **Les deux bits 1.0 et 1.1 disent tous deux « carafe en place » — ce qui les distingue est
+ * la POSITION DE LA MOLETTE de la carafe.** Établi en trois mesures sur la machine le
+ * 2026-08-22, une seule variable changeant à chaque fois :
+ *
+ * ```
+ * carafe retirée                     octet 6 = 0b00000000   (aucun)
+ * carafe en place, molette nettoyage  octet 6 = 0b00000010   bit 1.1  CIOCCO_TANK
+ * carafe en place, molette AILLEURS   octet 6 = 0b00000001   bit 1.0  IFD_CARAFFE
+ * ```
+ *
+ * « Ailleurs » et pas « mousse » : le detecteur ne connait qu'UNE frontiere, nettoyage ou pas.
+ * Verifie sur trois positions hors nettoyage — mousse au cran courant, mousse au minimum, et la
+ * graduation « insert » — qui donnent la MEME trame, octet pour octet, CRC compris.
+ *
+ * Jamais les deux ensemble, ce que les quatre préparations enregistrées montraient déjà sans
+ * qu'on sache l'expliquer : les trois boissons lactées ont `IFD_CARAFFE` (molette sur mousse,
+ * forcément) et la capture au repos a `CIOCCO_TANK`. Les noms d'énum sont ceux de l'app et
+ * induisent en erreur — `CIOCCO_TANK` ne désigne aucun bac à chocolat ici, ce modèle n'a pas de
+ * boisson chocolatée. On garde les noms (ils viennent du protocole) et on corrige les libellés.
+ *
+ * ⛔ Ni le CRAN de mousse ni la position « insert » ne sont rapportés : les deux bits sont des
+ * détecteurs tout-ou-rien, aucun octet continu ne varie. Vrai de `0x75`, la seule trame qu'on
+ * interroge — inutile de refaire la mesure.
  */
 export function decodeMonitor(b64) {
   const raw = Buffer.from(b64, "base64");
@@ -146,8 +183,7 @@ export function decodeMonitor(b64) {
    * afficher une barre, donc « inconnu » ne doit surtout pas être rendu comme « en cours », ce
    * qu'un booléen aurait forcé.
    */
-  const auRepos =
-    fonction == null || etape == null ? null : fonction === ETAPE_REPOS.fonction && etape === ETAPE_REPOS.etape;
+  const auRepos = etape == null ? null : etape === ETAPE_REPOS.etape;
   return {
     stateByte: e[4],
     switchBits: bits,

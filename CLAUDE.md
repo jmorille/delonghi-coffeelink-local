@@ -938,9 +938,22 @@ proven** — `0xA9` demonstrably moved the machine from profile 3 back to profil
 heartbeat bug was found. Still unexercised on the appliance: **dispensing** a beverage, the **stop**
 command, and a second machine of a different model.
 
-**Monitor bytes 5–6 are the sensor bitfield, not a "progress" value** (byte = `5 + group`; 256 =
-group 1 bit 0 = milk carafe connected, confirmed on the machine's own display). `/api/*` exposes it
-as `switchBits`; nothing emits `progress`. The `/systeme` page still read `lastMonitor.progress` long
+**Monitor bytes 5–6 are the sensor bitfield, not a "progress" value** (byte = `5 + group`).
+`/api/*` exposes it as `switchBits`; nothing emits `progress`. **Bits 1.0 and 1.1 BOTH mean "milk
+carafe fitted"; what separates them is the carafe's KNOB position** — measured three times, one
+variable at a time: carafe removed → byte 6 `0b00000000`; fitted, knob on **clean** → `0b00000010`
+(bit 1.1 `CIOCCO_TANK`); fitted, knob **anywhere else** → `0b00000001` (bit 1.0 `IFD_CARAFFE`).
+**The detector knows exactly one boundary — clean or not clean.** Three non-clean positions were
+measured (froth as found, froth at minimum, and the "insert" graduation) and all give the *same
+frame, byte for byte, CRC included*; neither the froth level nor "insert" is reported anywhere in
+`0x75`. The first label written here said "knob on froth", which over-read a single measurement —
+the position the knob happened to be in. Never both bits at once, which is what the four recorded
+preparations already showed unexplained (the three milk drinks carry `IFD_CARAFFE` — knob
+necessarily off clean — and the idle capture carries `CIOCCO_TANK`). The enum names come from the app and mislead: `CIOCCO_TANK` names no chocolate tank
+here, this model has no chocolate beverage at all. Keep the names, they are protocol; the *labels*
+say the knob position, and `verif-monitor.mjs` asserts both the frames and the labels
+(`scripts/captures/carafe-molette.json`). This supersedes the earlier correction in this file, which
+had the carafe fitted with its knob on clean and therefore concluded 1.1 alone tracked presence. The `/systeme` page still read `lastMonitor.progress` long
 after the rename and printed "progress undefined" — if you rename a monitor field, grep the pages.
 The alarm bitfield is `byte 7 | 8<<8 | 12<<16 | 13<<24`, and byte 13 must be **multiplied** by
 `0x1000000`, not shifted: `0x80 << 24` is negative in JS and published a signed bitfield.
@@ -954,10 +967,15 @@ guessable from the decompiled code:
 - **`pourcent` spans the WHOLE beverage and never resets**: the milk takes it to 38, the coffee
   resumes at 40. One bar, no stitching.
 - ⚠️ **100 % is not guaranteed.** A hot milk stopped at 90 % and dropped straight back to idle. The
-  only reliable completion signal is the return to **`f=7, e=0`** (`auRepos`), which is the
-  machine's *global* idle state — verified on all three drinks, including the one that never left
-  `f=10`. A bar that waits for `pourcent === 100` hangs. `verif-monitor.mjs` asserts exactly this,
-  so the trap cannot come back silently.
+  only reliable completion signal is the return to idle (`auRepos`) — verified on all three drinks,
+  including the one that never left `f=10`. A bar that waits for `pourcent === 100` hangs.
+  `verif-monitor.mjs` asserts exactly this, so the trap cannot come back silently.
+- ⚠️ **Idle is `e == 0` ALONE, not the app's `f == 7 && e == 0`.** Established by physically
+  unplugging the milk carafe (`scripts/captures/carafe.json`): at rest **with the carafe fitted the
+  frame reads `f=12, e=0`** — a function absent from all four recorded preparations — and removing
+  the carafe brings it back to `f=7, e=0`. Under the app's predicate, an idle machine with its
+  carafe on was read as "preparing, 0 %", so the bar showed permanently. The invariant that makes
+  `e == 0` safe is asserted over every capture: step 0 never appears mid-preparation.
 
 **A frozen bar is worse than no bar, so the progression has its OWN freshness threshold** —
 `AGE_PROGRESSION` (20 s) in `machineState.ts`, not the 90 s `AGE_PERIME`. Observed live: the machine
@@ -1049,7 +1067,13 @@ message like `0D 08 A2 0F <id> <qty>` fails to parse and the UI prints the raw k
 **Nothing translatable crosses the API.** The server sends **protocol identifiers** — `slug` for a
 beverage, `name` (the ECAM enum) for a parameter — and the client translates them via
 `src/i18n/labels.ts` (`useBeverageLabel`, `useParamLabel`, `useUnitLabel`, `useCategoryLabel`),
-each falling back to the server label when a key is missing. A **name typed on the machine**
+each falling back to the server label when a key is missing. **Monitor sensors and alarms follow the
+same rule**: alarms already did (the `alarm` namespace, keyed by ECAM enum name), sensors did not —
+`/` and `/pilotage` rendered `sw.label`, the server's French, straight into the UI. They now go
+through the `sensor` namespace via `sensorLabel()` in `machineState.ts`, same fallback. The `label`
+still in `MONITOR_SWITCHES` is for the **terminal log only**. `verif-monitor.mjs` asserts every
+entry of `MONITOR_SWITCHES` and `MONITOR_ALARMS` has a catalogue key — a table extended on one side
+only shows a raw identifier, and only when that sensor happens to fire. A **name typed on the machine**
 (`machineName`: "Lacteso", "Malongo") is user data and is **never** translated.
 
 The French labels still in `beverages.mjs` / `profiles.mjs` are for the **terminal log only**; UI

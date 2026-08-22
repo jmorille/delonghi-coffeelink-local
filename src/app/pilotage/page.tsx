@@ -6,7 +6,7 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import ConfirmSettings from "../ConfirmSettings";
 import { cleAnnonce, echecAnnonce } from "../register";
-import { AGE_PERIME, fmtAge, splitSensors, stateLabel, stateTone, stepLabel } from "../machineState";
+import { AGE_PERIME, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
 
@@ -33,6 +33,7 @@ export default function Dashboard() {
   const tp = useTranslations("power");
   const tc = useTranslations("common");
   const ta = useTranslations("alarm");
+  const tsens = useTranslations("sensor");
   const tconf = useTranslations("confirmations");
   const [status, setStatus] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -776,12 +777,12 @@ export default function Dashboard() {
           <div className="row">
             {splitSensors(mon.switches).attention.map((sw) => (
               <span className="pill off" key={sw.name} title={tp("sensorsAttention")}>
-                {sw.label}
+                {sensorLabel(sw, tsens)}
               </span>
             ))}
             {splitSensors(mon.switches).presents.map((sw) => (
               <span className="pill" key={sw.name}>
-                {sw.label}
+                {sensorLabel(sw, tsens)}
               </span>
             ))}
           </div>

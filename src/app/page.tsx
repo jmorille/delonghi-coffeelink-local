@@ -9,7 +9,7 @@ import Alerte from "./Alerte";
 import { useConfirm } from "./confirm";
 import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
-import { AGE_PERIME, AGE_PROGRESSION, fmtAge, splitSensors, stateLabel, stepLabel, type Translator } from "./machineState";
+import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
 
 interface Param {
   id: number;
@@ -764,6 +764,8 @@ function PowerCard({
   report: Report | null;
 }) {
   const t = useTranslations("power");
+  /** Libelles de capteurs : espace de noms dedie, avec repli sur celui du serveur. */
+  const tsens = useTranslations("sensor") as HasTranslator;
   const tc = useTranslations("common");
   const mon = status?.lastMonitor ?? null;
   const running = status?.program?.active === true;
@@ -876,17 +878,17 @@ function PowerCard({
               </span>
             )}
             {/* **Ce que la machine RÉCLAME n'est pas ce qu'elle rapporte.** Les treize capteurs
-                arrivaient dans une seule pastille verte : « niveau d'eau bas · bac chocolat » en
+                arrivaient dans une seule pastille verte : « niveau d'eau bas · carafe à lait » en
                 couleur de marche, à côté d'une alarme en rouge. Le produit annonçait en vert la
                 seule chose qui empêchait de faire un café. Voir `splitSensors`. */}
             {capteurs.attention.length > 0 && (
               <span className="pill off" title={t("sensorsAttention")}>
-                {capteurs.attention.map((sw) => sw.label).join(" · ")}
+                {capteurs.attention.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
               </span>
             )}
             {capteurs.presents.length > 0 && (
               <span className="pill" title={t("switchesHint")}>
-                {capteurs.presents.map((sw) => sw.label).join(" · ")}
+                {capteurs.presents.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
               </span>
             )}
             {/* Un lien, pas une pastille inerte : la seule route vers « quelle alarme ? » était un

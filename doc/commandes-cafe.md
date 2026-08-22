@@ -540,11 +540,49 @@ octets 9,10,11    PROGRESSION — fonction, étape, pourcentage (§ 11.5)
 | 0 | 5 | `KNOB` | molette |
 | 0 | 6 | `WATER_LEVEL_LOW` | niveau d'eau bas |
 | 0 | 7 | `COFFEE_JUG` | verseuse |
-| 1 | 0 | `IFD_CARAFFE` | **carafe à lait** |
-| 1 | 1 | `CIOCCO_TANK` | bac chocolat |
+| 1 | 0 | `IFD_CARAFFE` | **carafe à lait, molette hors nettoyage** |
+| 1 | 1 | `CIOCCO_TANK` | **carafe à lait, molette sur nettoyage** |
 | 1 | 2 | `CLEAN_KNOB` | molette nettoyage |
 | 1 | 5 | `DOOR_OPENED` | porte ouverte |
 | 1 | 6 | `PREGROUND_DOOR_OPENED` | trappe café moulu ouverte |
+
+
+> ✅ **Élucidé le 2026-08-22, en trois mesures ne faisant varier qu'une chose à la fois.** Les
+> bits 1.0 et 1.1 disent **tous deux « carafe à lait en place »** ; ce qui les distingue est la
+> **position de la molette** de la carafe :
+>
+> | état physique | octet 6 | bit levé |
+> |---|---|---|
+> | carafe retirée | `0b00000000` | — |
+> | carafe en place, molette sur **nettoyage** | `0b00000010` | 1.1 `CIOCCO_TANK` |
+> | carafe en place, molette **ailleurs** | `0b00000001` | 1.0 `IFD_CARAFFE` |
+>
+> **« Ailleurs » et non « mousse » : le détecteur ne connaît qu'UNE frontière, nettoyage ou pas.**
+> Trois positions hors nettoyage ont été mesurées — mousse au cran où elle se trouvait, mousse au
+> minimum, et la graduation « insert » — et donnent la **même trame, octet pour octet, CRC
+> compris**. Le premier libellé écrit ici disait « molette sur mousse » : c'était sur-interpréter
+> une seule mesure, la position où la molette se trouvait ce jour-là.
+>
+> Jamais les deux ensemble — ce que les quatre préparations enregistrées montraient déjà sans
+> qu'on sache l'expliquer : les trois boissons lactées portent `IFD_CARAFFE` (molette sur mousse,
+> forcément) et la capture au repos porte `CIOCCO_TANK`. **Les noms de l'énum induisent en
+> erreur** : `CIOCCO_TANK` ne désigne aucun bac à chocolat ici, ce modèle n'expose aucune boisson
+> chocolatée sur les 28 entrées de son catalogue. On garde les noms, qui viennent du protocole, et
+> on corrige les libellés. L'app officielle n'aide pas : `MonitorDataV2.g()` **exclut** de sa liste
+> `IFD_CARAFFE`, `CIOCCO_TANK`, `WATER_SPOUT` et les inconnus — elle n'en montre aucun.
+> Captures : `scripts/captures/carafe.json` (retrait) et `carafe-molette.json` (molette).
+>
+> ⛔ **Ni le cran de mousse ni la position « insert » ne sont rapportés.** Les deux bits sont des
+> détecteurs tout-ou-rien et aucun octet continu ne varie avec la graduation. Vrai de `0x75`, la
+> seule trame qu'on interroge — inutile de refaire la mesure, mais rien ne dit qu'une autre
+> commande ne l'exposerait pas.
+>
+> ⚠️ **La même expérience a corrigé la sentinelle de repos.** Carafe branchée et machine au repos,
+> la trame dit **`f=12, e=0`** — une fonction absente des quatre préparations enregistrées.
+> Retirer la carafe la ramène à `f=7, e=0`. Le prédicat de l'app (`f == 7 && e == 0`) lisait donc
+> « préparation en cours, 0 % » en permanence dès que la carafe était en place. Le repos se teste
+> désormais sur **l'étape seule** (`e == 0`), invariant vérifié sur les cinq captures : l'étape 0
+> n'y apparaît jamais au milieu d'une préparation.
 
 ### 11.2 États observés (octet 4)
 
