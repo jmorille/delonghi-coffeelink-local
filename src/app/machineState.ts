@@ -114,6 +114,9 @@ export function stepLabel(cle: string | null, t: Translator): string {
  * au-delà en heures. Les libellés viennent de l'espace de noms `power`.
  */
 export function fmtAge(sec: number, t: Translator): string {
+  // ⚠️ `t` doit être le traducteur de l'espace **`power`** : c'est lui qui porte `ageSeconds`,
+  // `ageMinutes` et `ageHours`. Tout traducteur a le même type, donc passer celui d'un autre espace
+  // ne se voit ni au `tsc` ni au build — seulement au rendu, en MISSING_MESSAGE dans la console.
   if (sec < 90) return t("ageSeconds", { n: sec });
   if (sec < 5400) return t("ageMinutes", { n: Math.round(sec / 60) });
   return t("ageHours", { n: Math.round(sec / 3600) });

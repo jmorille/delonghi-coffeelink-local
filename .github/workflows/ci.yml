@@ -86,6 +86,13 @@ jobs:
             console.log('catalogue valide');
           "
 
+      # Une clé de traduction absente ne se voit ni au `tsc` ni au build : tous les traducteurs
+      # next-intl ont le même type, et la clé n'est résolue qu'au rendu. La faute sort en
+      # MISSING_MESSAGE dans la console du navigateur, donc seulement si quelqu'un ouvre la page ET
+      # regarde la console — c'est arrivé.
+      - name: Vérifier les clés de traduction
+        run: node scripts/verif-messages.mjs
+
       - name: Build
         run: pnpm build
         env:
