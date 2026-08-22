@@ -60,7 +60,7 @@ pnpm dev            # server.mjs with Next in dev/HMR mode, on 0.0.0.0:3000
 pnpm dev:next-only  # Next alone, no server.mjs — UI-only work (no machine I/O)
 pnpm build          # production build
 pnpm start          # production server (= node server.mjs)
-pnpm lint           # next lint
+pnpm lint           # eslint . — les .mjs SEULEMENT, voir eslint.config.mjs
 node_modules/.bin/tsc --noEmit   # typecheck (TypeScript 7)
 
 # Diagnostics: a standalone LAN-mode server on :3005 that logs VERBATIM everything the machine
@@ -84,7 +84,7 @@ prompt by allowing them.
 
 **lan-server has no test suite.** Protocol changes are validated live against the real machine, not unit tests.
 CI (`.github/workflows/ci.yml`) therefore checks what can be checked without a machine: `tsc`,
-`node --check` on every `.mjs`, the message catalogue (invalid JSON or an angle bracket in a string),
+`node --check` on every `.mjs`, **ESLint on every `.mjs`**, the message catalogue (invalid JSON or an angle bracket in a string),
 **every literal translation key against its namespace** (`scripts/verif-messages.mjs`),
 `pnpm build`, the SQLite store's init/migration, and that the Docker image builds and answers
 `/api/status`. On a green push to `master`/`main` it then **publishes `ghcr.io/<repo>:edge`** — so a
@@ -93,6 +93,35 @@ Docker-less tarball. `packageManager` in `package.json` pins pnpm for corepack a
 
 (The sibling HA repo does have one, runnable with plain pytest and no Home Assistant install:
 `cd ../delonghi_coffeelink_ha && pytest tests/`, or a single file `pytest tests/test_monitor.py`.)
+
+**ESLint lints the `.mjs` files and ONLY those — that is where the hole was.** `tsconfig.json`
+includes only `**/*.ts` / `**/*.tsx`, so the 22 `.mjs` files — `server.mjs`, the one thing that
+runs, among them — were never seen by `tsc`; their whole net was `node --check`, which reads
+syntax and nothing else. Config in `eslint.config.mjs` (ESLint 10, flat), wired as `pnpm lint` and
+as a CI step. It found real defects on its first run, including `/api/beanadapt/save` silently
+dropping the `taskId`/`position` that every other queueing endpoint returns.
+
+⚠️ **Do not "complete" it by adding `typescript-eslint`.** It cannot work here, and the failure is
+structural rather than a version warning: this repo is on **TypeScript 7**, whose package no
+longer exports the classic compiler API (`require("typescript").createSourceFile` is `undefined` —
+the AST moved behind `typescript/unstable/ast`), while `typescript-eslint` declares
+`typescript: ">=4.8.4 <6.1.0"` right down to its canary. Installing it succeeds and the parse
+fails on the first line of TSX. The `.tsx` side is already covered by `tsc --noEmit`; when
+typescript-eslint supports TS 7, adding a `files` block for `.ts`/`.tsx` also unlocks
+`eslint-plugin-react-hooks`, which is worth having in a codebase this full of `useCallback` and
+ref-held callbacks.
+
+Two rules are deliberately relaxed, both documented at the site: `no-empty` allows an empty
+`catch` (13 occurrences, all meaning "best effort" — failing loudly there would be the real
+defect), and `no-useless-assignment` is off because the variables it flags are serialised into
+JSON, where `null` and `undefined` are not interchangeable.
+
+Historical note, so nobody re-diagnoses it: `"lint": "next lint"` was a `create-next-app`
+leftover that **never checked anything** — there was no ESLint in the repo at all, so even under
+Next 15 it would have dropped into its interactive setup wizard. Next 16 removed `next lint`, and
+since `dev` is the default command taking a `[directory]`, `next lint` was read as
+`next dev ./lint` — hence the baffling "Invalid project directory" error. Nothing regressed;
+nothing was linting.
 
 **A branch merged into `master` is deleted locally in the same breath.** `git merge --no-ff`, then
 `git branch -d <branch>` — **never `-D`**. From the moment the merge lands the commits live in

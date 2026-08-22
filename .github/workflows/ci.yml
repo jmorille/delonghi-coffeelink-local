@@ -1,7 +1,8 @@
 # Intégration continue : le projet n'a pas de suite de tests (les changements de protocole sont
 # validés en direct sur la vraie machine), donc la CI vérifie ce qu'elle peut vérifier sans
-# cafetière : les types, la syntaxe des modules ESM, le build Next, et le fait que l'image Docker
-# démarre et répond.
+# cafetière : les types, la syntaxe ET le lint des modules ESM, les quatre vérifications pures, le
+# catalogue de messages, le build Next, la base SQLite, et le fait que l'image Docker démarre et
+# répond.
 name: CI
 
 on:
@@ -47,15 +48,27 @@ jobs:
       - name: Vérifier les types
         run: node_modules/.bin/tsc --noEmit
 
-      # `server.mjs` et les modules de `src/lib` ne passent pas par TypeScript : leur seul filet est
-      # cette vérification de syntaxe. Ils constituent le serveur réel — les copies `.ts` sont
-      # shadowées et ne tournent pas.
+      # `server.mjs` et les modules de `src/lib` ne passent pas par TypeScript — `tsconfig.json`
+      # n'inclut que les `.ts`/`.tsx` — alors qu'ils constituent le serveur RÉEL ; les copies `.ts`
+      # sont shadowées et ne tournent pas. `node --check` attrape la syntaxe, ESLint (étape
+      # suivante) le reste. Les deux, parce qu'ils ne voient pas la même chose : `node --check`
+      # couvre aussi les fichiers qu'ESLint pourrait ne pas atteindre si sa configuration dérivait.
       - name: Vérifier la syntaxe des modules ESM
         run: |
           for f in server.mjs src/lib/*.mjs; do
             echo "  node --check $f"
             node --check "$f"
           done
+
+      # ESLint 10, configuration plate. Il ne couvre QUE les `.mjs` : voir `eslint.config.mjs`,
+      # qui explique pourquoi les `.ts`/`.tsx` sont hors de portée (TypeScript 7 n'expose plus
+      # l'API compilateur dont `typescript-eslint` a besoin) et pourquoi ce n'est pas un manque —
+      # ce côté-là est déjà couvert par `tsc --noEmit` ci-dessus.
+      #
+      # Avant cette étape, `pnpm lint` valait `next lint`, une commande supprimée par Next 16 et
+      # qui de toute façon n'avait jamais rien vérifié : il n'y a jamais eu d'ESLint dans ce dépôt.
+      - name: Linter les modules ESM
+        run: pnpm lint
 
       # Ce que ce dépôt sait prouver SANS la machine. Toutes ces parties sont PURES par
       # construction — l'ordonnanceur prend l'instant en paramètre, le décodeur du monitor prend

@@ -13,7 +13,7 @@
     "build": "next build",
     "start": "node server.mjs",
     "serve": "node server.mjs",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "next": "^16",
@@ -22,9 +22,12 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "^10.8.1",
+    "globals": "^17.11.0",
     "typescript": "^7"
   },
   "browserslist": [

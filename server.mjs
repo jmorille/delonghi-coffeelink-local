@@ -462,6 +462,11 @@ const frameSendProfile = (id = 1) => seal([0x0d, 0x06, 0xa9, 0xf0, id & 0xff, 0,
 const frameSelectBean = (id) => seal([0x0d, 0x06, 0xb9, 0xf0, id & 0xff, 0, 0]);
 // M0() « recipeQtyPacket » : lecture ECAM native d'une recette (profil + boisson).
 // Réponse : D0 <len> A6 F0 <profil> <boisson> <paramètres…> <crc>, parsée par u0() dans l'app.
+// Gardée sans être appelée : les valeurs d'un profil sont lues par propriété Ayla
+// (`d{39+i+(p-1)*21}_{p}_rec_*`), pas par cette trame. Elle documente le format de la requête
+// 0xA6 côté ECAM, qui est la seule autre façon de l'obtenir — la supprimer ferait perdre la
+// correspondance avec `doc/commandes-cafe.md` §6.
+// eslint-disable-next-line no-unused-vars
 const frameRecipeQty = (prof, bev) => seal([0x0d, 0x07, 0xa6, 0xf0, prof & 0xff, bev & 0xff, 0, 0]);
 // J() « checksums » : sommes de contrôle des quantités par profil + perso + noms. Une seule
 // petite trame permet de savoir si le cache est encore valable, au lieu de tout relire.
@@ -4039,6 +4044,11 @@ async function handleApi(req, res) {
       frameHex: frame.toString("hex").replace(/(..)/g, "$1 ").trim(),
       wrote: { index, name: name.slice(0, 20), grinder, temperature, aroma, visible },
       register: reg,
+      // `tacheRendue` manquait ici, et ici SEULEMENT : tous les autres points de mise en file
+      // renvoient `taskId`/`position`, comme le contrat l'annonce. Sans eux l'interface ne pouvait
+      // pas suivre l'écriture d'un profil de grains — ni l'annuler. Trouvé par ESLint, qui a
+      // signalé que la valeur de `startProgram` n'était jamais lue.
+      ...tacheRendue(t),
     }));
   }
 
