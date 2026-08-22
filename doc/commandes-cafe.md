@@ -1364,3 +1364,47 @@ voir § 14.5 pour `0xE8` et pour `0xA1` en lecture de paramètres. Tant qu'aucun
 en mode LAN, elles n'entrent pas dans `ECAM_OPS` — une entrée inventée ferait taire le marqueur
 qui doit justement se déclencher le jour où l'une d'elles arrive.
 
+
+#### 15.1. « Non identifiée » ne doit jamais vouloir dire « pas une trame »
+
+Relevé en direct, dans le journal des applications, pendant une session de la vraie application :
+
+```
+18:48:54  IN a1  commande NON IDENTIFIÉE (0x37) · trame 45 da 37 88 34 eb af ff ff fa 93 81
+```
+
+Une trame ECAM commence par `0x0D`. Celle-ci commence par `0x45`. Ce n'était donc pas une commande
+inconnue : **ce n'était pas une trame du tout**, et le troisième octet — `0x37` — n'était le code
+d'aucune opération, seulement l'octet qui se trouvait là.
+
+> ⚠️ **`Buffer.from(x, "base64")` ne lève jamais.** Il ignore ce qui n'est pas du base64 et rend
+> des octets d'allure plausible. Toute valeur ressort donc avec un « octet de commande », qu'elle
+> en ait un ou non.
+
+Le défaut était déjà connu **dans l'autre sens** : `device_connected = 1787407876`, un horodatage
+unix, avait été journalisé « commande 0x3b non décodée — d7 bf 3b e3 4e fc ef », sept octets
+inventés là où la valeur se lisait telle quelle. Il avait été corrigé côté entrant (`opReponse`) et
+**pas côté sortant**, où il compte pourtant davantage : c'est une valeur qu'on relaie à une vraie
+cafetière.
+
+Le filtre vit maintenant en un seul endroit, `octetsEcam()`, et les deux sens le lisent — forme
+base64 valide, longueur suffisante, en-tête `0x0D` (requête) ou `0xD0` (réponse). Hors de là,
+`describeFrame()` répond :
+
+```
+valeur non-trame · 45 da 37 88 34 eb af ff ff fa 93 81 · b64 Rdo3iDTrr///+pOB
+```
+
+Trois choix dans cette ligne, chacun pour une raison :
+
+- **aucun octet n'est rogné.** `describeFrame()` retire les 4 octets d'horodatage d'une trame —
+  c'est juste quand on sait ce qu'on regarde, et faux dès qu'on ne le sait pas ;
+- **l'hexadécimal**, pour se comparer aux tables de ce document ;
+- **le base64 d'origine**, parce qu'il se recolle tel quel dans un test ou un rejeu.
+
+L'enjeu n'est pas cosmétique. Ce marqueur existe pour faire ressortir ce que le référentiel ne
+connaît pas encore ; une valeur mal nommée y **fabrique une découverte qui n'existe pas**, et
+masque du même coup la seule information vraie — que cette valeur n'est pas une trame. Reste, elle,
+une vraie question ouverte : douze octets non-ECAM écrits par l'application officielle dans
+`data_request`. Ils sont désormais conservés en entier.
+

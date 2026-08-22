@@ -168,8 +168,33 @@ export const hexCmd = (c) => `0x${Number(c ?? 0).toString(16).padStart(2, "0")}`
  * C'est vrai de ce que NOUS envoyons ; une réponse de la machine n'en porte pas — voir
  * `chargeBrute`, qui ne retire rien parce qu'elle sert à regarder ce qu'on ne comprend pas encore.
  */
+/**
+ * **Les octets ECAM d'une valeur, ou `null` si ce n'en est pas.**
+ *
+ * ⚠️ `Buffer.from(x, "base64")` ne lève JAMAIS : il ignore ce qui n'est pas du base64 et rend des
+ * octets d'allure plausible. Sans ce filtre, n'importe quelle valeur ressort avec un « octet de
+ * commande » inventé — ce qui, dans un journal qui sert à décider si une vraie cafetière vient de
+ * couler un café ou d'écraser une recette, est le pire résultat possible. Le défaut a déjà été
+ * corrigé dans le sens ENTRANT (`opReponse`) après avoir vu `device_connected = 1787407876`,
+ * un horodatage unix, journalisé « commande 0x3b non décodée ».
+ *
+ * `0x0D` en requête, `0xD0` en réponse : hors de ces deux en-têtes, ce ne sont pas des octets
+ * ECAM. Les deux sens partagent donc ce filtre, plutôt que d'en avoir chacun une copie qui
+ * divergerait au premier ajout.
+ */
+export function octetsEcam(valeur) {
+  const v = String(valeur ?? "");
+  if (!v || v.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v)) return null;
+  const buf = Buffer.from(v, "base64");
+  if (buf.length < 4 || (buf[0] !== 0x0d && buf[0] !== 0xd0)) return null;
+  return buf;
+}
+
 export function opTrame(ecamB64) {
-  const buf = Buffer.from(ecamB64, "base64");
+  const buf = octetsEcam(ecamB64);
+  // Une valeur qui n'est pas une trame le DIT, au lieu de se voir attribuer une commande. Elle
+  // garde ses octets tels quels — c'est elle, justement, qu'on voudra examiner.
+  if (!buf) return { cmd: null, op: null, trame: Buffer.from(String(ecamB64 ?? ""), "base64"), nonTrame: true };
   const trame = buf.subarray(0, Math.max(0, buf.length - 4));
   const cmd = trame[2];
   // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
@@ -207,7 +232,18 @@ export function natureTrame(ecamB64) {
  */
 export function describeFrame(ecamB64, { octets = true } = {}) {
   try {
-    const { cmd, op, trame } = opTrame(ecamB64);
+    const { cmd, op, trame, nonTrame } = opTrame(ecamB64);
+    // ⚠️ **Ni commande, ni octets à rogner : on ne sait pas ce que c'est.** Relevé en direct sur
+    // l'application officielle — `commande NON IDENTIFIÉE (0x37) · trame 45 da 37 88 …`, alors
+    // qu'une trame ECAM commence par `0x0D` et que celle-ci commençait par `0x45`. Nommer un
+    // octet de commande là-dedans fabriquait une découverte qui n'existe pas, et masquait la
+    // vraie information : cette valeur n'est pas une trame. Les 4 derniers octets sont conservés
+    // (ce ne sont des horodatages que dans une trame), et le base64 est joint parce que c'est ce
+    // qui se recolle dans un test — c'est une valeur qu'on relaie à une VRAIE cafetière.
+    if (nonTrame) {
+      const brut = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+      return `valeur non-trame · ${brut || "(vide)"} · b64 ${String(ecamB64 ?? "").slice(0, 64)}`;
+    }
     const nom = op ? `${op.nature} · ${op.nom}` : "commande NON IDENTIFIÉE";
     // Une commande inconnue garde ses octets même en forme courte : sans eux la ligne ne dit
     // rien du tout, alors que c'est justement celle qu'on veut pouvoir analyser.
@@ -244,6 +280,88 @@ export function profilVise(ecamB64) {
 }
 
 /**
+ * **La clé de fusion d'une trame, ou `null` quand il n'y en a pas.**
+ *
+ * Deux tâches de même `cle` encore en attente n'en font qu'une (`enfiler` dans `tasks.mjs`).
+ * Encore faut-il qu'une clé existe — et **l'absence de clé est une décision, pas un oubli** :
+ * demander deux cafés n'est pas demander un café, donc une préparation garde sa ligne. C'est
+ * la frontière que `cle` trace déjà partout ailleurs dans ce serveur.
+ *
+ * On ne fusionne donc que ce dont la répétition est **démontrablement** sans effet :
+ *
+ * - `0xA9` **sélection de profil** — une affirmation d'état. Réaffirmer le même profil est
+ *   idempotent, ce que `server.mjs` dit déjà par ailleurs en réservant `sustain: "profile"` à
+ *   ce cas précis. C'est le défaut constaté en usage réel : une application officielle impose
+ *   son profil à chaque ouverture de session, et six « sélection de profil · profil 1 »
+ *   identiques s'empilaient dans la file, chacune allant redire à la machine ce que la
+ *   précédente venait de lui dire.
+ * - une **lecture** — demander deux fois la même chose, c'est la demander une fois. La nature
+ *   vient d'`ECAM_OPS`, donc aucun appelant n'en décide et il n'y a pas de seconde table.
+ *
+ * Tout le reste rend `null` : une action, une écriture, et **surtout** une commande absente de
+ * la table. Une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet ; la
+ * fusionner reviendrait à supprimer une commande sur une supposition.
+ *
+ * ⚠️ Deux limites à connaître. `0x75` rend `"presence"` — le nom que la file emploie déjà
+ * partout pour cette lecture-là — mais les autres lectures nommées côté serveur
+ * (`checksums`, `bean:n`, `reglages95:…`) gardent leur clé propre : une même lecture demandée
+ * par une application et par une page fera donc deux tâches, comme aujourd'hui. Et la fusion
+ * ne prend jamais la tâche **en cours**, seulement celles en attente : le pire cas est deux
+ * exemplaires, pas N.
+ */
+export function cleFusion(ecamB64) {
+  try {
+    const { cmd, op, trame } = opTrame(ecamB64);
+    if (!op) return null;
+    if (cmd === 0xa9) return `profil:${trame[4] ?? "?"}`;
+    if (cmd === 0x75) return "presence";
+    if (op.nature === "lecture") return `lecture:${trame.toString("hex")}`;
+    return null;
+  } catch { return null; }
+}
+
+/**
+ * **La clé de fusion d'une trame, ou `null` quand il n'y en a pas.**
+ *
+ * Deux tâches de même `cle` encore en attente n'en font qu'une (`enfiler` dans `tasks.mjs`).
+ * Encore faut-il qu'une clé existe — et **l'absence de clé est une décision, pas un oubli** :
+ * demander deux cafés n'est pas demander un café, donc une préparation garde sa ligne. C'est
+ * la frontière que `cle` trace déjà partout ailleurs dans ce serveur.
+ *
+ * On ne fusionne donc que ce dont la répétition est **démontrablement** sans effet :
+ *
+ * - `0xA9` **sélection de profil** — une affirmation d'état. Réaffirmer le même profil est
+ *   idempotent, ce que `server.mjs` dit déjà par ailleurs en réservant `sustain: "profile"` à
+ *   ce cas précis. C'est le défaut constaté en usage réel : une application officielle impose
+ *   son profil à chaque ouverture de session, et six « sélection de profil · profil 1 »
+ *   identiques s'empilaient dans la file, chacune allant redire à la machine ce que la
+ *   précédente venait de lui dire.
+ * - une **lecture** — demander deux fois la même chose, c'est la demander une fois. La nature
+ *   vient d'`ECAM_OPS`, donc aucun appelant n'en décide et il n'y a pas de seconde table.
+ *
+ * Tout le reste rend `null` : une action, une écriture, et **surtout** une commande absente de
+ * la table. Une trame qu'on ne sait pas nommer est une trame dont on ignore l'effet ; la
+ * fusionner reviendrait à supprimer une commande sur une supposition.
+ *
+ * ⚠️ Deux limites à connaître. `0x75` rend `"presence"` — le nom que la file emploie déjà
+ * partout pour cette lecture-là — mais les autres lectures nommées côté serveur
+ * (`checksums`, `bean:n`, `reglages95:…`) gardent leur clé propre : une même lecture demandée
+ * par une application et par une page fera donc deux tâches, comme aujourd'hui. Et la fusion
+ * ne prend jamais la tâche **en cours**, seulement celles en attente : le pire cas est deux
+ * exemplaires, pas N.
+ */
+export function cleFusion(ecamB64) {
+  try {
+    const { cmd, op, trame } = opTrame(ecamB64);
+    if (!op) return null;
+    if (cmd === 0xa9) return `profil:${trame[4] ?? "?"}`;
+    if (cmd === 0x75) return "presence";
+    if (op.nature === "lecture") return `lecture:${trame.toString("hex")}`;
+    return null;
+  } catch { return null; }
+}
+
+/**
  * **L'opération que porte une trame ENTRANTE** — une réponse de la machine, ou la valeur d'une
  * propriété Ayla rediffusée à une application.
  *
@@ -258,11 +376,7 @@ export function profilVise(ecamB64) {
  * erreur, et doit se voir.
  */
 export function opReponse(valeur) {
-  const v = String(valeur ?? "");
-  if (!v || v.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v)) return null;
-  const trame = Buffer.from(v, "base64");
-  // `0xD0` en réponse, `0x0D` en requête : hors de ces deux en-têtes ce ne sont pas des octets
-  // ECAM, et les lire comme tels inventerait une commande.
-  if (trame.length < 4 || (trame[0] !== 0xd0 && trame[0] !== 0x0d)) return null;
+  const trame = octetsEcam(valeur);
+  if (!trame) return null;
   return { cmd: trame[2], op: ECAM_OPS[trame[2]], trame };
 }

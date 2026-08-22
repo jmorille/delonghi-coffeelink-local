@@ -1436,6 +1436,17 @@ and every push goes to every app, drowning the journal in a progression the mach
 shows; and **bytes are attached only to the unknown**, since elsewhere they would repeat, worse, what
 the machine journal decodes.
 
+**The same guard was missing on the OUTGOING side, where it matters more — the value gets relayed
+to a real appliance.** Seen live in the app journal: `commande NON IDENTIFIÉE (0x37) · trame 45 da
+37 88 …`, while an ECAM frame starts `0x0D` and that one starts `0x45`. It was not an unknown
+command, it was **not a frame at all**, and `0x37` was merely the byte that happened to sit there.
+`opTrame` decoded base64 with no shape or header check — the same `Buffer.from(x, "base64")` trap
+fixed months earlier on the incoming side and never carried across. The filter now lives once, in
+`octetsEcam()`, and both directions read it; `describeFrame()` answers `valeur non-trame` with the
+bytes **unstripped** (the 4 trailing bytes are timestamps only inside a frame) plus the original
+base64. The stake is the discovery signal itself: a mislabelled value **manufactures a finding that
+does not exist** and hides the one true fact, that this is not a frame. What remains genuinely open
+is the value itself — twelve non-ECAM bytes the official app writes into `data_request`.
 **A property whose value is not a frame no longer gets one invented — and that was misrouting, not
 just a bad label.** `handleProperty` read its command byte with `Buffer.from(value, "base64")[2]`,
 and that call **never throws**: it ignores what is not base64 and returns bytes that look like

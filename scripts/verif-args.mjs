@@ -16,7 +16,7 @@
  * Aucune dépendance : `node scripts/verif-args.mjs`.
  */
 import {
-  ECAM_OPS, TWO, argumentsTrame, describeFrame, natureTrame, opReponse, profilVise,
+  ECAM_OPS, TWO, argumentsTrame, describeFrame, natureTrame, opReponse, octetsEcam, profilVise,
 } from "../src/lib/ecam-args.mjs";
 
 let ko = 0;
@@ -226,6 +226,39 @@ test("les réponses que le serveur sait décoder sont TOUTES nommées", () => {
   for (const cmd of [0xa1, 0xa2, 0xa3, 0xa4, 0xa6, 0xa8, 0xaa, 0xb0, 0xba, 0x95]) {
     if (!ECAM_OPS[cmd]) throw new Error(`0x${cmd.toString(16)} absente de ECAM_OPS`);
   }
+});
+test("une valeur qui n'est pas une trame ne se voit PAS attribuer une commande", () => {
+  // ⚠️ Relevé en direct sur l'application officielle, dans le journal des applications :
+  //     commande NON IDENTIFIÉE (0x37) · trame 45 da 37 88 34 eb af ff ff fa 93 81
+  // Or une trame ECAM commence par 0x0D, et celle-ci commence par 0x45. Le marqueur de
+  // découverte pointait donc une commande qui n'existe pas — c'est-à-dire exactement le
+  // contraire de ce à quoi il sert, puisqu'il existe pour faire ressortir le vrai inconnu.
+  //
+  // Le défaut avait déjà été corrigé dans le sens ENTRANT (`opReponse`) et pas dans le sens
+  // SORTANT — où il compte davantage : c'est une valeur qu'on relaie à une VRAIE cafetière.
+  const brute = "Rdo3iDTrr///+pOB";
+  eq(octetsEcam(brute), null, "l'en-tête n'est ni 0x0D ni 0xD0");
+  eq(describeFrame(brute).startsWith("valeur non-trame"), true, "elle est nommée pour ce qu'elle est");
+  eq(describeFrame(brute).includes("45 da 37 88"), true, "les octets sont conservés");
+  eq(describeFrame(brute).includes(brute), true, "le base64 aussi — il se recolle dans un test");
+  eq(profilVise(brute), null, "aucun profil n'en est tiré");
+  // `Buffer.from(x, "base64")` ne lève jamais : un horodatage unix ressortait en « commande ».
+  eq(octetsEcam("1787407876"), null, "un entier n'est pas une trame");
+  eq(octetsEcam(""), null, "le vide non plus");
+  eq(octetsEcam(null), null, "ni l'absence de valeur");
+});
+
+test("une vraie trame traverse le garde-fou sans être touchée", () => {
+  // Le filtre ne doit rien coûter au cas normal : un faux positif ici effacerait du journal la
+  // commande la plus importante qui y passe.
+  const allumer = Buffer.from([0x0d, 0x07, 0x84, 0x0f, 0x02, 0x01, 0x55, 0x12, 0, 0, 0, 0]).toString("base64");
+  eq(octetsEcam(allumer) !== null, true, "en-tête 0x0D accepté");
+  eq(describeFrame(allumer).includes("(0x84)"), true, "la commande est nommée");
+  // Les 4 octets d'horodatage sont retirés d'une VRAIE trame, et seulement d'elle : sur un
+  // non-trame on ne sait pas ce que sont les 4 derniers octets, donc on les garde.
+  eq(!describeFrame(allumer).includes("55 12 00"), true, "l'horodatage est retiré d'une trame");
+  const reponse = Buffer.from([0xd0, 0x08, 0xa2, 0x0f, 0, 0, 0, 0]).toString("base64");
+  eq(octetsEcam(reponse) !== null, true, "en-tête 0xD0 accepté aussi — c'est le sens entrant");
 });
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

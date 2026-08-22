@@ -22,7 +22,7 @@ import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from
 // (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
 // commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
 import {
-  TWO, argumentsTrame as argsEcam, describeFrame, hexCmd,
+  TWO, argumentsTrame as argsEcam, cleFusion, describeFrame, hexCmd,
   natureTrame, opReponse, opTrame, profilVise,
 } from "./src/lib/ecam-args.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
