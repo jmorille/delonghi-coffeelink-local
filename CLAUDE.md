@@ -816,6 +816,21 @@ states for one recipe is two chances to diverge, which is the defect being repai
 "Infos techniques" through it (it ignores the payload), `/recipes` passes "Enregistrer
 localement" (it needs it).
 
+**`/recipes` opens on a custom slot, and its saved recipes are cards.** Two defects the shared
+editor made visible rather than caused. The page started on beverage 1 — a *catalog* beverage,
+i.e. precisely the one where nothing can be composed: its ingredients are fixed by the model, so
+the Café/Lait checkboxes do not exist there. On a page whose gesture is "create a recipe", that
+was the one starting point leading nowhere. It now picks the first **custom slot** once the
+catalog arrives (a `useRef`, not state: the refetch a profile change triggers must not overwrite
+the beverage the user just chose), the `<select>` separates the two families with custom slots
+**first**, and a catalog beverage says in one line why it has no checkboxes. The saved list was a
+table dumping every parameter into one cell, technical ones included ("Programmable 1 · Visible 1
+· Index de calibre 1") and without the drawing one recognises a beverage by elsewhere; it is now
+the same `cards dense` grid as `/` and `/beans` — same object in all three places, something set
+aside to be picked up again — with the user settings as `kv` rows and the technical ones
+**counted**, the same split as the editor's advanced fold. `VignetteBoisson` and `useImageLabel`
+moved to `src/app/BeverageImage.tsx` for it: two id→file tables would be two chances to diverge.
+
 One deliberate difference survives: **`/recipes` shows no "Préparer"** — that page saves recipes,
 it does not command the appliance, and `onDispense` being absent says so with no display variant
 to maintain. Two of its buttons disappeared without losing anything: "Reprendre du profil" *is*

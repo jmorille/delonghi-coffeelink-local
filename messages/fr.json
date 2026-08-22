@@ -315,14 +315,19 @@
     "name": "Nom affiché",
     "beverage": "Boisson",
     "profile": "Profil",
-    "colParam": "Paramètre",
     "saveLocal": "Enregistrer localement",
     "idAndNameRequired": "Identifiant et nom requis.",
     "saved": "Enregistré",
     "deleteConfirm": "Supprimer la recette « {name} » ? Elle est enregistrée ici, pas sur la machine.",
     "savedListHeading": "Recettes enregistrées",
     "emptyList": "Aucune recette. Les boissons de la machine se pilotent directement depuis la page Boissons ; cette page sert à enregistrer vos propres variantes.",
-    "writeSent": "Envoyé. Somme du profil avant écriture : {checksum} — redemander les sommes de contrôle permet de vérifier qu'elle a changé."
+    "writeSent": "Envoyé. Somme du profil avant écriture : {checksum} — redemander les sommes de contrôle permet de vérifier qu'elle a changé.",
+    "groupCustom": "Emplacements perso de la machine",
+    "groupCatalog": "Boissons de la machine",
+    "catalogFixed": "« {beverage} » est une boisson de la machine : ses ingrédients sont fixés par le modèle, on n’en règle que les quantités. Pour composer une recette en cochant le café et le lait, choisir un emplacement perso.",
+    "cardFor": "{beverage} · profil {profile}",
+    "technicalCount": "{count, plural, one {# réglage technique} other {# réglages techniques}}",
+    "noSetting": "Aucun réglage enregistré."
   },
   "system": {
     "heading": "Système",

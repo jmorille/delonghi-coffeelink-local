@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { mfetch } from "../machine";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import RecipeEditor from "../RecipeEditor";
+import { VignetteBoisson } from "../BeverageImage";
 import type { Beverage, RecipeParam } from "../beverage";
 
 /**
@@ -41,6 +42,11 @@ interface Recipe {
   updatedAt?: number;
 }
 
+/**
+ * Le brouillon avant que le catalogue soit là. `beverageId: 1` n'est qu'un point de départ
+ * provisoire : dès que le catalogue arrive, `poserDefaut` le remplace par un emplacement perso,
+ * qui est le seul endroit où une recette se COMPOSE.
+ */
 const empty = (): Recipe => ({ id: "", name: "", beverageId: 1, profileId: 1, params: [] });
 
 export default function Recipes() {
@@ -87,6 +93,30 @@ export default function Recipes() {
   }, [draft.profileId]);
 
   const bev = beverages.find((b) => b.id === draft.beverageId) ?? null;
+  const persos = beverages.filter((b) => b.customSlot !== null);
+  const catalogue = beverages.filter((b) => b.customSlot === null);
+
+  /**
+   * **La page s'ouvre sur un emplacement perso, pas sur « Espresso ».**
+   *
+   * Elle démarrait sur la boisson 1 — une boisson du catalogue, donc celle où il n'y a
+   * précisément rien à composer : ses ingrédients sont fixés par le modèle, les cases à cocher
+   * n'y existent pas. Sur une page dont le geste est « créer une recette », c'était le seul
+   * point de départ qui ne mène nulle part.
+   *
+   * Une seule fois, à l'arrivée du catalogue : `poseDefaut` est une réf et non un état pour que
+   * le rechargement déclenché par un changement de profil ne vienne pas écraser la boisson que
+   * l'utilisateur vient de choisir.
+   */
+  const poseDefaut = useRef(false);
+  useEffect(() => {
+    if (poseDefaut.current || !beverages.length) return;
+    poseDefaut.current = true;
+    // Aucun emplacement perso sur ce modèle : on garde ce que le catalogue offre en premier
+    // plutôt que d'insister sur un identifiant qui n'y est peut-être pas.
+    const cible = persos[0] ?? beverages[0];
+    setDraft((d) => (d.beverageId === cible.id ? d : { ...d, beverageId: cible.id, params: [] }));
+  }, [beverages]);
 
   // En changeant de boisson, on repart de zéro : garder les valeurs de la précédente produirait
   // des réglages hors bornes, voire inapplicables. L'éditeur repart alors de ce que le profil a
@@ -163,12 +193,26 @@ export default function Recipes() {
           </div>
           <div>
             <label htmlFor="rbev">{t("beverage")}</label>
+            {/* Les deux familles sont séparées, et les emplacements perso viennent EN PREMIER :
+                ce sont les seuls où une recette se compose, donc ceux que cette page sert. Une
+                liste à plat de 28 entrées ne disait pas que la différence existait. */}
             <select id="rbev" value={draft.beverageId} onChange={(e) => pickBeverage(Number(e.target.value))}>
-              {beverages.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {bevLabel(b)} ({b.id})
-                </option>
-              ))}
+              {persos.length > 0 && (
+                <optgroup label={t("groupCustom")}>
+                  {persos.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {bevLabel(b)} ({b.id})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label={t("groupCatalog")}>
+                {catalogue.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {bevLabel(b)} ({b.id})
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
           <div>
@@ -185,6 +229,12 @@ export default function Recipes() {
                 `h4` de l'éditeur, et rien au-dessus des réglages ne disait à quoi ils
                 s'appliquent une fois la liste déroulante refermée. */}
             <h3>{bevLabel(bev)}</h3>
+            {/* Une boisson du catalogue n'a pas de cases à cocher, et le silence là-dessus se lit
+                comme une panne. La phrase dit le fait — les ingrédients sont fixés par le modèle
+                — et où aller pour en composer une. */}
+            {bev.customSlot === null && persos.length > 0 && (
+              <p className="sub">{t("catalogFixed", { beverage: bevLabel(bev) })}</p>
+            )}
             <RecipeEditor
               /* Remonté à chaque changement de boisson, de profil ou de recette rouverte : son
                  état repart ainsi des bonnes valeurs sans logique de réinitialisation à écrire —
@@ -231,38 +281,58 @@ export default function Recipes() {
             {t("emptyList")}
           </p>
         ) : (
-          <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("name")}</th>
-                <th>{t("beverage")}</th>
-                <th>{t("profile")}</th>
-                <th>{t("colParam")}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.name}</td>
-                  <td>{(() => { const b = beverages.find((x) => x.id === r.beverageId); return b ? bevLabel(b) : r.beverageId; })()}</td>
-                  <td>{r.profileId}</td>
-                  <td>{describe(r, beverages, paramLabel, unitLabel)}</td>
-                  <td className="row">
-                    <button className="iconBtn" onClick={() => setDraft(structuredClone(r))}>
-                      <Icone nom="modifier" taille={15} />
+          // Une carte par recette, comme les boissons de `/` et comme la bibliothèque de
+          // `/beans` : ce sont trois fois le même objet — quelque chose qu'on a mis de côté et
+          // qu'on reprendra. Le tableau qui était là listait « Nom · Boisson · Profil » puis
+          // vidait tous les réglages dans une seule cellule, techniques compris
+          // (« Programmable 1 · Visible 1 · Index de calibre 1 »), sans le dessin de la boisson
+          // qu'on reconnaît d'un coup d'œil ailleurs.
+          <div className="cards dense">
+            {list.map((r) => {
+              const b = beverages.find((x) => x.id === r.beverageId) ?? null;
+              const { reglages, techniques } = detailler(r, b, paramLabel, unitLabel);
+              return (
+                <div className="card" key={r.id}>
+                  <div className="cardHead">
+                    {/* `.titreLigne` comme sur `/` : sans elle, la vignette devenait le premier
+                        enfant de `.cardHead` et prenait son `flex: 1 1 12rem`, poussant le titre
+                        au bord droit de la carte. Le dessin vient de la BOISSON, pas de la
+                        recette — une recette locale n'a pas d'icône à elle sur la machine, elle
+                        nomme une boisson qui en a une. */}
+                    <div className="titreLigne">
+                      {b && <VignetteBoisson id={b.id} icon={b.icon} />}
+                      <h3 className="cardTitle">{r.name}</h3>
+                    </div>
+                  </div>
+                  <p className="sub">
+                    {t("cardFor", { beverage: b ? bevLabel(b) : String(r.beverageId), profile: r.profileId })}
+                  </p>
+                  <div className="chapeau">
+                    {reglages.map((x) => (
+                      <div className="kv" key={x.id}>
+                        <span className="k">{x.nom}</span>
+                        <span className="num">{x.valeur}</span>
+                      </div>
+                    ))}
+                    {/* Les réglages techniques sont COMPTÉS, pas énumérés : même partage que le
+                        pli « Réglages avancés » de l'éditeur, et la même règle — ils ne quittent
+                        pas la trame, ils quittent l'aperçu. */}
+                    {techniques > 0 && <p className="sub">{t("technicalCount", { count: techniques })}</p>}
+                    {!reglages.length && !techniques && <p className="sub">{t("noSetting")}</p>}
+                  </div>
+                  <div className="row note">
+                    <button className="mini iconBtn" onClick={() => setDraft(structuredClone(r))}>
+                      <Icone nom="modifier" taille={14} />
                       <span className="lbl">{tc("edit")}</span>
                     </button>
-                    <button className="danger discret iconBtn" onClick={() => del(r.id, r.name)}>
-                      <Icone nom="corbeille" taille={15} />
+                    <button className="mini danger iconBtn" onClick={() => del(r.id, r.name)}>
+                      <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{tc("delete")}</span>
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -273,17 +343,35 @@ export default function Recipes() {
 
 const clamp = (v: number, min: number, max: number) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min);
 
-function describe(
+/**
+ * Les réglages d'une recette enregistrée, séparés en deux.
+ *
+ * `describe` les concaténait tous dans une chaîne unique, techniques compris. Le partage
+ * `user` / le reste est celui de l'éditeur — `kind` est notre propre regroupement, il décide
+ * de l'APERÇU et jamais de ce qui part dans la trame.
+ *
+ * Une boisson inconnue (catalogue pas encore chargé, modèle changé) ne fait pas disparaître la
+ * carte : le paramètre garde son numéro, ce qui reste lisible et vrai.
+ */
+function detailler(
   r: Recipe,
-  beverages: Beverage[],
+  bev: Beverage | null,
   paramLabel: (p: { name?: string; label?: string; id?: number }) => string,
   unitLabel: (u: string) => string,
-): string {
-  const bev = beverages.find((b) => b.id === r.beverageId);
-  return r.params
-    .map((p) => {
-      const info = bev?.bounds?.params.find((x) => x.id === p.id);
-      return info ? `${paramLabel(info)} ${p.value}${info.unit ? " " + unitLabel(info.unit) : ""}` : `#${p.id}=${p.value}`;
-    })
-    .join(" · ");
+): { reglages: { id: number; nom: string; valeur: string }[]; techniques: number } {
+  const reglages: { id: number; nom: string; valeur: string }[] = [];
+  let techniques = 0;
+  for (const p of r.params) {
+    const info = bev?.bounds?.params.find((x) => x.id === p.id) ?? null;
+    if (info && info.kind !== "user") {
+      techniques++;
+      continue;
+    }
+    reglages.push({
+      id: p.id,
+      nom: info ? paramLabel(info) : "#" + p.id,
+      valeur: info?.unit ? `${p.value} ${unitLabel(info.unit)}` : String(p.value),
+    });
+  }
+  return { reglages, techniques };
 }
