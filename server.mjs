@@ -17,7 +17,11 @@ import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
-import { CATEGORIES, PARAMS, catalogFor, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { CATEGORIES, PARAMS, catalogFor, customSlotOf, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+// Le report d'une recette locale dans un emplacement perso : module PUR, prouvé sans machine par
+// `scripts/verif-transfert.mjs`. C'est lui qui décide de ce qui part dans une écriture persistante.
+import { planTransfert } from "./src/lib/transfert.mjs";
+import { decoderDataUrl, TAILLE_MAX as IMAGE_TAILLE_MAX } from "./src/lib/image-grains.mjs";
 // Le référentiel du protocole ECAM : la table des opérations, la lecture d'une trame sortante
 // (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
 // commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
@@ -1030,15 +1034,29 @@ function chargeBrute(valeur, max = 120) {
  * La nature se déduit de la table `ECAM_OPS` de `src/lib/ecam-args.mjs` : aucun site d'appel
  * n'a à trancher, et il n'y a pas de deuxième table à tenir à jour.
  */
-function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
+/**
+ * **Le pas d'une trame, avec sa nature.** C'est `natureTrame` qui décide si l'on attend une réponse
+ * ou une fenêtre de présence, donc aucun appelant n'a à le savoir — et il n'existe pas de seconde
+ * table à tenir à jour.
+ *
+ * Extrait de `startProgram` parce qu'un transfert de recette met DEUX trames dans une seule tâche
+ * (`0x83` puis `0xAB`) : les construire à la main là-bas aurait recopié cette règle, et une copie
+ * d'une règle d'ordonnancement diverge sans rien lever.
+ */
+function pasPourTrame(label, ecamB64, durationMs, sustain) {
   const lecture = natureTrame(ecamB64) === "lecture";
   // La commande ECAM voyage avec le pas : c'est elle qui permet d'apparier étroitement la réponse.
   // Voir `reponse()` dans `tasks.mjs` — une poussée de monitor ne doit valider qu'un pas qui a
   // justement demandé un monitor, jamais une lecture de statistiques en attente.
   const cmd = (() => { try { return opTrame(ecamB64).cmd ?? null; } catch { return null; } })();
-  const pas = [pasTrame(label, ecamB64, lecture
-    ? { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain, cmd }
-    : { attente: "fenetre", ms: durationMs, sustain, cmd })];
+  return lecture
+    ? pasTrame(label, ecamB64, { attente: "reponse", ms: Math.max(DELAIS.reponse, Math.min(durationMs, 30000)), sustain, cmd })
+    : pasTrame(label, ecamB64, { attente: "fenetre", ms: durationMs, sustain, cmd });
+}
+
+function startProgram(m, ecamB64, label, durationMs = 75000, sustain = "monitor", { rang = RANG.LECTURE, cle = null, meta = null, i18n = null } = {}) {
+  const lecture = natureTrame(ecamB64) === "lecture";
+  const pas = [pasPourTrame(label, ecamB64, durationMs, sustain)];
   return enfilerTache(m, tache({ label, rang, pas, cle, meta, i18n, genre: lecture ? "lecture" : "commande" }), `${label} — ${decrireCommande(m, ecamB64)} · présence ${sustain}`);
 }
 
@@ -1171,6 +1189,20 @@ function raw(res, bodyStr, status = 200, type = "application/json") {
   res.writeHead(status, { "Content-Type": type, "Content-Length": buf.length });
   res.end(buf);
 }
+/**
+ * Le frère binaire de `raw()` — même discipline d'en-têtes, mais des octets qu'on ne réencode pas.
+ *
+ * `raw()` fait `Buffer.from(corps, "utf8")` : lui passer un JPEG le corromprait silencieusement.
+ * D'où cette fonction plutôt qu'un paramètre de plus, qu'un appelant finirait par oublier.
+ *
+ * `entetes` sert au cache : une image ne change que quand on la remplace, et la servir avec son
+ * `ETag` évite de la retélécharger à chaque rendu d'une grille de cartes.
+ */
+function rawBin(res, buf, type, entetes = {}) {
+  res.writeHead(200, { "Content-Type": type, "Content-Length": buf.length, ...entetes });
+  res.end(buf);
+}
+
 function readBody(req) { return new Promise((r) => { const c = []; req.on("data", (x) => c.push(x)); req.on("end", () => r(Buffer.concat(c))); }); }
 
 // --- handlers device-facing ---
@@ -2512,6 +2544,170 @@ function beverageCounter(store, bev) {
 }
 
 /**
+ * **L'assemblage d'UNE boisson telle que l'interface la reçoit** — catalogue du modèle, bornes du
+ * modèle, valeurs enregistrées du profil demandé, nom et icône saisis sur la machine, emplacement
+ * perso, compteur de catégorie.
+ *
+ * Il vivait en ligne dans `/api/beverages`, donc hors de portée de tout autre endpoint. `/api/recipes`
+ * en a désormais besoin — une recette locale s'affiche et s'édite avec le MÊME composant que les
+ * boissons, donc elle doit arriver à la même forme — et l'y recopier aurait fait deux assemblages
+ * pour un seul objet, qui auraient divergé au premier champ ajouté sans que rien ne le signale.
+ * C'est le défaut contre lequel ce fichier met en garde à propos de `TWO` et d'`ECAM_OPS`.
+ *
+ * `machineNames` et `bean` sont passés plutôt que relus : les deux coûtent un parcours du cache, et
+ * `vueBoissons` les calcule une fois pour les 28 boissons.
+ */
+function vueBoisson(m, store, b, profileId, machineNames, bean) {
+  const boundsProp = b.bounds;
+  const valuesProp = m.catalog.profileProp(b, profileId);
+  const bounds = boundsProp ? store.props[boundsProp] ?? null : null;
+  const values = valuesProp ? store.props[valuesProp] ?? null : null;
+  const named = machineNames[b.id];
+  return {
+    ...b,
+    // Compteur d'usage de la CATÉGORIE de cette boisson (la machine ne compte pas par tasse).
+    counter: beverageCounter(store, b),
+    // La boisson Bean System porte la configuration de grains active comme ATTRIBUT.
+    beanSystem: b.id === 200 ? bean : null,
+    label: named?.name ?? b.label,
+    catalogLabel: b.label, // libellé générique conservé pour référence
+    machineName: named?.name ?? null,
+    machineNameProp: named?.prop ?? null,
+    /**
+     * **L'octet d'icône EST l'index 0-19 dans la liste du sélecteur de l'app** — vérifié de
+     * bout en bout dans son code, sans rien écrire sur l'appareil :
+     *
+     * 1. `CreateBeverageViewModel.J()` construit 20 images ; la sélectionnée est celle dont
+     *    la **position** vaut `gVar.n()`.
+     * 2. `Q6.g.n()` rend `f6459b`, que le `toString` de la classe nomme `recipeImageIndex`.
+     * 3. À la validation, `m0()` appelle `f0(idBoisson, nom, gVar2.n())`.
+     * 4. `DeLonghiWifiConnectService.f0` le journalise `"saveRecipeName … iconIndex:"` et le
+     *    passe à `p097j6.d.f0`, qui pose `bArr[2] = 0xAB` puis l'octet 20 de l'entrée.
+     *
+     * C'est exactement l'octet que `decodeNames` rend ici. Non nul pour les seules recettes
+     * perso : `machineBeverageNames` ne couvre qu'elles.
+     */
+    icon: named?.icon ?? null,
+    /** Emplacement perso 1-6, ou `null`. C'est l'index qu'attend `POST /api/profiles/name`. */
+    customSlot: named?.slot ?? null,
+    boundsProp,
+    valuesProp,
+    bounds,
+    values,
+  };
+}
+
+/** Le catalogue entier vu pour un profil. Une recette perso renommée sur la machine doit
+ *  s'afficher sous son nom, pas sous le libellé générique du catalogue — d'où `machineNames`. */
+function vueBoissons(m, store, profileId) {
+  const machineNames = machineBeverageNames(store);
+  const bean = activeBeanSystem(store);
+  return m.catalog.beverages.map((b) => vueBoisson(m, store, b, profileId, machineNames, bean));
+}
+
+/**
+ * **Une recette locale, remise en forme à la lecture** — jamais réécrite en base.
+ *
+ * Le format a gagné `icon` (l'index 0-19 que `0xAB` demande lors d'un transfert) et `apercu` (de
+ * quoi dessiner la carte tant que le catalogue n'est pas là). Les recettes enregistrées avant ne
+ * les portent pas : elles sont complétées ici, à la volée. Migrer la base aurait été réécrire des
+ * lignes pour ajouter des champs qu'on sait déduire — du risque contre rien.
+ *
+ * ⚠️ **`apercu` ne construit JAMAIS une trame.** Il n'existe que pour l'affichage, et dès que le
+ * catalogue est là c'est le catalogue qui gagne. Une seule source pour ce qui atteint l'appareil.
+ */
+function normaliseRecette(r, bev) {
+  return {
+    id: String(r.id),
+    name: r.name ?? "",
+    beverageId: Number(r.beverageId),
+    profileId: Number(r.profileId) || 1,
+    params: (r.params ?? []).map((p) => ({ id: Number(p.id), value: Number(p.value) })),
+    icon: r.icon == null ? null : Number(r.icon),
+    apercu: r.apercu ?? (bev ? { label: bev.label, slug: bev.slug, category: bev.category, milk: !!bev.milk } : null),
+    updatedAt: r.updatedAt ?? null,
+  };
+}
+
+/**
+ * **La bibliothèque de recettes, à la forme que l'interface consomme.**
+ *
+ * Chaque entrée porte trois choses distinctes, et les garder distinctes est le point : la `recipe`
+ * (ce que l'utilisateur a enregistré), la `beverage` (la boisson visée telle que le MÊME assemblage
+ * que `/api/beverages` la rend, pour que la page monte le même composant de carte et le même
+ * éditeur), et le `transfert` (ce que la machine accepterait).
+ *
+ * `beverage` vaut **`null`** quand le catalogue du modèle ne connaît pas cet identifiant — modèle
+ * changé, machine remplacée. On ne fabrique pas une boisson de circonstance pour sauver les
+ * apparences : la carte le dira, ce qui est une information vraie et utile.
+ *
+ * `values` reste **les valeurs du profil sur la machine**, pas celles de la recette : c'est ce qui
+ * donne son sens au « ↺ réinitialiser » de l'éditeur. Les valeurs de la recette voyagent dans
+ * `recipe.params` et l'éditeur les reçoit par son `initial`.
+ */
+function vueRecettes(m) {
+  const store = m.store.machineView();
+  const machineNames = machineBeverageNames(store);
+  const bean = activeBeanSystem(store);
+  const parId = new Map(m.catalog.beverages.map((b) => [b.id, b]));
+
+  /**
+   * Les emplacements perso du modèle, **nommés ou non**. `customSlotOf` les tire du catalogue,
+   * pas de la trame des noms : on transfère volontiers dans un emplacement encore vierge, et
+   * `machineBeverageNames` ne couvre que ceux qui portent déjà un nom.
+   */
+  const emplacements = m.catalog.beverages
+    .map((b) => ({ b, slot: customSlotOf(b.slug) }))
+    .filter((x) => x.slot !== null)
+    .map(({ b, slot }) => ({
+      id: b.id,
+      slot,
+      // `null` = jamais nommé sur la machine. La confirmation d'écrasement le dira ainsi plutôt
+      // que d'afficher le libellé d'usine comme s'il s'agissait d'un nom choisi.
+      name: machineNames[b.id]?.name ?? null,
+      icon: machineNames[b.id]?.icon ?? null,
+      ingredients: b.ingredients,
+    }));
+
+  const recipes = m.store.listRecipes().map((brut) => {
+    const b = parId.get(Number(brut.beverageId)) ?? null;
+    const recipe = normaliseRecette(brut, b);
+    // Un plan par emplacement : rien n'oblige deux emplacements à déclarer les mêmes réglages, et
+    // supposer le contraire ferait proposer une cible qui refuserait à l'écriture.
+    const plans = emplacements.map((e) => ({ e, plan: planTransfert({ params: recipe.params, cibleParams: e.ingredients }) }));
+    const ouverts = plans.filter((x) => x.plan.possible);
+    return {
+      recipe,
+      beverage: b ? vueBoisson(m, store, b, recipe.profileId, machineNames, bean) : null,
+      transfert: {
+        possible: ouverts.length > 0,
+        // Une CLÉ, jamais une phrase : rien de traduisible ne traverse l'API.
+        raison: ouverts.length ? null : (plans[0]?.plan.raison ?? "noCustomSlot"),
+        /**
+         * **`retires` traverse l'API, et c'est nouveau parce que le cas est devenu atteignable.**
+         *
+         * `planTransfert` a toujours listé ce que la cible ne déclare pas, et `transfert.mjs` dit en
+         * tête que ce n'est « jamais écarté sans le dire » — mais personne ne le disait : la vue ne
+         * publiait pas le champ, donc l'interface ne pouvait pas le montrer. Tant qu'une recette ne
+         * portait que du café et du lait, un emplacement déclarait tout et la liste était vide.
+         *
+         * Depuis que l'eau chaude est un ingrédient, une recette du mug de voyage peut porter les
+         * trois — et un emplacement perso ne déclare pas l'eau chaude. Le transfert reste possible
+         * (le café et le lait, eux, passent) et il **perdrait l'eau en annonçant une réussite**.
+         *
+         * Des IDENTIFIANTS, pas des libellés : c'est la page qui les nomme, comme partout ailleurs.
+         */
+        emplacements: ouverts.map((x) => ({
+          id: x.e.id, slot: x.e.slot, name: x.e.name, icon: x.e.icon,
+          retires: x.plan.retires.map((r) => r.id),
+        })),
+      },
+    };
+  });
+  return { recipes, slots: emplacements.map((e) => ({ id: e.id, slot: e.slot, name: e.name, icon: e.icon })) };
+}
+
+/**
  * Identifiants de paramètres que l'app demande sur son écran de statistiques
  * (`p018b7/e.java`, `readSettingsParameter`). Aucune table de l'APK ne les nomme : le viewmodel les
  * lit par id et affiche le résultat via les propriétés `d7xx_tot_*`. La correspondance
@@ -3833,6 +4029,23 @@ function beanPresets(m) {
   return Array.isArray(l) ? l : [];
 }
 
+/**
+ * Ce que les endpoints de LECTURE servent : les configurations mémorisées, plus la date de leur
+ * image quand elles en ont une.
+ *
+ * Distinct de `beanPresets()` **à dessein**. Cette fonction-là est le stockage, et `putBeanPreset`
+ * la relit pour réécrire le tableau : si elle rendait déjà `imageAt`, cette date se recopierait
+ * dans `meta` à chaque enregistrement, et `meta` finirait par contredire la table le jour où une
+ * image est supprimée. La table dit ce qu'elle contient, elle est seule à le dire.
+ *
+ * `imageAt` sert aussi de **version** à l'interface : c'est ce qu'elle met en paramètre de l'URL
+ * de la vignette pour que le navigateur aille rechercher une image qui vient d'être remplacée.
+ */
+function vueBeanPresets(m) {
+  const dates = m.store.beanImageDates();
+  return beanPresets(m).map((p) => ({ ...p, imageAt: dates[p.id] ?? null }));
+}
+
 function putBeanPreset(m, { id, name, grinder, temperature, aroma }) {
   const liste = beanPresets(m);
   const at = Date.now();
@@ -3862,6 +4075,9 @@ function deleteBeanPreset(m, id) {
   const reste = liste.filter((x) => x.id !== id);
   if (reste.length === liste.length) return false;
   m.store.setMeta("beanPresets", reste);
+  // L'image part avec la configuration : la garder ne ferait qu'une ligne que plus rien ne
+  // désigne, et que le prochain `b<n>` réutiliserait sous une autre identité.
+  m.store.deleteBeanImage(id);
   L("sys", `configuration de grains oubliée (${id})`, m);
   return true;
 }
@@ -3988,6 +4204,107 @@ async function handleApi(req, res) {
     // `RecipeData.T()` : l'app choisit l'action « inversion » quand le paramètre INVERSION (12)
     // vaut 1 — c'est le cas du flat white, du cappuccino inversé, du cortado, du long black.
     const inverted = (params) => (params ?? []).some((x) => Number(x.id) === 12 && Number(x.value) === 1);
+
+    /**
+     * **Transférer une recette locale dans un emplacement perso — DEUX écritures persistantes,
+     * UNE seule tâche.**
+     *
+     * `0x83`/`SAVE_BEVERAGE` pose les réglages dans l'emplacement, `0xAB` y pose le nom de la
+     * recette et son dessin. Une tâche de deux pas et non deux tâches, parce que c'est **un** geste
+     * et qu'un transfert à moitié fait — réglages posés, nom pas posé — est exactement ce qu'il ne
+     * faut pas laisser passer inaperçu : la file le mènerait alors comme deux demandes sans rapport,
+     * dont l'une peut échouer pendant que l'autre réussit.
+     *
+     * Ce qui part est décidé par `planTransfert` (`src/lib/transfert.mjs`, pur, prouvé par
+     * `verif-transfert.mjs`) et **jamais ici** : un ingrédient que la recette n'a pas doit être
+     * écrit ABSENT et non omis, sans quoi celui de la recette précédente resterait en place.
+     *
+     * Cette branche sort avant le constructeur à trame unique plus bas — elle est la seule commande
+     * qui en met deux en file.
+     */
+    if (b.action === "transferToSlot") {
+      const brut = m.store.listRecipes().find((x) => String(x.id) === String(b.recipeId));
+      if (!brut) return raw(res, JSON.stringify({ error: "recette inconnue" }), 404);
+      const slot = Number(b.slot);
+      const cible = m.catalog.beverages.find((x) => customSlotOf(x.slug) === slot) ?? null;
+      if (!cible) return raw(res, JSON.stringify({ error: `emplacement perso ${b.slot} inconnu sur ${m.catalog.model.type}` }), 400);
+      // ⚠️ Même refus que l'écriture de noms : le pas de 22 octets d'un Striker n'est pas porté, et
+      // écrire au mauvais pas décalerait tous les noms suivants.
+      if (m.gen === "striker") return raw(res, JSON.stringify({ error: "transfert non porté pour la génération Striker (pas de 22 octets)" }), 400);
+      const rec = normaliseRecette(brut, m.catalog.byId(Number(brut.beverageId)) ?? null);
+      const prof = Number(b.profileId ?? rec.profileId) || 1;
+      if (!(prof >= 1 && prof <= m.catalog.model.nProfiles)) {
+        return raw(res, JSON.stringify({ error: `profil ${prof} invalide (ce modèle en a ${m.catalog.model.nProfiles})` }), 400);
+      }
+      const nom = String(rec.name ?? "").trim();
+      if (!nom) return raw(res, JSON.stringify({ error: "recette sans nom : c'est lui qui nommerait l'emplacement" }), 400);
+      // Tronquer serait pire que refuser : l'emplacement porterait un nom que l'utilisateur n'a pas
+      // choisi, et la trame en compte exactement 20.
+      if (nom.length > 20) return raw(res, JSON.stringify({ error: "nom limité à 20 caractères" }), 400);
+      const plan = planTransfert({ params: rec.params, cibleParams: cible.ingredients });
+      if (!plan.possible) {
+        return raw(res, JSON.stringify({
+          error: plan.raison === "hotWaterNotInCustomSlot"
+            ? "un emplacement perso ne déclare ni eau chaude ni thé : cette recette ne peut pas y être transférée"
+            : "cette recette n'a aucun ingrédient que l'emplacement puisse recevoir",
+          raison: plan.raison,
+        }), 409);
+      }
+      /**
+       * L'icône est obligatoire dans la trame (21e octet), et **nom et icône voyagent dans la même
+       * entrée** : écrire l'un réécrit l'autre. Celle de la recette d'abord ; à défaut celle que
+       * l'emplacement porte déjà, ce qui la préserve au lieu de l'inventer ; à défaut on refuse.
+       * Envoyer 0 poserait silencieusement un dessin que personne n'a choisi.
+       */
+      const nomsLus = readNames(m.store.machineView(), "customNames");
+      const icone = rec.icon != null ? rec.icon : nomsLus[slot]?.icon;
+      if (!Number.isInteger(icone)) {
+        return raw(res, JSON.stringify({
+          error: "aucune image pour cette recette, et l'emplacement n'en a pas de lue : en choisir une, ou lire les noms d'abord",
+          needsIcon: true,
+        }), 409);
+      }
+
+      const fSave = frameDispense(cible.id, prof, MODE.DONTCARE, ACT.SAVE, plan.params);
+      const fNom = frameSetNames(0xab, slot, slot, [{ name: nom, icon: icone }]);
+      const libelle = `Transférer « ${nom} » dans l'emplacement perso ${slot} (profil ${prof})`;
+      const t = enfilerTache(m, tache({
+        label: libelle,
+        rang: RANG.COMMANDE,
+        pas: [
+          pasPourTrame(`Réglages de « ${nom} » → emplacement ${slot}`, datapointValue(fSave), 20000, "monitor"),
+          pasPourTrame(`Nom et image de l'emplacement ${slot}`, datapointValue(fNom), 20000, "monitor"),
+        ],
+        // Deux transferts de la MÊME recette vers le MÊME emplacement n'en font qu'un ; vers deux
+        // emplacements différents, ce sont deux gestes distincts et ils gardent deux lignes.
+        cle: `transfert:${rec.id}:${slot}`,
+        i18n: { k: "transferToSlot", p: { nom, slot, profil: prof } },
+        genre: "commande",
+      }), `${libelle} — ${plan.params.length} réglage(s), ${plan.retires.length} retiré(s)`);
+
+      /**
+       * **La machine ne repousse rien après un `0xAB`**, donc sans relecture notre cache garderait
+       * l'ancien nom de l'emplacement indéfiniment — l'écriture réussirait et la page continuerait
+       * d'affirmer le contraire. Même raisonnement et même bloc unique que `/api/profiles/name`.
+       *
+       * Le `0x83`, lui, n'en a pas besoin : l'appareil pousse spontanément les cinq profils après
+       * une écriture de recette (voir `beverages.mjs`, § recettes perso par profil).
+       */
+      const bloc = CUSTOM_NAME_PROPS
+        .filter((x) => x.stride === STRIDE_CLASSIC && x.first <= slot)
+        .sort((a, b2) => b2.first - a.first)[0] ?? null;
+      const relecture = bloc ? startImport(m, [bloc.prop], 0, { i18n: { k: "readOne", p: { prop: bloc.prop } } }) : null;
+
+      const reg = await postLocalReg(m);
+      return raw(res, JSON.stringify({
+        sent: true, slot, target: cible.id, name: nom, icon: icone, profileId: prof,
+        // Ce que le report a changé, dit et non subi : l'interface le montre dans sa confirmation.
+        plan: { params: plan.params, retires: plan.retires, absents: plan.absents },
+        reread: bloc?.prop ?? null, rereadTaskId: relecture?.taskId ?? null,
+        register: reg, ...tacheRendue(t),
+      }));
+    }
+
     try {
       if (b.action === "on") { frame = frameTurnOn(); label = "Allumer"; cleLibelle = { k: "on" }; sustain = "profile"; }
       else if (b.action === "off") { frame = frameTurnOff(); label = "Éteindre"; cleLibelle = { k: "off" }; dur = 20000; }
@@ -4074,49 +4391,7 @@ async function handleApi(req, res) {
   if (url === "/api/beverages" && req.method === "GET") {
     const store = m.store.machineView();
     const profileId = Number(new URL(req.url, "http://x").searchParams.get("profile") ?? 1);
-    // Une recette perso renommée sur la machine doit s'afficher sous son nom, pas sous le
-    // libellé générique du catalogue.
-    const machineNames = machineBeverageNames(store);
-    const bean = activeBeanSystem(store);
-    const beverages = m.catalog.beverages.map((b) => {
-      const boundsProp = b.bounds;
-      const valuesProp = m.catalog.profileProp(b, profileId);
-      const bounds = boundsProp ? store.props[boundsProp] ?? null : null;
-      const values = valuesProp ? store.props[valuesProp] ?? null : null;
-      const named = machineNames[b.id];
-      return {
-        ...b,
-        // Compteur d'usage de la CATÉGORIE de cette boisson (la machine ne compte pas par tasse).
-        counter: beverageCounter(store, b),
-        // La boisson Bean System porte la configuration de grains active comme ATTRIBUT.
-        beanSystem: b.id === 200 ? bean : null,
-        label: named?.name ?? b.label,
-        catalogLabel: b.label, // libellé générique conservé pour référence
-        machineName: named?.name ?? null,
-        machineNameProp: named?.prop ?? null,
-        /**
-         * **L'octet d'icône EST l'index 0-19 dans la liste du sélecteur de l'app** — vérifié de
-         * bout en bout dans son code, sans rien écrire sur l'appareil :
-         *
-         * 1. `CreateBeverageViewModel.J()` construit 20 images ; la sélectionnée est celle dont
-         *    la **position** vaut `gVar.n()`.
-         * 2. `Q6.g.n()` rend `f6459b`, que le `toString` de la classe nomme `recipeImageIndex`.
-         * 3. À la validation, `m0()` appelle `f0(idBoisson, nom, gVar2.n())`.
-         * 4. `DeLonghiWifiConnectService.f0` le journalise `"saveRecipeName … iconIndex:"` et le
-         *    passe à `p097j6.d.f0`, qui pose `bArr[2] = 0xAB` puis l'octet 20 de l'entrée.
-         *
-         * C'est exactement l'octet que `decodeNames` rend ici. Non nul pour les seules recettes
-         * perso : `machineBeverageNames` ne couvre qu'elles.
-         */
-        icon: named?.icon ?? null,
-        /** Emplacement perso 1-6, ou `null`. C'est l'index qu'attend `POST /api/profiles/name`. */
-        customSlot: named?.slot ?? null,
-        boundsProp,
-        valuesProp,
-        bounds,
-        values,
-      };
-    });
+    const beverages = vueBoissons(m, store, profileId);
     // Ordre d'affichage de la machine pour ce profil (propriété de priorité), s'il est connu.
     const prioProp = `d${String(260 + profileId).padStart(3, "0")}_${profileId}_rec_priority`;
     const order = store.props[prioProp]?.beverageIds ?? null;
@@ -4522,7 +4797,7 @@ async function handleApi(req, res) {
       beans,
       // La bibliothèque locale, servie avec les grains de la machine : la page les montre côte à
       // côte, une seule requête suffit.
-      presets: beanPresets(m),
+      presets: vueBeanPresets(m),
       bounds: {
         grinder: { min: GRINDER_MIN, max: GRINDER_MAX, verified: true },
         aroma: { min: AROMA_MIN, max: AROMA_MAX, verified: true },
@@ -4542,7 +4817,34 @@ async function handleApi(req, res) {
    * réglage inapplicable ne servirait qu'à faire échouer l'écriture plus tard, loin de la saisie.
    */
   if (url === "/api/beanpresets" && req.method === "GET") {
-    return raw(res, JSON.stringify({ presets: beanPresets(m) }));
+    return raw(res, JSON.stringify({ presets: vueBeanPresets(m) }));
+  }
+
+  /**
+   * L'image d'une configuration mémorisée, servie par son **URL propre** et non dans le JSON de la
+   * liste : le navigateur la met alors en cache, et ouvrir la page ne retransporte pas les images
+   * de toutes les configurations à chaque fois.
+   *
+   * Revalidation à chaque affichage (`must-revalidate`) plutôt qu'une durée de vie : l'identifiant
+   * ne change pas quand on remplace l'image, donc une image mise en cache pour une heure resterait
+   * l'ancienne. L'`ETag` porte la date d'écriture, ce qui rend la réponse à cette revalidation
+   * gratuite — un 304 sans corps.
+   */
+  if (url === "/api/beanpresets/image" && req.method === "GET") {
+    const id = new URL(req.url, "http://x").searchParams.get("id");
+    const img = m.store.getBeanImage(String(id ?? ""));
+    // 404 franc : une configuration sans image est un cas normal, et servir un substitut ferait
+    // croire à l'interface qu'il y en a une.
+    if (!img) return raw(res, JSON.stringify({ error: "aucune image pour cette configuration" }), 404);
+    const etag = `"${id}-${img.at}"`;
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { ETag: etag, "Cache-Control": "private, max-age=0, must-revalidate" });
+      return res.end();
+    }
+    return rawBin(res, Buffer.from(img.bytes), img.mime, {
+      ETag: etag,
+      "Cache-Control": "private, max-age=0, must-revalidate",
+    });
   }
   if (url === "/api/beanpresets" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
@@ -4552,13 +4854,39 @@ async function handleApi(req, res) {
     if (!(grinder >= GRINDER_MIN && grinder <= GRINDER_MAX)) return raw(res, JSON.stringify({ error: `mouture hors bornes (${GRINDER_MIN}–${GRINDER_MAX})` }), 400);
     if (!(aroma >= AROMA_MIN && aroma <= AROMA_MAX)) return raw(res, JSON.stringify({ error: `arôme hors bornes (${AROMA_MIN}–${AROMA_MAX})` }), 400);
     if (!(temperature >= TEMPERATURE_MIN && temperature <= TEMPERATURE_MAX)) return raw(res, JSON.stringify({ error: `température hors bornes (${TEMPERATURE_MIN}–${TEMPERATURE_MAX})` }), 400);
+    /**
+     * L'image, s'il y en a une, est décodée **avant** d'écrire quoi que ce soit.
+     *
+     * Trois valeurs, trois sens, et ils ne se confondent pas : absente, on ne touche pas à
+     * l'image existante ; `null`, on la retire ; une data URL, on la remplace. Sans le cas
+     * `null` explicite, retirer une image serait impossible autrement qu'en supprimant la
+     * configuration entière.
+     *
+     * Valider d'abord, écrire ensuite : enregistrer les réglages puis refuser l'image laisserait
+     * une configuration à moitié écrite, dont l'utilisateur ne saurait pas ce qu'elle contient.
+     */
+    let image = null;
+    if (b.image !== undefined && b.image !== null) {
+      try {
+        image = decoderDataUrl(b.image);
+      } catch (e) {
+        return raw(res, JSON.stringify({ error: e.message, maxBytes: IMAGE_TAILLE_MAX }), 400);
+      }
+    }
     const entree = putBeanPreset(m, { id: typeof b.id === "string" ? b.id : null, name: b.name, grinder, temperature, aroma });
-    return raw(res, JSON.stringify({ ok: true, preset: entree, presets: beanPresets(m) }));
+    if (image) {
+      m.store.putBeanImage(entree.id, image.mime, image.bytes);
+      L("sys", `image de la configuration de grains « ${entree.name || "sans nom"} » enregistrée (${image.mime}, ${Math.round(image.bytes.length / 1024)} kio)`, m);
+    } else if (b.image === null && m.store.deleteBeanImage(entree.id)) {
+      L("sys", `image de la configuration de grains « ${entree.name || "sans nom"} » retirée`, m);
+    }
+    const presets = vueBeanPresets(m);
+    return raw(res, JSON.stringify({ ok: true, preset: presets.find((x) => x.id === entree.id) ?? entree, presets }));
   }
   if (url === "/api/beanpresets" && req.method === "DELETE") {
     const id = new URL(req.url, "http://x").searchParams.get("id");
     const removed = deleteBeanPreset(m, String(id ?? ""));
-    return raw(res, JSON.stringify({ removed, presets: beanPresets(m) }));
+    return raw(res, JSON.stringify({ removed, presets: vueBeanPresets(m) }));
   }
 
   // Simulation : ce que la règle donnerait, sans rien envoyer à la machine.
@@ -5082,16 +5410,34 @@ async function handleApi(req, res) {
 
   if (url === "/api/register" && req.method === "POST") { const r = await postLocalReg(m); return raw(res, JSON.stringify(r)); }
   if (url === "/api/recipes") {
-    if (req.method === "GET") return raw(res, JSON.stringify({ recipes: m.store.listRecipes() }));
+    if (req.method === "GET") return raw(res, JSON.stringify(vueRecettes(m)));
     if (req.method === "POST") {
       const r = JSON.parse((await readBody(req)).toString("utf8"));
       // L'id est la clé primaire : sans lui, l'ancien code écrivait une recette anonyme que la
       // suivante écrasait en silence.
       if (!r?.id) return raw(res, JSON.stringify({ error: "id de recette manquant" }), 400);
-      m.store.putRecipe(r);
-      return raw(res, JSON.stringify({ recipes: m.store.listRecipes() }));
+      const bev = m.catalog.byId(Number(r.beverageId));
+      // Refuser plutôt qu'enregistrer une recette qui ne désigne rien sur cette machine : elle
+      // s'afficherait sans boisson et ne pourrait ni se préparer ni se transférer.
+      if (!bev) return raw(res, JSON.stringify({ error: `boisson ${r.beverageId} inconnue sur ${m.catalog.model.type}` }), 400);
+      const prof = Number(r.profileId) || 1;
+      if (!(prof >= 1 && prof <= m.catalog.model.nProfiles)) {
+        return raw(res, JSON.stringify({ error: `profil ${prof} invalide (ce modèle en a ${m.catalog.model.nProfiles})` }), 400);
+      }
+      /**
+       * `apercu` est (re)posé à CHAQUE enregistrement : c'est le seul moment où l'on sait qu'il est
+       * à jour, et un aperçu périmé afficherait l'ancien nom d'une recette renommée sur la machine.
+       *
+       * Le libellé est celui que l'utilisateur VOIT — le nom saisi sur la machine s'il y en a un,
+       * le libellé du catalogue sinon. `m.catalog.byId` ne connaît que le second : un aperçu qui
+       * dirait « Recette perso 1 » là où l'écran affiche « Lacteso » ne servirait pas à ce pour
+       * quoi il existe, se retrouver quand le catalogue ne répond plus.
+       */
+      const nomMachine = machineBeverageNames(m.store.machineView())[bev.id]?.name ?? null;
+      m.store.putRecipe({ ...normaliseRecette(r, bev), apercu: { label: nomMachine ?? bev.label, slug: bev.slug, category: bev.category, milk: !!bev.milk } });
+      return raw(res, JSON.stringify(vueRecettes(m)));
     }
-    if (req.method === "DELETE") { const id = new URL(req.url, "http://x").searchParams.get("id"); m.store.deleteRecipe(id); return raw(res, JSON.stringify({ recipes: m.store.listRecipes() })); }
+    if (req.method === "DELETE") { const id = new URL(req.url, "http://x").searchParams.get("id"); m.store.deleteRecipe(id); return raw(res, JSON.stringify(vueRecettes(m))); }
   }
   return raw(res, JSON.stringify({ error: "not found" }), 404);
 }

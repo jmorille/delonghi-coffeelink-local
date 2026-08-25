@@ -55,7 +55,7 @@ import { dirname, join, resolve } from "node:path";
  */
 const DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : join(process.cwd(), "data");
 const DBFILE = process.env.DATABASE_FILE ? resolve(process.env.DATABASE_FILE) : join(DIR, "lan-server.db");
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /**
  * Identifiant de la première machine. Il est **figé** : c'est celui que la migration attribue à
@@ -70,7 +70,7 @@ export const DEFAULT_MACHINE = "m1";
  * indexé. On ne duplique pas `at`/`kind` dans le JSON des propriétés : ils sont reconstitués à la
  * lecture, ce qui évite deux sources de vérité pour la même valeur.
  */
-const DDL = `
+const DDL_V2 = `
 CREATE TABLE machines (
   id        TEXT PRIMARY KEY,
   createdAt INTEGER NOT NULL,
@@ -124,6 +124,38 @@ CREATE TABLE settings (
   at    INTEGER NOT NULL
 ) STRICT;
 `;
+
+/**
+ * Schéma v3 : l'image d'une configuration de grains mémorisée.
+ *
+ * **Une table, et pas un champ de plus dans `meta.beanPresets`.** Le tableau des configurations
+ * est relu et **réécrit en entier** à chaque enregistrement (`putBeanPreset`) : y ranger des
+ * images en base64 rejouerait, en plus petit, le défaut qui a fait naître ce fichier — réécrire
+ * tout un cache pour ne modifier qu'une ligne. Ici l'image est une ligne, servie par sa propre
+ * URL, donc cachée par le navigateur et jamais retransmise avec la liste.
+ *
+ * `bytes` est un vrai BLOB : `STRICT` accepte ce type, et garder les octets tels quels évite
+ * les 33 % de la base64 et une conversion à chaque lecture. `id` est celui de la configuration
+ * (`b1`, `b2`…), donc la même clé des deux côtés.
+ *
+ * Déclarée à part de `DDL_V2` pour que chaque migration ne joue QUE son propre pas : une base v1
+ * passe en v2 avec les sept tables d'origine, puis en v3 avec celle-ci. Les concaténer en un seul
+ * bloc ferait créer cette table par la migration v1 → v2, et le pas suivant échouerait sur une
+ * table déjà présente.
+ */
+const DDL_BEAN_IMAGES = `
+CREATE TABLE bean_images (
+  machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+  id      TEXT NOT NULL,
+  mime    TEXT NOT NULL,
+  bytes   BLOB NOT NULL,
+  at      INTEGER NOT NULL,
+  PRIMARY KEY (machine, id)
+) STRICT;
+`;
+
+/** Le schéma courant, en entier — ce que reçoit une base neuve. */
+const DDL = DDL_V2 + DDL_BEAN_IMAGES;
 
 // Les deux répertoires : celui des données (migration, anciens JSON) et celui de la base, qui peut
 // être ailleurs si `DATABASE_FILE` la déplace.
@@ -186,6 +218,12 @@ const q = {
   allRecipes: db.prepare("SELECT * FROM recipes WHERE machine = ? ORDER BY updatedAt"),
   countRecipes: db.prepare("SELECT count(*) AS n FROM recipes WHERE machine = ?"),
 
+  putBeanImage: db.prepare("INSERT INTO bean_images(machine, id, mime, bytes, at) VALUES(:machine, :id, :mime, :bytes, :at) ON CONFLICT(machine, id) DO UPDATE SET mime = :mime, bytes = :bytes, at = :at"),
+  getBeanImage: db.prepare("SELECT mime, bytes, at FROM bean_images WHERE machine = ? AND id = ?"),
+  delBeanImage: db.prepare("DELETE FROM bean_images WHERE machine = ? AND id = ?"),
+  countBeanImages: db.prepare("SELECT count(*) AS n FROM bean_images WHERE machine = ?"),
+  datesBeanImages: db.prepare("SELECT id, at FROM bean_images WHERE machine = ?"),
+
   putMeta: db.prepare("INSERT INTO meta(machine, key, value, at) VALUES(:machine, :key, :value, :at) ON CONFLICT(machine, key) DO UPDATE SET value = :value, at = :at"),
   // Remise à zéro d'une machine : une instruction par table, jouées dans une seule transaction.
   wipeProps: db.prepare("DELETE FROM props WHERE machine = ?"),
@@ -193,6 +231,7 @@ const q = {
   wipeStats: db.prepare("DELETE FROM stats WHERE machine = ?"),
   wipeRecipes: db.prepare("DELETE FROM recipes WHERE machine = ?"),
   wipeMeta: db.prepare("DELETE FROM meta WHERE machine = ?"),
+  wipeBeanImages: db.prepare("DELETE FROM bean_images WHERE machine = ?"),
   getMeta: db.prepare("SELECT value, at FROM meta WHERE machine = ? AND key = ?"),
   delMeta: db.prepare("DELETE FROM meta WHERE machine = ? AND key = ?"),
 
@@ -228,10 +267,25 @@ function tx(fn) {
  * prochain démarrage, jamais à moitié convertie. `foreign_keys` est temporairement désactivée le
  * temps de la bascule — les tables sont détruites et recréées, l'intégrité est rétablie à la fin.
  */
+/**
+ * Enchaîne les pas de migration jusqu'au schéma courant.
+ *
+ * Une **chaîne** et non un aiguillage : une base v1 doit pouvoir arriver en v3 sans qu'on ait
+ * écrit un chemin direct v1 → v3, qui serait un troisième code à vérifier et le seul jamais
+ * exercé. Chaque pas stampe SA version — jamais `SCHEMA_VERSION`, sinon un pas intermédiaire
+ * marquerait la base à jour alors que le suivant n'a pas encore tourné, et un plantage entre les
+ * deux laisserait une base qui ment sur sa forme.
+ */
 function migrateSchema(fromVersion) {
-  if (fromVersion !== 1) {
-    throw new Error(`schéma v${fromVersion} inconnu de cette version du serveur (attendu v1 ou v${SCHEMA_VERSION}) — base plus récente que le code ?`);
+  let v = fromVersion;
+  if (v === 1) { migrateV1toV2(); v = 2; }
+  if (v === 2) { migrateV2toV3(); v = 3; }
+  if (v !== SCHEMA_VERSION) {
+    throw new Error(`schéma v${fromVersion} inconnu de cette version du serveur (attendu v1, v2 ou v${SCHEMA_VERSION}) — base plus récente que le code ?`);
   }
+}
+
+function migrateV1toV2() {
   db.exec("PRAGMA foreign_keys = OFF");
   const at = Date.now();
   db.exec("BEGIN IMMEDIATE");
@@ -241,7 +295,7 @@ function migrateSchema(fromVersion) {
       db.exec(`ALTER TABLE ${t} RENAME TO ${t}_v1`);
       copied[t] = db.prepare(`SELECT count(*) AS n FROM ${t}_v1`).get().n;
     }
-    db.exec(DDL);
+    db.exec(DDL_V2);
     db.exec(`INSERT INTO machines(id, createdAt, data) VALUES('${DEFAULT_MACHINE}', ${at}, '{"label":null}')`);
     db.exec(`INSERT INTO props(machine, name, at, kind, data) SELECT '${DEFAULT_MACHINE}', name, at, kind, data FROM props_v1`);
     db.exec(`INSERT INTO bean_systems(machine, idx, at, data) SELECT '${DEFAULT_MACHINE}', idx, at, data FROM bean_systems_v1`);
@@ -249,7 +303,7 @@ function migrateSchema(fromVersion) {
     db.exec(`INSERT INTO recipes(machine, id, updatedAt, data) SELECT '${DEFAULT_MACHINE}', id, updatedAt, data FROM recipes_v1`);
     db.exec(`INSERT INTO meta(machine, key, value, at) SELECT '${DEFAULT_MACHINE}', key, value, at FROM meta_v1`);
     for (const t of ["props", "bean_systems", "stats", "recipes", "meta"]) db.exec(`DROP TABLE ${t}_v1`);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec("PRAGMA user_version = 2");
     db.exec("COMMIT");
     bootMessages.push(
       `schéma v1 → v2 (plusieurs machines) : ${copied.props} propriétés, ${copied.stats} statistiques, ` +
@@ -264,6 +318,29 @@ function migrateSchema(fromVersion) {
     throw new Error(`migration du schéma v1 → v2 impossible (${e.message}) — la base est restée en v1`, { cause: e });
   } finally {
     db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+/**
+ * v2 → v3 : la table des images de configurations de grains.
+ *
+ * **Purement additive** — un `CREATE TABLE`, aucune table recréée, aucune ligne recopiée,
+ * contrairement à v1 → v2 qui devait changer une clé primaire. Rien d'existant n'est lu ni
+ * réécrit, donc rien d'existant ne peut être perdu ; une coupure laisse la base en v2, où elle
+ * fonctionne exactement comme avant, et le pas se rejoue au démarrage suivant.
+ *
+ * Pas de message dans `bootMessages` quand il n'y a rien à raconter : aucune donnée n'a bougé.
+ */
+function migrateV2toV3() {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(DDL_BEAN_IMAGES);
+    db.exec("PRAGMA user_version = 3");
+    db.exec("COMMIT");
+    bootMessages.push("schéma v2 → v3 : table des images de configurations de grains ajoutée");
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw new Error(`migration du schéma v2 → v3 impossible (${e.message}) — la base est restée en v2`, { cause: e });
   }
 }
 
@@ -466,6 +543,46 @@ export function forMachine(machine) {
     },
     deleteRecipe: (recipeId) => q.delRecipe.run(id, String(recipeId)),
 
+    /**
+     * L'image d'une configuration de grains mémorisée, rangée sous l'identifiant de cette
+     * configuration.
+     *
+     * `bytes` entre et sort en octets bruts (`Uint8Array`), jamais en base64 : c'est un BLOB des
+     * deux côtés, et convertir à chaque lecture ne servirait qu'à gonfler d'un tiers ce qui part
+     * ensuite sur le réseau.
+     *
+     * ⚠️ Ces trois fonctions ne touchent PAS `importedAt` — comme `setMeta`, et pour la même
+     * raison : cette date dit quand la MACHINE a écrit quelque chose, pas quand l'utilisateur a
+     * rangé une photo. C'est `machineSummary` qui publie de quoi détecter le changement.
+     */
+    putBeanImage(presetId, mime, bytes) {
+      const at = Date.now();
+      q.putBeanImage.run({ machine: id, id: String(presetId), mime: String(mime), bytes, at });
+      return at;
+    },
+    /** `null` si cette configuration n'a pas d'image — l'absence est un cas normal, pas une erreur. */
+    getBeanImage(presetId) {
+      const row = q.getBeanImage.get(id, String(presetId));
+      return row ? { mime: row.mime, bytes: row.bytes, at: row.at } : null;
+    },
+    /** Rend `true` si une image existait, pour que l'API puisse dire ce qu'elle a fait. */
+    deleteBeanImage(presetId) {
+      return q.delBeanImage.run(id, String(presetId)).changes > 0;
+    },
+    countBeanImages: () => q.countBeanImages.get(id).n,
+    /**
+     * Les dates des images, indexées par configuration — en UNE requête.
+     *
+     * C'est ce qui permet à `/api/beanpresets` de dire « celle-ci a une image » sans que
+     * `meta.beanPresets` ait à le recopier. Une donnée recopiée dans les deux endroits finirait
+     * par les faire se contredire : la table dit ce qu'elle contient, elle est seule à le dire.
+     */
+    beanImageDates() {
+      const d = {};
+      for (const row of q.datesBeanImages.all(id)) d[row.id] = row.at;
+      return d;
+    },
+
     /** `null` si aucune clé n'a été découverte. La valeur retournée EST le secret : ne pas la logger. */
     getLanKey: () => getMeta("lanKey"),
     setLanKey: (key, keyId) => setMeta("lanKey", { lanip_key: key, lanip_key_id: keyId, at: Date.now() }),
@@ -498,12 +615,14 @@ export function forMachine(machine) {
       stats: q.countStats.get(id).n,
       beanSystems: q.countBeans.get(id).n,
       recipes: q.countRecipes.get(id).n,
+      beanImages: q.countBeanImages.get(id).n,
     }),
 
     /**
      * Efface **tout** ce qui appartient à cette machine, sans supprimer la machine elle-même :
-     * propriétés lues, statistiques, profils de grains, recettes, et toutes les valeurs `meta` —
-     * donc aussi l'adresse mémorisée, le DSN, le modèle et la clé LAN.
+     * propriétés lues, statistiques, profils de grains, recettes, images de configurations de
+     * grains, et toutes les valeurs `meta` — donc aussi l'adresse mémorisée, le DSN, le modèle et
+     * la clé LAN.
      *
      * C'est la remise à zéro de la **dernière** machine, qu'on ne peut pas retirer du registre sans
      * laisser l'application sans rien à piloter. Une seule transaction : une coupure au milieu ne
@@ -519,11 +638,13 @@ export function forMachine(machine) {
           stats: q.countStats.get(id).n,
           beanSystems: q.countBeans.get(id).n,
           recipes: q.countRecipes.get(id).n,
+          beanImages: q.countBeanImages.get(id).n,
         };
         q.wipeProps.run(id);
         q.wipeBeans.run(id);
         q.wipeStats.run(id);
         q.wipeRecipes.run(id);
+        q.wipeBeanImages.run(id);
         q.wipeMeta.run(id);
         return efface;
       });
@@ -609,12 +730,16 @@ export function storageInfo() {
   const pageCount = db.prepare("PRAGMA page_count").get().page_count;
   const pageSize = db.prepare("PRAGMA page_size").get().page_size;
   const machines = listMachines();
-  const total = { props: 0, stats: 0, beanSystems: 0, recipes: 0 };
+  // Les clés du total viennent de `counts()`, **jamais d'une liste écrite ici**. Elles l'étaient,
+  // et c'est précisément ce qui a fait qu'un compteur ajouté à `counts()` n'apparaissait nulle
+  // part dans `/api/system` — sans erreur, la clé manquait simplement. Une deuxième énumération
+  // des tables est une divergence qui attend son tour.
+  const total = {};
   const perMachine = {};
   for (const m of machines) {
     const c = forMachine(m.id).counts();
     perMachine[m.id] = c;
-    for (const k of Object.keys(total)) total[k] += c[k];
+    for (const [k, v] of Object.entries(c)) total[k] = (total[k] ?? 0) + v;
   }
   return {
     engine: "sqlite",

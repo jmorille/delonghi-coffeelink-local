@@ -1,8 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { useParamLabel, useUnitLabel } from "@/i18n/labels";
-import { INGREDIENTS, groupeDe, presenceInitiale, valeurAbsente } from "./ingredients";
+import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
+import { CROISES, INGREDIENTS, composable, croiseDe, groupeDe, presenceInitiale, valeurAbsente } from "@/lib/ingredients.mjs";
 import { beverageParams, defautModele, valeurDepart, type Beverage, type Param, type RecipeParam } from "./beverage";
 import Icone from "./icons";
 import Alerte from "./Alerte";
@@ -71,7 +71,12 @@ export default function RecipeEditor({
    * n'a pas à apparaître là par symétrie.
    */
   onDispense?: (params?: RecipeParam[]) => void;
-  onWrite: (params: RecipeParam[]) => void;
+  /**
+   * Écrire dans le profil de la machine — **écriture persistante**. Absent, le bouton disparaît,
+   * exactement comme `onDispense` : une page qui ne peut pas écrire ne doit pas montrer un bouton
+   * qui le promet. Même règle, même mécanisme, pas de variante d'affichage à maintenir.
+   */
+  onWrite?: (params: RecipeParam[]) => void;
   /**
    * Boutons de l'hôte à poser dans la barre d'actions — « Infos techniques » sur `/`,
    * « Enregistrer localement » sur `/recipes`. Ils vivent chez l'hôte (c'est lui qui tient
@@ -86,6 +91,7 @@ export default function RecipeEditor({
 }) {
   const t = useTranslations("editor");
   const tc = useTranslations("common");
+  const bevLabel = useBeverageLabel();
   const paramLabel = useParamLabel();
   const unitLabel = useUnitLabel();
   const all = beverageParams(bev);
@@ -113,7 +119,35 @@ export default function RecipeEditor({
    * s'ouvrent. La présence n'a pas d'état à elle — elle se LIT dans la quantité enregistrée, ce
    * qui évite d'avoir deux sources de vérité à tenir d'accord.
    */
-  const estPerso = bev.customSlot !== null && bev.customSlot !== undefined;
+  /**
+   * **La COMPOSITION est le propre d'un emplacement PERSO, et de rien d'autre.**
+   *
+   * C'est là, et seulement là, que les ingrédients se *composent* : la machine y déclare café,
+   * lait et leurs options, et une case décochée s'y écrit « absent » selon sa convention à elle.
+   * Une boisson du catalogue a des ingrédients **fixés par le modèle** — on n'en règle que les
+   * quantités. Offrir la composition partout laisserait décocher le café d'un espresso, ce qui
+   * n'est pas une recette mais une demande que l'appareil n'a jamais acceptée.
+   *
+   * ⚠️ **Ce drapeau ne décide plus de la PRÉSENTATION, seulement de l'activité de la case.** Il
+   * commandait aussi le choix entre « groupes à cocher » et « liste à plat » : deux rendus pour un
+   * même objet, dont un — celui des 28 boissons du catalogue — ne disait pas ce qui relevait du café
+   * et ce qui relevait du lait. Les groupes valent partout maintenant ; ici la case compose, ailleurs
+   * elle est cochée et inerte et son infobulle dit pourquoi. La limite du protocole est **dite** au
+   * lieu d'être obtenue en cachant la structure.
+   */
+  /**
+   * ⚠️ **Aucun drapeau « mode libre » ici, et c'est le point.** Une composition libre de `/recipes` se
+   * compose parce que sa déclaration de bornes est **calculée** et ne porte donc aucun défaut
+   * d'usine : la règle mesurée répond « composable » d'elle-même. Une variante d'affichage aurait
+   * fait la même chose en donnant à ce fichier une seconde façon de se comporter.
+   */
+  const parIngredients: boolean = composable(all);
+  /**
+   * **Le marqueur `255` reste propre aux emplacements perso**, alors que la composabilité, elle, est
+   * désormais mesurée. Deux faits distincts, deux tests : le mug de voyage est composable ET ne
+   * porte pas ce marqueur (café absent, `TASTE = 3`). Voir `valeurAbsente`.
+   */
+  const marqueurOption = bev.customSlot !== null && bev.customSlot !== undefined;
   // La présence se lit dans les MÊMES valeurs que les curseurs : une recette rouverte doit
   // retrouver ses ingrédients cochés comme elle retrouve ses quantités.
   const presence = () => presenceInitiale(initial ?? bev.values?.params);
@@ -130,8 +164,22 @@ export default function RecipeEditor({
     );
   }
 
-  /** Le groupement ne vaut QUE pour un emplacement perso : ailleurs les ingrédients ne se choisissent pas. */
-  const groupe = (id: number) => (estPerso ? groupeDe(id) : null);
+  /**
+   * **Deux questions différentes, deux fonctions — et c'est le cœur de ce bloc.**
+   *
+   * `groupeAffiche` répond « sous quel titre ce réglage se lit-il ? », et vaut pour TOUTES les
+   * boissons : c'est ce qui donne les groupes Café et Lait aux 28 boissons du catalogue, là où il
+   * n'y avait qu'une liste à plat.
+   *
+   * `groupe` répond « la présence de cet ingrédient se COMPOSE-t-elle ? », et reste réservée aux
+   * emplacements perso — les seuls où la machine accepte qu'on retire un ingrédient.
+   *
+   * ⚠️ **Ne jamais fusionner les deux.** C'est `groupe` que lit `valeurEnvoyee` : les confondre
+   * ferait écrire quantité 0 / option 255 sur une boisson du catalogue, autrement dit réorganiser
+   * un affichage changerait le café servi. Le rendu peut devenir commun ; la charge utile, non.
+   */
+  const groupeAffiche = (id: number) => groupeDe(id);
+  const groupe = (id: number) => (parIngredients ? groupeDe(id) : null);
 
   /**
    * Ce qui part dans la trame. Un ingrédient décoché n'est pas « omis » : il est écrit ABSENT,
@@ -140,7 +188,12 @@ export default function RecipeEditor({
    */
   const valeurEnvoyee = (b: Param): number => {
     const g = groupe(b.id);
-    if (g && !presents[g.cle]) return valeurAbsente(g, b.id);
+    if (g && !presents[g.cle]) {
+      // `null` = ne rien inventer pour cette option : on garde la valeur lue. C'est le cas du mug
+      // de voyage, qui ne porte pas le marqueur 255 des emplacements perso.
+      const absent = valeurAbsente(g, b.id, marqueurOption);
+      if (absent !== null) return absent;
+    }
     return vals[b.id] ?? seedFor(b);
   };
   const params: RecipeParam[] = all.map((b) => ({ id: b.id, value: valeurEnvoyee(b) }));
@@ -169,18 +222,55 @@ export default function RecipeEditor({
     });
   };
 
-  /** Les groupes que ce modèle déclare réellement — un ingrédient sans paramètre n'existe pas. */
+  /**
+   * Les deux groupes — **déclarés par ce modèle ou non**. Ils ne sont plus filtrés : un ingrédient
+   * que cette boisson ne porte pas se DIT au lieu de disparaître, parce qu'une disparition ne
+   * distingue jamais « cette boisson n'a pas de lait » de « on ne l'a pas cherché ».
+   */
   const groupes = INGREDIENTS.map((g) => ({
     g,
     qte: basic.find((b) => b.id === g.quantite) ?? null,
-    opts: basic.filter((b) => g.options.includes(b.id)),
-  })).filter((x) => x.qte !== null);
-  /** Ce qu'aucun groupe ne couvre reste rendu tel quel : rien ne doit disparaître par oubli. */
-  const horsGroupe = basic.filter((b) => groupe(b.id) === null);
-  const aucunIngredient = groupes.length > 0 && groupes.every((x) => !presents[x.g.cle]);
+    // Un réglage CROISÉ appartient au groupe pour sa valeur d'absence, mais il ne s'affiche pas
+    // dedans : « ordre lait/café » sous « Lait » proposait de régler l'ordre d'un café absent.
+    opts: basic.filter((b) => g.options.includes(b.id) && !croiseDe(b.id)),
+  }));
+  /** Ceux que ce modèle déclare réellement — un ingrédient sans paramètre de quantité n'existe pas. */
+  const declares = groupes.filter((x) => x.qte !== null);
+  const declare = (cle: string) => declares.some((x) => x.g.cle === cle);
+  /**
+   * **La case est-elle cochée ?** Sur un emplacement perso, c'est la composition qui répond. Ailleurs
+   * c'est le MODÈLE : la boisson déclare le café, donc le café est là, et la case le dit en étant
+   * cochée et inerte.
+   *
+   * ⚠️ **Jamais `presents` hors d'un emplacement perso.** `presents` lit la présence dans la quantité
+   * enregistrée, et le mug de voyage porte café, lait et eau chaude à **0** parce qu'ils n'ont jamais
+   * été configurés : le lire ici décocherait son café et **ferait disparaître son curseur**. C'est
+   * exactement la famille de bug que la règle « ne jamais filtrer sur `kind` » interdit, et elle a
+   * déjà masqué ces trois réglages une fois.
+   */
+  const coche = (cle: string) => (parIngredients ? !!presents[cle] : declare(cle));
+  /**
+   * Les réglages croisés qu'on peut montrer : ceux que ce modèle déclare et dont TOUS les
+   * ingrédients sont présents. Sinon ils ne sont pas cachés par prudence, ils sont **sans objet** —
+   * il n'y a pas d'ordre entre un café et un lait quand l'un des deux n'est pas là.
+   *
+   * Une seule règle remplace les deux branches d'avant : `coche` sait déjà que « présent » veut dire
+   * « coché » sur un perso et « déclaré » ailleurs.
+   */
+  const croises = CROISES.map((c) => ({ c, b: basic.find((x) => x.id === c.id) ?? null })).filter(
+    (x) => x.b !== null && x.c.ingredients.every(coche),
+  );
+  /**
+   * Ce qu'aucun groupe ne couvre reste rendu tel quel : rien ne doit disparaître par oubli. Il se lit
+   * sur `groupeAffiche` et non sur `groupe`, sinon une boisson du catalogue verrait tous ses réglages
+   * deux fois — une fois dans son groupe, une fois ici.
+   */
+  const horsGroupe = basic.filter((b) => groupeAffiche(b.id) === null);
+  const aucunIngredient = parIngredients && declares.length > 0 && declares.every((x) => !presents[x.g.cle]);
   // Deux appels littéraux plutôt qu'une clé construite : `verif-messages.mjs` ne sait vérifier
   // que les littéraux, et une clé dynamique lui échapperait silencieusement.
-  const nomGroupe = (cle: string) => (cle === "cafe" ? t("groupCoffee") : t("groupMilk"));
+  const nomGroupe = (cle: string) =>
+    cle === "cafe" ? t("groupCoffee") : cle === "lait" ? t("groupMilk") : t("groupWater");
   const set = (b: Param, raw: number) =>
     setVals((v) => ({
       ...v,
@@ -360,40 +450,82 @@ export default function RecipeEditor({
         </div>
       </div>
 
-      {/* **Un emplacement perso se règle par ingrédient**, comme l'écran de création de
-          l'application : on coche, et les réglages de cet ingrédient s'ouvrent. Les boissons du
-          catalogue gardent la liste à plat — leurs ingrédients ne se choisissent pas. */}
-      {estPerso ? (
+      {/* **Un seul rendu pour les deux cas ; la case ne décide plus que de sa propre activité.**
+          Il y en avait deux : les groupes à cocher d'un emplacement perso, et une liste à plat pour
+          les 28 boissons du catalogue. Qui avait appris l'une devait réapprendre l'autre, et sur la
+          liste à plat rien ne disait ce qui relevait du café et ce qui relevait du lait.
+
+          ⚠️ **La case n'est ACTIVE que là où la machine accepte la composition.** Ailleurs elle est
+          cochée et inerte, avec l'infobulle qui dit pourquoi : offrir la composition partout
+          laisserait décocher le café d'un espresso, ce qui n'est pas une recette mais une demande
+          que l'appareil n'a jamais acceptée. La limite est dite, plus cachée. */}
+      {declares.length > 0 ? (
         <>
-          <p className="chapeau">{t("ingredientsHint")}</p>
-          {groupes.map(({ g, qte, opts }) => (
-            <div className="blocIngredient" key={g.cle}>
-              <label className="caseLibelle">
-                <input
-                  type="checkbox"
-                  checked={!!presents[g.cle]}
-                  onChange={(e) => basculerIngredient(g, e.target.checked)}
-                />
-                <span>{nomGroupe(g.cle)}</span>
-              </label>
-              {presents[g.cle] && (
-                <>
-                  {reglage(qte as Param)}
-                  {opts.map(reglage)}
-                </>
-              )}
-            </div>
-          ))}
-          {horsGroupe.map(reglage)}
+          {groupes.map(({ g, qte, opts }) =>
+            qte === null ? (
+              /* Un ingrédient que ce modèle ne porte pas pour cette boisson : une ligne qui le DIT,
+                 pas un bloc vide. C'est la seule forme qui distingue « pas de lait ici » de « on n'a
+                 pas regardé », et elle coûte une ligne au lieu d'une boîte sur les douze boissons
+                 sans lait. */
+              <p className="groupeAbsent" key={g.cle}>
+                {/* On NOMME la boisson au lieu de dire « ce modèle ». Dans ce dépôt « modèle »
+                    désigne l'ECAM 610.75.MB, mais sur une carte qui nomme une RECETTE le lecteur y
+                    entend le gabarit de la recette : le fait était juste et le mot désignait autre
+                    chose. « Lait — Espresso n'en porte pas » ne peut se lire que d'une façon. */}
+                {t("groupNotDeclared", { group: nomGroupe(g.cle), beverage: bevLabel(bev) })}
+              </p>
+            ) : (
+              <div className={"blocIngredient" + (parIngredients ? "" : " fixe")} key={g.cle}>
+                <label className="caseLibelle" title={parIngredients ? undefined : t("groupFixedHint")}>
+                  <input
+                    type="checkbox"
+                    checked={coche(g.cle)}
+                    // Inerte hors d'un emplacement perso : les ingrédients y sont fixés par le
+                    // modèle, seules leurs quantités se règlent.
+                    disabled={!parIngredients}
+                    onChange={(e) => basculerIngredient(g, e.target.checked)}
+                  />
+                  <span>{nomGroupe(g.cle)}</span>
+                </label>
+                {coche(g.cle) && (
+                  <>
+                    {reglage(qte)}
+                    {opts.map(reglage)}
+                  </>
+                )}
+              </div>
+            ),
+          )}
+          {/* Hors des groupes, entre eux et le reste : c'est un réglage de la RELATION entre deux
+              ingrédients, pas un réglage de l'un d'eux. */}
+          {croises.map(({ b }) => reglage(b as Param))}
+          {horsGroupe.length > 0 && (
+            <>
+              {/* Nommer ce tas est ce qui l'empêche d'être lu comme un oubli du groupement : « 2
+                  tasses » n'est ni du café ni du lait, et le dire vaut mieux que de le poser après
+                  les groupes sans un mot. */}
+              <p className="etiquetteGroupe">{t("groupOutside")}</p>
+              {horsGroupe.map(reglage)}
+            </>
+          )}
           {/* Averti, pas interdit : rien dans le protocole ne dit qu'une recette vide est refusée,
               et inventer ce refus serait ajouter une règle que la machine n'a pas énoncée. */}
           {aucunIngredient && <Alerte>{t("noIngredient")}</Alerte>}
-          <p className="sub">{t("noWaterHere")}</p>
         </>
       ) : (
+        /* Ni café ni lait déclarés — l'eau chaude, le thé. Le groupement n'apprend rien ici, et deux
+           lignes « non déclaré » seraient deux lignes de bruit sur une boisson qui n'a jamais
+           prétendu en porter. Liste à plat, comme avant. */
         basic.map(reglage)
       )}
 
+      {/* **Nommer ce bloc, sinon « Hors groupes » l'annexe.** Un paramètre à valeur unique est rendu
+          ici, après les groupes — et « Mélange » appartient POURTANT au café (`INGREDIENTS`), il
+          n'est simplement pas réglable sur ce modèle. Sous le seul titre « Hors groupes » il se
+          lisait comme n'appartenant à aucun groupe, ce qui est faux. Le titre n'apparaît que quand
+          il y a des groupes : sans eux (eau chaude, thé) il n'y a rien à départager, et chaque ligne
+          dit déjà « (imposé) ». */}
+      {declares.length > 0 && fixed.length > 0 && <p className="etiquetteGroupe">{t("groupImposed")}</p>}
       {fixed.map((b) => (
         <div className="paramRow" key={b.id}>
           <span className="nom">
@@ -431,16 +563,18 @@ export default function RecipeEditor({
             <span className="lbl">{t("prepareWith")}</span>
           </button>
         )}
-        <button
-          className="primary iconBtn"
-          disabled={busy}
-          aria-busy={working || undefined}
-          onClick={() => onWrite(params)}
-          title={t("writeTitle")}
-        >
-          <Icone nom="machine" />
-          <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
-        </button>
+        {onWrite && (
+          <button
+            className="primary iconBtn"
+            disabled={busy}
+            aria-busy={working || undefined}
+            onClick={() => onWrite(params)}
+            title={t("writeTitle")}
+          >
+            <Icone nom="machine" />
+            <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
+          </button>
+        )}
       </div>
 
       {advanced.length > 0 && showAdvanced && (
