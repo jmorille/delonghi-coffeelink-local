@@ -402,6 +402,14 @@ en conditions réelles). Une version antérieure de ce tableau les donnait dans 
 **Élucidé et validé le 2026-08-19.** Deux commandes distinctes, deux formats différents ; ne
 pas les confondre avec la commande de préparation `0x83`.
 
+> 📄 **Un parcours octet par octet des trois trames** — `0xB0`, `0xA6` et `0x83` — sur le cas le plus
+> large de ce modèle (le mug de voyage, seule boisson à déclarer café, lait ET eau chaude) est dans
+> **`format-trame-boisson.md`**. Il répond aussi à la question qu'on se pose en lisant ce § : il n'y
+> a **aucun drapeau** café / lait / eau, la présence d'un ingrédient est sa quantité. Son § 2 compare
+> **six trames `0xB0`** et en tire deux réfutations : les bornes d'un réglage **changent** d'une
+> boisson à l'autre (`HOT_WATER` 50-260 ici, 20-420 là), et le catalogue extrait de l'APK contredit
+> la machine sur le thé — sur désaccord, la trame gagne.
+
 ### 6.1 `0xB0` — bornes min / défaut / max  (`RECIPE_MIN_MAX_SYNC`)
 
 Porté par les propriétés `d001_rec_espresso` … `d021_rec_brew_over_ice` (+ `d028..d033` pour

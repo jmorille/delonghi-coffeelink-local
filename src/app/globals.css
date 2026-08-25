@@ -1032,6 +1032,21 @@ dialog.drawer .pied select { width: 100%; }
    tiennent en quatre à six colonnes selon la largeur de la carte, sans jamais imposer de défilement
    horizontal. Chaque case porte son NOM sous l'image — une planche de vingt dessins muets obligerait
    à reconnaître un flat white d'un caffelatte à 44 px. */
+/* **La tête d'une carte FERMÉE de `/recettes`** : une affiche, pas une fiche. Colonne centrée au
+   lieu de la rangée `.cardHead` habituelle — l'image se lit d'abord, le nom ensuite, la contenance
+   en dessous. `.cardHead > :first-child { flex: 1 1 12rem }` ne s'applique plus puisqu'on n'est
+   plus en rangée ; c'est voulu, la vignette prendrait la largeur entière. */
+.cardHead.compacte {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-2);
+}
+.cardHead.compacte > .actions { flex: 0 0 auto; }
+/* Une vignette d'affiche : ~3× la surface de celle d'une ligne de titre. `object-fit: contain`
+   vient de `.bevVignette`, donc un dessin non carré ne se déforme pas, il se centre. */
+.vignetteGrande .bevVignette { width: 6.5rem; height: 6.5rem; }
+
 .grilleImages {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
@@ -1405,3 +1420,96 @@ button.danger.discret { color: var(--danger-text); border-color: var(--danger-ed
 .blocIngredient { margin: var(--s-3) 0; }
 .blocIngredient > .caseLibelle { font-weight: 600; }
 .blocIngredient > .paramRow { margin-left: var(--s-4); border-left: 2px solid var(--border); padding-left: var(--s-3); }
+/* **Un groupe dont la composition n'est pas offerte** — une boisson du catalogue. La case reste
+   VISIBLE et cochee, inerte : elle dit que le modele declare cet ingredient, et son infobulle dit
+   qu'il ne se retire pas. La cacher aurait obtenu la meme interdiction en supprimant l'information,
+   ce que ce projet refuse ailleurs sous le nom de « refuser en disant pourquoi ». */
+.blocIngredient.fixe > .caseLibelle { cursor: default; color: var(--muted); }
+.blocIngredient.fixe > .caseLibelle > input { cursor: default; }
+/* **Un ingredient que ce modele ne porte pas pour cette boisson.** Une ligne, pas une boite vide :
+   « Lait — non declare » distingue « cette boisson n'en a pas » de « on n'a pas regarde », et une
+   boite vide aurait coute sa hauteur sur les douze boissons sans lait. */
+.groupeAbsent {
+  margin: var(--s-3) 0;
+  color: var(--muted);
+  font-size: var(--t-petit);
+  /* Aligne sur le libelle d'un groupe present : les trois lignes se lisent comme une liste. */
+  min-height: var(--h-ctl);
+  display: flex;
+  align-items: center;
+}
+/* Ce qu'aucun groupe ne couvre — « 2 tasses ». Nommer ce tas est ce qui l'empeche d'etre lu comme
+   un oubli du groupement ; le poids reste celui d'une legende, pas d'un titre : ce n'est pas un
+   ingredient de plus. */
+.etiquetteGroupe {
+  margin: var(--s-4) 0 var(--s-2);
+  color: var(--muted);
+  font-size: var(--t-petit);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* **La vignette de tete de carte, quand elle est le bouton qui ouvre la grille des dessins.**
+   Elle n'avait aucun style : le declencheur d'avant etait un `<button>` au chrome par defaut, d'ou
+   la boite bordee nue. Ici on ne veut pas de chrome — l'image EST le bouton — mais il faut une
+   preuve qu'elle se clique, donc un contour au survol et un vrai anneau de focus. */
+.vignetteBouton {
+  display: inline-flex;
+  padding: 2px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  min-height: 0;
+}
+.vignetteBouton:hover { border-color: var(--accent-edge); }
+.vignetteBouton.ouvert { border-color: var(--accent); }
+.vignetteBouton:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+
+/* ==========================================================================================
+   **La photo d'une configuration de grains** (`PhotoGrains`), sur /beans.
+
+   Le rapport 15:17 n'est écrit nulle part ici : la vignette est bornée en largeur et laisse sa
+   hauteur suivre l'image, qui arrive déjà au format commun (300 × 340, produit par le canvas).
+   Le figer en CSS ferait une deuxième déclaration du format, à faire diverger le jour où
+   `FORMAT_IMAGE` bouge. */
+.photoGrains { display: flex; flex-direction: column; gap: var(--s-3); margin-top: var(--s-3); }
+.photoApercu { display: flex; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; }
+.photoApercu > .col { display: flex; flex-direction: column; gap: var(--s-2); }
+/* « Retirer la photo » se cale sous l'image plutôt qu'à côté : à côté, il partageait la rangée
+   avec elle et se retrouvait centré verticalement sur 7 rem de vide. `align-self` le remonte, et
+   la largeur reste celle de son texte — un rouge pleine largeur pour l'action la plus rare de la
+   carte serait la plus voyante. */
+.photoRetirer { align-self: flex-start; }
+.photoVignette {
+  width: 6.5rem; height: auto; border-radius: var(--radius);
+  border: 1px solid var(--edge); background: var(--raise);
+}
+/* Le vide occupe la place de la vignette : sans lui, ajouter une photo ferait sauter la carte
+   d'une centaine de pixels, et la rangée de boutons se déplacerait sous le curseur. */
+.photoVide {
+  width: 6.5rem; height: 7.35rem; border-radius: var(--radius);
+  border: 1px dashed var(--edge); background: var(--panel);
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: var(--s-2); font-size: var(--t-mini);
+}
+/* **Hauteur imposée, et c'est structurel.** `react-easy-crop` se positionne en absolu dans son
+   parent : sans hauteur explicite, le conteneur s'effondre à zéro et le cadreur devient invisible
+   — sans erreur, ce qui est le pire cas. */
+.photoZone {
+  position: relative; height: 18rem; width: 100%;
+  border-radius: var(--radius); overflow: hidden; background: var(--bg);
+}
+/* Le champ de fichier : invisible, mais **rendu**. Voir le commentaire de `PhotoGrains` — un
+   `display: none` est ce qui rend l'ouverture par script la moins fiable selon les navigateurs.
+   `pointer-events: none` n'empêche pas le clic programmatique, seulement le clic accidentel. */
+/* Sélecteur redondant à dessein : la règle générique `input:not([type="range"])…` est plus
+   spécifique qu'une simple classe et rendait ce champ à 22 × 44 px (invisible, mais pas de la
+   taille annoncée). Trois niveaux ici pour l'égaler — elle vaut (0,3,1) à cause de ses trois
+   `:not([type=…])` — et, à égalité, c'est la dernière déclarée qui gagne. */
+.photoGrains .photoApercu input.photoInput {
+  position: absolute; width: 1px; height: 1px; min-height: 0;
+  padding: 0; border: 0; margin: 0;
+  opacity: 0; pointer-events: none;
+}
+.photoZoom { display: flex; align-items: center; gap: var(--s-3); }
+.photoZoom > input[type="range"] { flex: 1 1 8rem; }

@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
-import IMAGES from "@/lib/beverage-images.json";
-import { IMAGES_PERSO, VignetteBoisson, useImageLabel } from "./BeverageImage";
-import RecipeEditor from "./RecipeEditor";
+// La carte d'une boisson et le selecteur d'image vivent dans `./BeverageCard` : `/recettes` monte
+// exactement la meme carte, et deux presentations d'un meme objet divergent des la premiere
+// correction. Meme deplacement, meme raison, que `RecipeEditor` avant eux.
+import BeverageCard, { type Report } from "./BeverageCard";
 import {
   beverageParams,
-  isSet,
+  resumeReglages,
   valeurSure,
   type Beverage,
   type Param,
@@ -83,11 +84,7 @@ const bevScope = (id: number): Scope => `bev:${id}`;
  * 0xA9 de plus vers un appareil réel.
  */
 const DELAI_PROFIL = 400;
-interface Report {
-  scope: Scope;
-  text: string;
-  kind: "ok" | "err";
-}
+
 interface Payload {
   model: { type: string; appModelId: string; productCode: string; nProfiles: number; protocolVersion: string };
   categories: Record<string, string>;
@@ -736,8 +733,50 @@ export default function Boissons() {
                 onToggle={() => setOpen(open === b.id ? null : b.id)}
                 onDispense={(params) => dispense(b, params)}
                 onWrite={(params) => writeToProfile(b, params)}
-                onImport={() => startImport("all", [b.id])}
-                onSetIcon={(icon) => setBeverageIcon(b, icon)}
+                /* Les deux gestes de CETTE page : relire la boisson sur la machine, et la
+                   preparer. `/recettes` en a d'autres, d'ou le fait qu'ils soient fournis ici
+                   plutot que cables dans la carte. */
+                actions={({ nom }) => (
+                  <>
+                    <button
+                      className="iconBtn"
+                      disabled={busy}
+                      aria-busy={pending === bevScope(b.id) || undefined}
+                      aria-label={t("readFor", { beverage: nom })}
+                      onClick={() => startImport("all", [b.id])}
+                      title={t("readTitle")}
+                    >
+                      <Icone nom="lire" />
+                      <span className="lbl">{tc("read")}</span>
+                    </button>
+                    <button
+                      className="good iconBtn"
+                      disabled={busy}
+                      aria-busy={pending === bevScope(b.id) || undefined}
+                      aria-label={t("prepareFor", { beverage: nom })}
+                      onClick={() => dispense(b)}
+                    >
+                      <Icone nom="preparer" />
+                      <span className="lbl">{tc("prepare")}</span>
+                    </button>
+                  </>
+                )}
+                /* **La vignette de tete de la carte ouvre la grille des dessins**, et c'est tout ce
+                   que la carte fait : l'EFFET reste un geste de cette page-ci, puisqu'ici il ECRIT
+                   dans la machine (`0xAB`). Le selecteur qui vivait dans `dessus` a disparu — il
+                   montrait une deuxieme image du meme dessin, juste sous celle du titre, et c'etait
+                   la plus basse des deux qui etait cliquable.
+
+                   Toujours **seulement pour un emplacement perso NOMME** : `customSlot` n'est rempli
+                   que la, et une ecriture `0xAB` a besoin d'un nom a reecrire. Ailleurs la prop est
+                   absente, donc la vignette reste une image. */
+                onChooseIcon={
+                  b.customSlot !== null && b.icon !== null ? (icon) => setBeverageIcon(b, icon) : undefined
+                }
+                /* Un clic sur un dessin ÉCRIT dans la machine (`0xAB`, et le nom voyage dans la même
+                   entrée de 21 octets). Le bouton « Enregistrer l'image » qui portait cet
+                   avertissement a disparu ; l'avertissement, lui, suit les dessins. */
+                titreChoix={t("imageConfirmWarning", { name: b.machineName ?? "" })}
               />
             ))}
           </div>
@@ -1092,373 +1131,10 @@ function profileLabel(profiles: ProfileInfo[], id: number): string {
 // La vignette et le nom d'une image vivent dans `./BeverageImage` : `/recipes` montre les mêmes
 // dessins pour les mêmes boissons, et deux tables d'images seraient deux occasions de diverger.
 
-/**
- * **Choisir l'image d'une recette perso.**
- *
- * Elle vit dans la CARTE et non dans l'éditeur de recette, parce que ce ne sont pas les mêmes
- * données : l'éditeur est titré « pour le profil N » et son écriture vise un profil, alors que
- * l'image appartient à l'emplacement et que les cinq profils la partagent. La poser sous ce
- * titre-là aurait affirmé quelque chose de faux.
- *
- * ⚠️ **La trame `0xAB` porte le nom ET l'icône dans la même entrée de 21 octets** : on ne peut
- * pas écrire l'un sans réécrire l'autre. Le nom est donc renvoyé tel qu'il a été lu, et la
- * confirmation le dit — le taire ferait d'une écriture double une écriture simple aux yeux du
- * lecteur. Renommer reste le geste de `/profils`, qui a le formulaire pour ça ; le dupliquer ici
- * ferait deux endroits pour un seul geste.
- *
- * Replié par défaut : vingt images, c'est plus haut que l'éditeur qu'on est venu ouvrir.
- */
-function ChoixImage({
-  actuel,
-  nom,
-  busy,
-  working,
-  onChoose,
-}: {
-  /**
-   * L'index que porte la machine. Reçu **non nul** : le composant n'est monté que si la boisson
-   * a une entrée dans le bloc de noms, et une entrée en a toujours un. L'écrire dans le type
-   * évite d'avoir à inventer un code de repli pour un cas qui ne se produit pas.
-   */
-  actuel: number;
-  /** Le nom saisi sur la machine : l'écriture le réécrit, l'infobulle du bouton le dit. */
-  nom: string;
-  busy: boolean;
-  working: boolean;
-  onChoose: (icon: number) => void;
-}) {
-  const t = useTranslations("beverages");
-  const imageLabel = useImageLabel();
-  const [ouvert, setOuvert] = useState(false);
-  const [choix, setChoix] = useState<number>(actuel);
-  // Rien ne borne cet octet dans le protocole : la machine peut en principe en porter un que la
-  // liste de vingt ne couvre pas. On le dit alors, plutôt que d'afficher une image au hasard.
-  const courant = IMAGES_PERSO[actuel] ?? null;
-
-  return (
-    <div className="blocSuite">
-      <div className="row">
-        {/* Ce que la machine porte AUJOURD'HUI. Un octet hors des vingt n'est pas impossible —
-            rien dans le protocole ne le borne — et le dire vaut mieux que de n'afficher rien. */}
-        <span className="sub">
-          {courant ? t("imageOf", { image: imageLabel(courant) }) : t("imageUnknown", { code: actuel })}
-        </span>
-        <button
-          className={"iconBtn" + (ouvert ? " ouvert" : "")}
-          onClick={() => setOuvert(!ouvert)}
-          aria-expanded={ouvert}
-        >
-          <Icone nom="chevron" />
-          <span className="lbl">{ouvert ? t("imageHide") : t("imageChoose")}</span>
-        </button>
-      </div>
-
-      {ouvert && (
-        <>
-          <p className="chapeau">{t("imageNote")}</p>
-          {/* Un groupe de radios, pas vingt boutons : le choix est unique et exclusif, et c'est
-              ce que `radiogroup` fait entendre. Chaque option porte le NOM de son dessin —
-              sans quoi ce sont vingt cases sans étiquette, la sélection comprise. */}
-          <div className="grilleImages" role="radiogroup" aria-label={t("imageChoose")}>
-            {IMAGES_PERSO.map((fichier, i) => (
-              <button
-                key={i}
-                type="button"
-                role="radio"
-                aria-checked={choix === i}
-                className={"choixImage" + (choix === i ? " actif" : "")}
-                onClick={() => setChoix(i)}
-                aria-label={t("imagePick", { image: imageLabel(fichier) })}
-              >
-                <VignetteBoisson icon={i} />
-                <span className="lbl">{imageLabel(fichier)}</span>
-              </button>
-            ))}
-          </div>
-          <div className="row note">
-            <button
-              className="primary iconBtn"
-              disabled={busy || choix === actuel}
-              aria-busy={working || undefined}
-              onClick={() => onChoose(choix)}
-              title={t("imageConfirmWarning", { name: nom })}
-            >
-              <Icone nom="machine" />
-              <span className="lbl">{t("imageSave")}</span>
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function BeverageCard({
-  bev,
-  profile,
-  profileName,
-  open,
-  busy,
-  working,
-  report,
-  onToggle,
-  onDispense,
-  onWrite,
-  onImport,
-  onSetIcon,
-}: {
-  bev: Beverage;
-  profile: number;
-  profileName: string | null;
-  open: boolean;
-  busy: boolean;
-  /** Cette carte tient le verrou d'envoi : ses boutons le disent, les autres se contentent d'attendre. */
-  working: boolean;
-  report: Report | null;
-  onToggle: () => void;
-  onDispense: (params?: RecipeParam[]) => void;
-  onWrite: (params: RecipeParam[]) => void;
-  onImport: () => void;
-  /** Écrit l'image de l'emplacement perso (`0xAB`). Absente des boissons du catalogue. */
-  onSetIcon: (icon: number) => void;
-}) {
-  const t = useTranslations("beverages");
-  const tc = useTranslations("common");
-  const bevLabel = useBeverageLabel();
-  const paramLabel = useParamLabel();
-  const unitLabel = useUnitLabel();
-  const tstat = useTranslations("stat");
-  /**
-   * **Le seul traducteur de la page sans repli, et il ne se contentait pas d'afficher sa clé : il
-   * levait.** Une catégorie absente du catalogue fait remonter un `MISSING_MESSAGE` jusqu'à la
-   * carte, et en développement c'est la page entière qui tombe — 28 cartes perdues pour un libellé
-   * de compteur. Les catégories viennent de `STAT_MEANINGS`, côté serveur : il peut en gagner une
-   * avant que le catalogue ne la connaisse, et ce jour-là la bonne réponse est d'afficher la clé,
-   * pas de casser l'accueil. C'est exactement ce que font déjà `useCategoryLabel`, `useParamLabel`
-   * et `useUnitLabel` dans `src/i18n/labels.ts` ; ce compteur était le seul à ne pas le faire.
-   */
-  const catLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
-  const users = beverageParams(bev).filter((p) => p.kind === "user");
-  const read = bev.bounds ?? bev.values;
-  const [tech, setTech] = useState(false);
-  const nom = bevLabel(bev);
-  return (
-    /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
-       l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
-       fait de la grille la cause d'un formulaire illisible. */
-    <div id={`b${bev.id}`} className={"card" + (open ? " open" : "")} role="listitem">
-      <div className="cardHead">
-        <div>
-          {/* Le nom et ses pastilles sont UN objet : une rangée avec une gouttière, au lieu de
-              quatre `marginLeft: 8` posés pastille par pastille. La gouttière gère aussi le repli —
-              une pastille qui passe à la ligne garde son écart, une marge gauche non. */}
-          <div className="titreLigne">
-          {/* La vignette d'abord : `.titreLigne` est déjà une rangée souple avec gouttière, elle
-              gère donc l'alignement et le repli sans qu'on ait rien à ajouter. */}
-          <VignetteBoisson id={bev.id} icon={bev.icon} />
-          {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
-              au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
-          <h3 className="cardTitle">{nom}</h3>
-          {/* Catégorie de la boisson : pastille neutre. Le vert est réservé à ce que la
-              MACHINE rapporte — le laisser ici en mettait quatre par carte, vingt-huit fois, et
-              plus rien ne signalait qu'une session venait de tomber. */}
-          {bev.milk && <span className="pill">{t("milk")}</span>}
-          {read && <span className="pill info">{t("readFromMachine")}</span>}
-          {bev.beanSystem?.name && (
-            <span
-              className="pill info"
-              title={t("beanSystemHint", {
-                grinder: bev.beanSystem.grinder,
-                temperature: bev.beanSystem.temperature,
-                aroma: bev.beanSystem.aroma,
-              })}
-            >
-              {t("beanSystem", { name: bev.beanSystem.name })}
-            </span>
-          )}
-          {read && !read.exact && (
-            <span className="pill off" title={t("misalignedHint")}>
-              {t("misaligned")}
-            </span>
-          )}
-          </div>
-          <div className="legende">
-            {/* Le nom d'usine n'est montré que s'il apprend quelque chose. « Espresso macchiato /
-                Espresso Macchiato » disait deux fois la même chose ; « Nom perso / Custom » dit que
-                c'est un emplacement personnalisé, ce qui est une information. */}
-            {bev.factoryName.toLowerCase() !== nom.toLowerCase() && <>{bev.factoryName} · </>}
-            {t("paramCount", { count: bev.ingredients.length })}
-            {users.length > 0 && bev.bounds ? ` · ${summary(users, paramLabel, unitLabel)}` : ""}
-            {bev.counter && (
-              <>
-                {" · "}
-                <span title={t("counterHint", { category: catLabel(bev.counter.category) })}>
-                  {t("counterValue", {
-                    value: bev.counter.value.toLocaleString("fr-FR"),
-                    category: catLabel(bev.counter.category),
-                  })}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-        {/* Les trois boutons portaient le même nom sur les 28 cartes : « Détails », « Lire »,
-            « Préparer », 84 boutons homonymes pour un lecteur d'écran. Le nom accessible dit
-            maintenant DE QUOI il s'agit, sans allonger le libellé visible. */}
-        {/* Le libellé reste visible tant que la carte est large ; en colonne de grille il passe
-            hors écran et l'icône porte l'action, comme PRODUCT.md le demande. C'est la largeur de
-            la CARTE qui décide, pas celle de la fenêtre — une container query, donc.
-            Le nom accessible ne bouge dans aucun des deux cas : `aria-label` l'emporte sur le
-            contenu, et c'est lui qui nomme la boisson concernée (« Préparer un Espresso » plutôt
-            que « Préparer », vingt-huit fois). Le libellé visible ne fait que doubler l'icône. */}
-        <div className="row actions">
-          <button
-            className={"iconBtn" + (open ? " ouvert" : "")}
-            onClick={onToggle}
-            aria-label={open ? t("hideFor", { beverage: nom }) : t("detailsFor", { beverage: nom })}
-          >
-            <Icone nom="chevron" />
-            <span className="lbl">{open ? tc("hide") : tc("details")}</span>
-          </button>
-          <button
-            className="iconBtn"
-            disabled={busy}
-            aria-busy={working || undefined}
-            aria-label={t("readFor", { beverage: nom })}
-            onClick={onImport}
-            title={t("readTitle")}
-          >
-            <Icone nom="lire" />
-            <span className="lbl">{tc("read")}</span>
-          </button>
-          <button
-            className="good iconBtn"
-            disabled={busy}
-            aria-busy={working || undefined}
-            aria-label={t("prepareFor", { beverage: nom })}
-            onClick={() => onDispense()}
-          >
-            <Icone nom="preparer" />
-            <span className="lbl">{tc("prepare")}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Le compte rendu vit dans la carte qui a déclenché l'action, jamais en haut de page. */}
-      <p className={"status " + (report?.kind === "err" ? "err" : "ok")} role="status">
-        {report?.text ?? ""}
-      </p>
-
-      {open && (
-        <div className="blocSuite">
-          {/* Monté seulement à l'ouverture : son état repart donc des valeurs de la machine
-              à chaque fois, sans logique de réinitialisation à écrire. */}
-          {/* « Infos techniques » est passe a l'editeur pour tenir dans SA barre d'actions : les
-              quatre boutons de la carte ouverte etaient sur trois lignes. L'etat et le panneau
-              restent ici — c'est la carte qui les possede, et le panneau s'ouvre bien sous la
-              barre puisqu'il est rendu juste apres l'editeur. Le libelle passe en `.lbl` comme
-              les trois autres, sans quoi il ne se replierait pas avec eux en etroit. */}
-          {/* Avant l'éditeur, et seulement pour un emplacement perso NOMMÉ : `customSlot` n'est
-              rempli que là (la trame de noms ne couvre pas les boissons du catalogue, et une
-              écriture a besoin d'un nom à réécrire). L'identité de la recette — son dessin — se
-              lit avant ses valeurs pour un profil. */}
-          {bev.customSlot !== null && bev.icon !== null && (
-            <ChoixImage actuel={bev.icon} nom={bev.machineName ?? ""} busy={busy} working={working} onChoose={onSetIcon} />
-          )}
-
-          <RecipeEditor
-            bev={bev}
-            profile={profile}
-            profileName={profileName}
-            busy={busy}
-            working={working}
-            onDispense={onDispense}
-            onWrite={onWrite}
-            // Le nœud est rendu par une fonction qui reçoit la charge utile : ce bouton-ci ne
-            // s'en sert pas, celui de `/recipes` en a besoin pour enregistrer.
-            actions={() => (
-              <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
-                <Icone nom="info" />
-                <span className="lbl">{tech ? t("hideTechnicalInfo") : t("technicalInfo")}</span>
-              </button>
-            )}
-          />
-
-          {tech && (
-          <>
-          {/* Le tableau « Tous les paramètres » a été retiré : l'éditeur de recette au-dessus
-              montre déjà chaque réglage avec ses bornes, son défaut et la valeur du profil. Le
-              dupliquer ici en lecture seule n'ajoutait rien. Les informations techniques gardent ce
-              qui ne se lit nulle part ailleurs : les propriétés Ayla et la trame brute. */}
-          <div className="kv">
-            <span className="k">{t("boundsProp")}</span>
-            <span className="mono">{bev.boundsProp ?? "—"}</span>
-          </div>
-          <div className="kv">
-            <span className="k">{t("valuesProp", { profile: profileName ? `${profile} — ${profileName}` : profile })}</span>
-            <span className="mono">{bev.valuesProp ?? "—"}</span>
-          </div>
-          {read && (
-            <div className="kv">
-              <span className="k">{t("readFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })}</span>
-              <span className="mono">
-                {read.hex}
-              </span>
-            </div>
-          )}
-          </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// `RecipeEditor` a déménagé dans `./RecipeEditor` : `/recipes` en avait un second, en tableau,
-
-// pour le même geste et la même trame.
-function summary(
-  users: Param[],
-  paramLabel: (p: Param) => string,
-  unitLabel: (u: string) => string,
-): string {
-  return users
-    .filter(isSet)
-    .map((p) => `${paramLabel(p)} ${p.def}${p.unit ? " " + unitLabel(p.unit) : ""}`)
-    .join(" · ");
-}
 
 
 
-/**
- * Les réglages d'une commande, en français, avec leurs unités.
- *
- * Remplace un `params.map(p => nom + " = " + valeur)` qui vidait huit couples dont quatre ne sont
- * pas des réglages d'utilisateur (« Programmable = 1 », « Visible = 1 ») et dont aucun ne portait
- * son unité — dans le dialogue même qui existait pour ne plus faire ce que faisait
- * `window.confirm()`. Les paramètres techniques ne quittent pas la **trame**, ils sont comptés au
- * lieu d'être énumérés : la règle « ne jamais filtrer les paramètres sur `kind` » porte sur ce
- * qu'on envoie, pas sur ce qu'on donne à relire avant de confirmer.
- */
-function resumeReglages(
-  bev: Beverage,
-  params: RecipeParam[],
-  paramLabel: (p: { name?: string; label?: string; id?: number }) => string,
-  unitLabel: (u: string) => string,
-  autres: (n: number) => string,
-): string {
-  const lisibles: string[] = [];
-  let techniques = 0;
-  for (const p of params) {
-    const meta = paramOf(bev, p.id);
-    if (meta && meta.kind === "user") {
-      lisibles.push(paramLabel(meta) + " " + p.value + (meta.unit ? " " + unitLabel(meta.unit) : ""));
-    } else techniques++;
-  }
-  if (!techniques) return lisibles.join(" · ");
-  const queue = autres(techniques);
-  return lisibles.length ? lisibles.join(" · ") + " · " + queue : queue;
-}
+
 
 /**
  * Un `fetch` qui rejette n'a pas atteint le serveur ; un `fetch` qui répond 500 l'a atteint. La
@@ -1481,7 +1157,3 @@ function raisonEchec(e: unknown, tc: Translator): string {
  * déduits d'observations concordantes, et tout autre code est affiché brut plutôt que deviné.
  */
 
-/** Paramètre décodé (avec son identifiant d'énum) pour cette boisson — la traduction du libellé
- *  se fait ensuite via `useParamLabel`. */
-const paramOf = (bev: Beverage, id: number): Param | undefined =>
-  bev.bounds?.params.find((p) => p.id === id) ?? bev.values?.params.find((p) => p.id === id);

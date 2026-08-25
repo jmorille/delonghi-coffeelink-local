@@ -30,6 +30,13 @@ export interface Decoded {
   exact: boolean;
   params: Param[];
   hex: string;
+  /**
+   * **Vraie quand la trame a été ASSEMBLÉE ici, pas lue sur la machine.** `/recipes` compose une
+   * déclaration de bornes qui ne vient d'aucune lecture ; l'afficher sous l'étiquette « Trame lue »
+   * serait affirmer que l'appareil l'a envoyée. Absente ou fausse = lue, ce qui laisse tout appelant
+   * existant inchangé.
+   */
+  calculee?: boolean;
 }
 export interface Beverage {
   id: number;
@@ -126,4 +133,39 @@ export function valeurSure(bev: Beverage, b: Param): { value: number; from: "pro
   const d = defautModele(b);
   if (d !== null) return { value: d, from: "modele" };
   return null;
+}
+
+/** Paramètre décodé (avec son identifiant d'énum) pour cette boisson — la traduction du libellé
+ *  se fait ensuite via `useParamLabel`. */
+export const paramOf = (bev: Beverage, id: number): Param | undefined =>
+  bev.bounds?.params.find((p) => p.id === id) ?? bev.values?.params.find((p) => p.id === id);
+
+/**
+ * Les réglages d'une commande, en français, avec leurs unités.
+ *
+ * Remplace un `params.map(p => nom + " = " + valeur)` qui vidait huit couples dont quatre ne sont
+ * pas des réglages d'utilisateur (« Programmable = 1 », « Visible = 1 ») et dont aucun ne portait
+ * son unité — dans le dialogue même qui existait pour ne plus faire ce que faisait
+ * `window.confirm()`. Les paramètres techniques ne quittent pas la **trame**, ils sont comptés au
+ * lieu d'être énumérés : la règle « ne jamais filtrer les paramètres sur `kind` » porte sur ce
+ * qu'on envoie, pas sur ce qu'on donne à relire avant de confirmer.
+ */
+export function resumeReglages(
+  bev: Beverage,
+  params: RecipeParam[],
+  paramLabel: (p: { name?: string; label?: string; id?: number }) => string,
+  unitLabel: (u: string) => string,
+  autres: (n: number) => string,
+): string {
+  const lisibles: string[] = [];
+  let techniques = 0;
+  for (const p of params) {
+    const meta = paramOf(bev, p.id);
+    if (meta && meta.kind === "user") {
+      lisibles.push(paramLabel(meta) + " " + p.value + (meta.unit ? " " + unitLabel(meta.unit) : ""));
+    } else techniques++;
+  }
+  if (!techniques) return lisibles.join(" · ");
+  const queue = autres(techniques);
+  return lisibles.length ? lisibles.join(" · ") + " · " + queue : queue;
 }

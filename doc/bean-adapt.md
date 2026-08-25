@@ -74,6 +74,86 @@ Les trois valeurs pilotées par Bean Adapt sont donc `grinder`, `temperature` et
 Le choix entre les deux jeux se fait sur le même booléen `f27338F` que le reste du protocole
 (`DeLonghiWifiConnectService.java:622`, `:1429-1431`).
 
+### 2.3 L'illustration : un **datum Ayla**, jamais une trame ECAM
+
+Le champ `image` de `BeanSystem` ne voyage **pas** dans le protocole ECAM. La trame `0xBA`
+(§ 5.1bis) rend le nom, la mouture, la température et l'arôme ; l'illustration est allée chercher
+ailleurs, puis recollée sur l'objet.
+
+```java
+// DeLonghiWifiConnectService.R(int i) — lecture d'un profil
+byte[] trame = Base64.decode(<d25n_beansystem_n>, 2);       // NO_WRAP : c'est la trame
+String cle   = String.format("BS%sIMG", trame[4]);          // ← l'index du grain, octet 4
+… fetchAylaDatum(dsn, cle, …) → beanSystem.setImage(datum.getValue())
+```
+
+- La clé est **`BS<id>IMG`** — `BS1IMG`, `BS2IMG`… — et le datum est porté par **l'appareil**
+  (`deviceWithDSN(dsn).fetchAylaDatum`), donc **dans le cloud Ayla**.
+- Écriture (`L6.p.z()`) : **`deleteDatum` puis `createDatum`**, dans la branche succès *comme*
+  dans la branche erreur ; `updateDatum` n'est jamais appelé.
+- Si le datum échoue (`L1`), le profil est livré **sans image** et rien ne le signale.
+
+⚠️ **Conséquence pour un serveur local : cette illustration nous est inaccessible sans le cloud.**
+Elle n'est ni dans une trame, ni dans une propriété Ayla ordinaire — c'est une paire clé/valeur du
+compte, lisible seulement avec un jeton d'accès (`dsns/<DSN>/data.json`).
+
+#### Le format, mesuré — et pourquoi on ne le reproduit pas
+
+Chaîne complète : `com.canhub.cropper` pour le recadrage, puis `p218v7.c.b(Bitmap)` pour tout le
+reste.
+
+```java
+// BeanAdaptDetailFragment.M0() — le cadreur
+options.fixAspectRatio = true;  options.aspectRatioX = 3;  options.aspectRatioY = 2;
+
+// p218v7.c.b(Bitmap) — redimensionnement, compression, encodage
+Bitmap.createScaledBitmap(bmp, bmp.getWidth() / 2,
+                          Math.round((bmp.getWidth() / 2) * 0.6f), true)
+      .compress(Bitmap.CompressFormat.JPEG, 35, baos);
+Base64.encodeToString(baos.toByteArray(), 0);   // 0 = DEFAULT ⇒ retours à la ligne tous les 76 car.
+```
+
+Trois défauts, tous mesurés, tous délibérément **non** reproduits par `src/lib/image-grains.mjs` :
+
+1. **Qualité 35/100** en JPEG.
+2. **Aucune taille de sortie fixe** : la largeur est la moitié de la largeur recadrée. Une photo de
+   12 Mpx recadrée en 3:2 (4000 × 2667) sort en **2000 × 1200**, soit ~150-300 kio de JPEG et
+   ~200-400 kio une fois en base64. Le code lui-même surveille ce chiffre
+   (`Log.e("BeanSummary", length / 1000 + "Kb")`).
+3. **Le rapport n'est pas conservé** : le cadreur impose 3:2 (1,50) mais la hauteur est recalculée
+   à `0,6 × largeur`, soit 5:3 (1,667). Toute image stockée est donc **écrasée verticalement de
+   10 %**, systématiquement.
+
+Le choix de `lan-server` est **WebP 300 × 340** — le format des vignettes de boissons extraites de
+l'APK (`drawable-xhdpi`, rapport 15:17, ~20 kio) — rangé en BLOB dans `bean_images` (schéma v3),
+et servi par `GET /api/beanpresets/image`. Rien ne part vers le cloud, et rien n'est écrit sur
+l'appareil : la machine ne transporte aucune image.
+
+Un simple `<input type="file" accept="image/*">` remplace `react-webcam` côté navigateur : le
+sélecteur natif propose l'appareil photo **et** les fichiers sur téléphone, le dialogue de fichiers
+ailleurs.
+
+⚠️ **Ne pas y ajouter `capture="environment"`.** L'attribut ne veut pas dire « propose aussi
+l'appareil photo » : présent, il demande d'ouvrir **directement** le périphérique de capture, ce qui
+sur mobile **retire l'accès aux fichiers**. Il était là, il a été retiré. Sur ordinateur il est
+ignoré, donc le défaut ne se voit pas à l'endroit où on l'écrit.
+
+#### Sources dans le code décompilé
+
+| Élément | Emplacement |
+|---|---|
+| Lecture du datum | `DeLonghiWifiConnectService.R(int)`, `K1()` / `L1()` |
+| Écriture du datum | `L6.p.z()` puis sa coroutine `g` (`deleteDatum` → `createDatum`) |
+| Enveloppe Ayla | `p007a6.o` : `G`=fetch, `J`=update, `K`=create, `p`=delete |
+| Recadrage | `it.delonghi.striker.homerecipe.beanadapt.view.BeanAdaptDetailFragment` |
+| Redimensionnement / base64 | `p218v7.c` (`a`=décode, `b`=encode, `c`=lit le résultat du cadreur) |
+| Décodage à l'affichage | `BeanSystemCustomModel.getDecodedImage(Context)` |
+
+Le paquet s'appelle `striker/`, mais le flux vaut aussi pour les machines **classiques** : la
+lecture passe par `p258z7.z.s(i)` → `d250_beansystem_0`, `d251_beansystem_1`… c'est-à-dire la
+famille de propriétés décrite en § 2.2.
+
+
 ---
 
 ## 3. Les deux backends

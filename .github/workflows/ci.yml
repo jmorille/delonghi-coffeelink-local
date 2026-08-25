@@ -99,6 +99,13 @@ jobs:
       - name: Vérifier le décodage des arguments de trames
         run: node scripts/verif-args.mjs
 
+      # Le report d'une recette dans un emplacement perso est une écriture PERSISTANTE : un
+      # ingrédient omis au lieu d'être écrit absent laisse en place celui de la recette précédente,
+      # et un `VISIBLE` mis à zéro fait disparaître de la machine l'emplacement qu'on vient de
+      # remplir. Ni l'un ni l'autre ne lève quoi que ce soit à l'exécution.
+      - name: Vérifier le report d'une recette dans un emplacement
+        run: node scripts/verif-transfert.mjs
+
       # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
       # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à
       # l'exécution sans casser le build.
@@ -155,9 +162,10 @@ jobs:
             console.log('stockage OK :', JSON.stringify(info.counts), info.journalMode, 'schéma v' + info.schemaVersion);
           "
 
-      # La migration v1 → v2 est la seule opération capable de détruire les données d'un
-      # utilisateur : on la joue sur une base v1 fabriquée ici, plutôt que de la découvrir chez lui.
-      - name: Vérifier la migration de schéma v1 vers v2
+      # Les migrations de schéma sont la seule opération capable de détruire les données d'un
+      # utilisateur : on les joue sur des bases fabriquées ici, plutôt que de les découvrir chez lui.
+      # Une base v1 doit traverser TOUTE la chaîne (v1 → v2 → v3) en un démarrage.
+      - name: Vérifier la chaîne de migrations de schéma
         run: |
           mkdir -p /tmp/ci-v1
           node --input-type=module -e "
@@ -181,7 +189,7 @@ jobs:
           DATA_DIR=/tmp/ci-v1 node --input-type=module -e "
             const S = await import('./src/lib/store.mjs');
             const info = S.storageInfo();
-            if (info.schemaVersion !== 2) throw new Error('schema v2 attendu, obtenu v' + info.schemaVersion);
+            if (info.schemaVersion !== 3) throw new Error('schema v3 attendu, obtenu v' + info.schemaVersion);
             if (info.machines !== 1) throw new Error('une machine attendue, obtenu ' + info.machines);
             const st = S.forMachine(S.DEFAULT_MACHINE);
             const c = st.counts();
@@ -189,14 +197,50 @@ jobs:
               throw new Error('donnees perdues a la migration : ' + JSON.stringify(c));
             }
             if (st.getMeta('dsn') === null) throw new Error('la table meta n a pas ete reprise');
-            if (!S.bootMessages.some((x) => x.includes('v1'))) throw new Error('la migration ne s est pas annoncee');
-            console.log('migration v1 → v2 OK :', JSON.stringify(c));
+            if (!S.bootMessages.some((x) => x.includes('v1 → v2'))) throw new Error('le pas v1 → v2 ne s est pas annonce');
+            if (!S.bootMessages.some((x) => x.includes('v2 → v3'))) throw new Error('le pas v2 → v3 ne s est pas annonce');
+            if (c.beanImages !== 0) throw new Error('table des images absente apres migration');
+            console.log('chaine v1 → v2 → v3 OK :', JSON.stringify(c));
           "
           # Deuxième démarrage : la migration ne doit pas rejouer.
           DATA_DIR=/tmp/ci-v1 node --input-type=module -e "
             const S = await import('./src/lib/store.mjs');
             if (S.bootMessages.length) throw new Error('la migration a rejoue : ' + S.bootMessages.join(' | '));
             console.log('deuxieme demarrage : aucune remigration');
+          "
+          # Le pas v2 → v3 joué SEUL, sur une base v2 qui porte déjà des données : c'est le cas
+          # réel des installations existantes, que la chaîne complète ci-dessus n'exerce pas.
+          mkdir -p /tmp/ci-v2
+          node --input-type=module -e "
+            import { DatabaseSync } from 'node:sqlite';
+            const db = new DatabaseSync('/tmp/ci-v2/lan-server.db');
+            db.exec('PRAGMA journal_mode = WAL');
+            db.exec('CREATE TABLE machines (id TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, data TEXT NOT NULL) STRICT');
+            db.exec('CREATE TABLE props (machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE, name TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT, data TEXT NOT NULL, PRIMARY KEY (machine, name)) STRICT');
+            db.exec('CREATE TABLE bean_systems (machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE, idx INTEGER NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (machine, idx)) STRICT');
+            db.exec('CREATE TABLE stats (machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE, id INTEGER NOT NULL, value INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (machine, id)) STRICT');
+            db.exec('CREATE TABLE recipes (machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE, id TEXT NOT NULL, updatedAt INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (machine, id)) STRICT');
+            db.exec('CREATE TABLE meta (machine TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE, key TEXT NOT NULL, value TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (machine, key)) STRICT');
+            db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, at INTEGER NOT NULL) STRICT');
+            db.exec(\"INSERT INTO machines VALUES ('m1', 1, '{\\\"label\\\":null}')\");
+            db.exec(\"INSERT INTO stats VALUES ('m1', 3000, 99, 1)\");
+            db.exec(\"INSERT INTO meta VALUES ('m1', 'beanPresets', '[]', 1)\");
+            db.exec('PRAGMA user_version = 2');
+            db.close();
+            console.log('base v2 fabriquée');
+          "
+          DATA_DIR=/tmp/ci-v2 node --input-type=module -e "
+            const S = await import('./src/lib/store.mjs');
+            const info = S.storageInfo();
+            if (info.schemaVersion !== 3) throw new Error('schema v3 attendu, obtenu v' + info.schemaVersion);
+            const st = S.forMachine('m1');
+            if (st.counts().stats !== 1) throw new Error('donnees perdues au pas v2 → v3');
+            if (st.getMeta('beanPresets') === null) throw new Error('meta perdue au pas v2 → v3');
+            st.putBeanImage('b1', 'image/webp', new Uint8Array([1, 2, 3]));
+            const img = st.getBeanImage('b1');
+            if (!img || img.mime !== 'image/webp' || img.bytes.length !== 3) throw new Error('la table des images ne fonctionne pas');
+            if (st.getBeanImage('b404') !== null) throw new Error('une image absente doit rendre null');
+            console.log('pas v2 → v3 OK');
           "
 
   docker:

@@ -192,6 +192,18 @@ function profilePropForSlug(slug, profileId = 1) {
   return null;
 }
 
+/**
+ * L'emplacement perso 1-6 d'une boisson, d'après son slug, ou `null` si ce n'en est pas une.
+ *
+ * ⚠️ **À ne pas confondre avec le champ `customSlot` de `/api/beverages`**, qui vaut `null` tant que
+ * l'emplacement n'a pas été NOMMÉ sur la machine — il vient de la trame des noms, pas du catalogue.
+ * Les deux disent des choses différentes et les deux sont utiles : celui-ci répond « cet
+ * identifiant est-il un emplacement perso de ce modèle », l'autre « la machine y a-t-elle écrit un
+ * nom ». Le transfert d'une recette a besoin du PREMIER, puisqu'on transfère volontiers dans un
+ * emplacement encore vierge.
+ */
+export const customSlotOf = (slug) => CUSTOM_SLOT[slug] ?? null;
+
 export const CATEGORIES = {
   cafe: "Cafés",
   lait: "Boissons lactées",

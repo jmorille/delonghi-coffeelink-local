@@ -19,7 +19,8 @@
     "next": "^16",
     "next-intl": "^4.13.7",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-easy-crop": "^6.2.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

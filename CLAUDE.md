@@ -479,8 +479,9 @@ machine** — fourteen assertions over ordering (including the statistics sweep'
 and its suspend-and-resume), preemption-with-resume, merging, the cap, retry, window-as-success, the
 breaker, cancellation and the view. Plain `node scripts/verif-tasks.mjs`, no
 dependencies. **It now runs in CI**, alongside `scripts/verif-monitor.mjs`,
-`scripts/verif-lansession.mjs` and `scripts/verif-apps.mjs` — four now, and the list only grows
-where a part was kept pure on purpose. The scheduler is pure
+`scripts/verif-lansession.mjs`, `scripts/verif-apps.mjs`, `scripts/verif-args.mjs` and
+`scripts/verif-transfert.mjs` (29 assertions) — six now, and the list only grows where a part was kept pure on
+purpose. The scheduler is pure
 (the instant is always a parameter, no I/O, no logging) precisely so this stays possible; keep it
 that way.
 
@@ -593,10 +594,11 @@ has **no** default to offer: it is labelled "pas de défaut" and left untouched 
 rather than forced to `min`. Both resets are local — nothing reaches the machine until "Préparer" or
 "Écrire"), `/profils` (imports profile names/icons, favourite order, custom-recipe names, and
 lists **all** profiles including factory-named ones), `/pilotage`
-(dashboard: on/off, live monitor, **activity**, log), `/recipes` (a local library of recipes: name
-one, pick its beverage and profile, keep it here, write it into the profile on the machine —
-`0x83` with mode `DONTCARE` + action `SAVE_BEVERAGE`, a persistent device write. **The values are
-edited by the shared `RecipeEditor`, not by a second editor of its own** — see below),
+(dashboard: on/off, live monitor, **activity**, log), `/recipes` (a local library of recipes, shown
+as the **same cards as `/`**: name one, pick its beverage, profile and drawing, keep it here — then
+prepare it as it stands, write it into the profile (`0x83` mode `DONTCARE` + `SAVE_BEVERAGE`), or
+**transfer** it into one of the machine's custom slots. **Card and editor are the shared
+`BeverageCard` / `RecipeEditor`, not private copies** — see below),
 `/statistiques` (usage counters: the
 10 identified ones with labels and unit conversion, the 52 unlabelled ones raw, and buttons that
 read them — 3 range requests for the known set, 8 for a full sweep, exploiting the fact that the
@@ -622,6 +624,86 @@ setting that cannot be applied would only fail later, far from where it was type
 carries `beanPresets` (a count) because `setMeta` deliberately does not touch `importedAt` — without
 it a second tab would never learn the library changed. Presets live in `meta`, not a table: a few
 rows, and a table would have cost a schema version for an array of five entries.
+
+**A config card has TWO states, and ONE form serves both.** Closed it is a fact sheet — vignette,
+name, date, the three values, the "écrire dans #n" chips, "Éditer" and "Oublier". "Éditer" opens it
+full width (`.card.open`, the rule `/recipes` already uses) on the same form the "+ Nouvelle
+configuration" card carries: name, the three sliders bounded by the payload's `bounds`, the photo,
+then "Enregistrer" / "Annuler". That form is `src/app/ReglagesGrains.tsx` and both hosts mount it —
+same rule, same reason, as `RecipeEditor` and `BeverageCard`: two copies land an ergonomic fix on
+one card and not the other. Sliders start at the **middle** of each range on creation, not the
+minimum: a minimum is an extreme nobody wants, and offering it as a starting point reads as a value
+read from somewhere.
+
+Three things the edit mode deliberately does NOT do. **The "écrire dans #n" chips are hidden while
+editing** — they write to the appliance, and offering them there would invite writing values that
+are not saved yet. **The "Remplacer par l'éditeur" button is gone**: beside a real "Enregistrer" it
+was a duplicate, and the only one of the two that let you change nothing. And **the title's vignette
+disappears while editing**, because the photo is then shown full size in the form, which is where
+it is replaced.
+
+**The photo of the coffee bag is a real image, and it is NOT in `meta`.** It lives in its own
+table, `bean_images` (schema v3), because `putBeanPreset` re-reads and **rewrites the whole
+array** on every save: base64 images in that blob would replay, smaller, the very defect that made
+this project move to SQLite. The preset entry therefore carries no image field at all — `imageAt`
+is **derived at read time** by `vueBeanPresets()` from the table, so the two can never contradict
+each other, and it doubles as the cache-busting version in the vignette's URL (the id does not
+change when the photo is replaced). `GET /api/beanpresets/image?id=` serves the bytes through
+`rawBin()` — `raw()` does `Buffer.from(body, "utf8")` and would corrupt a JPEG — with an `ETag`
+carrying the write date and `must-revalidate`, so a redisplay costs a 304 and no body. On `POST`
+the `image` field has **three meanings and they do not collapse**: absent leaves the photo alone,
+`null` removes it, a data URL replaces it. It is decoded **before** anything is written, so a
+refused image cannot leave the settings half-saved.
+
+**Format: WebP 300 × 340, and that is the repo's own format, not the app's.** It is the size of the
+58 beverage vignettes extracted from the APK (`drawable-xhdpi`, ratio 15:17, ~20 kio), so a bag
+photo lands in the same grid without introducing a second aspect ratio. ⚠️ The official app does
+something else entirely, measured and written up in `doc/bean-adapt.md` § 2.3: JPEG quality 35,
+**no fixed output size** (half the cropped width — ~2000 × 1200 for a 12 Mpx photo), a 3:2 crop
+stored at 5:3 hence a systematic **10 % vertical squash**, and the result base64'd into an **Ayla
+datum keyed `BS<id>IMG`** — i.e. the cloud. None of that is reproduced; `src/lib/image-grains.mjs`
+holds the format, the accepted types and the size cap, and is **pure and browser-readable** (`atob`,
+never `Buffer`) precisely so the page produces exactly what the server accepts. Reading those
+cloud datums back is a separate, opt-in feature that is **not** implemented.
+
+**The photo IS its own button.** Clicking it opens the picker; there is no "Ajouter une photo"
+button beside it, which would only name what the image already shows. Same pattern and same class
+(`.vignetteBouton`) as the drawing picker on `/`. It carries an explicit `aria-label` — a clickable
+image with no label announces nothing — and it only exists in edit mode, so a card at rest has no
+photo control at all.
+
+⚠️ **`value` has THREE states in `PhotoGrains` and they must not collapse**: `undefined` = leave
+the stored photo alone, `null` = remove it, a data URL = replace it. They mirror the server's own
+`image` field. A `value ?? apercu` would fold the first two together and make a photo the user just
+removed reappear; and without the `undefined` case, reopening a card to fix its name would wipe its
+photo. `verif`-style proof is not possible here (it is a component), so the invariant was checked
+live: renaming without touching the photo leaves `imageAt` byte-identical.
+
+**Capture is one `<input type="file" accept="image/*">`, not a webcam library.** The native
+picker offers the camera *and* the files on a phone, the file dialog elsewhere — one field for the
+two gestures the user distinguishes, and no second code path for what is the same data on arrival.
+⚠️ **`capture="environment"` was there and was REMOVED: the attribute does the opposite of what it
+reads like.** It does not mean "offer the camera too" — present, it asks the browser to open the
+capture device **directly**, which on mobile **removes access to the files**. Only one of the two
+requested gestures survived, and uploading an existing photo from a phone became impossible. On
+desktop the attribute is ignored, which is why the defect was invisible where it was written.
+
+⚠️ **The photo control is ONE button in the card's action row, and there is deliberately no
+disclosure step.** There was one, and it is the bug this feature shipped with: a toggle labelled
+"Ajouter une photo" opened a panel whose own button carried **the same label** 130 px higher, so
+re-clicking the one you had just pressed — the natural move when nothing seems to happen — closed
+the panel again. You could open and close it forever without ever reaching the file picker, and
+that is exactly what was reported. The panel had nothing else to show until a file was chosen, so
+the step earned nothing. `PhotoGrains` takes `avecApercu={false}` there because the card already
+carries the vignette in its title; showing it twice in one card teaches nothing and costs the
+height of a settings row. The cropper still expands in place — but only once a file is chosen, so
+never in a card at rest.
+`react-easy-crop` (plus its one transitive, `normalize-wheel`) is the only dependency this feature
+added: the crop must be manual because the source is a photo taken on the spot, and a centre crop
+does not rescue a bag photographed askew. The canvas export is `toDataURL(webp, 0.82)`; ⚠️ a
+browser that cannot encode WebP falls back to PNG **silently**, which is why the server accepts
+webp/jpeg/png — the worst case is a heavier image, never a lost one. **Nothing reaches the server
+until the config is saved**: a photo cropped then abandoned leaves nothing behind.
 
 Each beverage card also shows its **category** usage counter (see the statistics paragraph); the
 per-beverage "all parameters" table that used to sit in the details panel was **removed on request**
@@ -816,27 +898,213 @@ states for one recipe is two chances to diverge, which is the defect being repai
 "Infos techniques" through it (it ignores the payload), `/recipes` passes "Enregistrer
 localement" (it needs it).
 
-**`/recipes` opens on a custom slot, and its saved recipes are cards.** Two defects the shared
-editor made visible rather than caused. The page started on beverage 1 — a *catalog* beverage,
-i.e. precisely the one where nothing can be composed: its ingredients are fixed by the model, so
-the Café/Lait checkboxes do not exist there. On a page whose gesture is "create a recipe", that
-was the one starting point leading nowhere. It now picks the first **custom slot** once the
-catalog arrives (a `useRef`, not state: the refetch a profile change triggers must not overwrite
-the beverage the user just chose), the `<select>` separates the two families with custom slots
-**first**, and a catalog beverage says in one line why it has no checkboxes. The saved list was a
-table dumping every parameter into one cell, technical ones included ("Programmable 1 · Visible 1
-· Index de calibre 1") and without the drawing one recognises a beverage by elsewhere; it is now
-the same `cards dense` grid as `/` and `/beans` — same object in all three places, something set
-aside to be picked up again — with the user settings as `kv` rows and the technical ones
-**counted**, the same split as the editor's advanced fold. `VignetteBoisson` and `useImageLabel`
-moved to `src/app/BeverageImage.tsx` for it: two id→file tables would be two chances to diverge.
+**`onDispense` and `onWrite` are both optional, and absence is the display rule.** A missing
+callback removes its button rather than disabling it or branching on a page name — which is how a
+recipe being created shows neither "Préparer" nor "Écrire dans le profil": both reach the
+appliance, and nothing names the recipe yet.
 
-One deliberate difference survives: **`/recipes` shows no "Préparer"** — that page saves recipes,
-it does not command the appliance, and `onDispense` being absent says so with no display variant
-to maintain. Two of its buttons disappeared without losing anything: "Reprendre du profil" *is*
-the editor's "↺ réinitialiser", and the out-of-bounds refusal is unreachable now that every field
-is clamped as you type. The `misalignedWarning` moved into the editor (`editor.boundsMisaligned`)
-because it judges the **reading** of the bounds, not the page showing them — so `/` gained it.
+**`/recipes` is a grid of the SAME cards as `/`, and a recipe is stored as a pointer, not a
+copy.** Two things were repaired at once, and they are the same defect at two levels.
+
+*The presentation.* The page had already lost its private editor to `RecipeEditor`; it kept a
+private **card** — first a table dumping every parameter into one cell (technical ones included:
+"Programmable 1 · Visible 1 · Index de calibre 1"), then a card grid that resembled `/`'s without
+being it. `BeverageCard` therefore moved out of `page.tsx` into **`src/app/BeverageCard.tsx`**,
+with `ChoixImage` and `summary`, and both pages mount it. Same move, same reason, as the editor
+before it: a fix landing on one page out of two, and whoever learned one had to relearn the other.
+
+The seam is where the two pages genuinely differ, and nowhere else. The card owns the vignette,
+the title, the pills, the legend, the report and — opened — the editor with its "Infos
+techniques" fold. The page supplies **`actions`** (the head buttons after "Détails" — `/` reads
+and prepares, `/recipes` prepares, transfers and deletes), **`dessus`** / **`dessous`** (what
+frames the editor), **`titre`** / **`sousTitre`**, and **`editorActions`**. That split is not
+cosmetic: on `/`, picking an image **writes to the machine** (`0xAB`); on `/recipes` it only sets
+the local recipe. One selector, two effects — sealing it inside the card would have forced the
+card to know which page mounted it. `titre` and `icone` exist for the same kind of reason: a recipe card
+names the **recipe** and shows the drawing the user picked for it, so two recipes of one beverage no
+longer share a heading, and the accessible names follow ("Préparer : Mon serré", not "Préparer :
+Espresso"). `icone` is passed **without** `id`, deliberately: `VignetteBoisson` prefers its
+id→file table, so passing both would silently overwrite the chosen drawing with the beverage's
+factory illustration.
+
+*The storage.* A recipe is `{id, name, beverageId, profileId, params, icon, apercu}` in the same
+`recipes` blob column — **no schema version, no migration**: older recipes gain `icon` and
+`apercu` at **read** time (`normaliseRecette`), never by rewriting rows. ⚠️ **`apercu` never
+builds a frame.** It exists only to draw a card when the catalog cannot resolve the beverage, and
+the catalog wins the moment it is there; its label is the name the user *sees* (the machine name
+if the slot was renamed), because a fallback that says "Recette perso 1" where the screen says
+"Lacteso" fails at the one job it has.
+
+`GET /api/recipes` no longer returns rows. It returns, per recipe, `{recipe, beverage, transfert}`
+— `beverage` being the **same assembly** `/api/beverages` serves, so the page mounts the same card
+and the same editor with one type. That assembly was inline in `/api/beverages` and is now
+`vueBoisson` / `vueBoissons`; copying it into the second endpoint would have made two shapes for
+one object, to diverge at the first field added. `beverage` is **`null`** when the model's catalog
+does not know the id (machine or model swapped) — no beverage is fabricated to save appearances,
+the card says so and deletion stays available. And `values` remains the **profile's** values on
+the machine, not the recipe's: that is what keeps the editor's "↺ réinitialiser" meaningful. The
+recipe's own values travel in `recipe.params` and reach the editor through `initial`.
+
+**The two gestures that reach the appliance.** *Préparer* — `{action:"dispense", recipeId}`, a
+server path that had existed all along with no button in front of it. Without `params` the
+**stored** recipe goes out; with them, what the editor shows: two buttons live on one open card,
+and confirming "these values" while sending the others is a defect `/` already had to fix once.
+*Transférer* — `{action:"transferToSlot", recipeId, slot}`: `0x83`/SAVE for the settings then
+`0xAB` for the name and drawing, **one task of two steps**, rank `COMMANDE`. One task because it
+is one gesture: as two, the queue would run them as unrelated requests, one able to fail while the
+other succeeds, leaving a slot holding new settings under an old name. Like `/api/profiles/name`
+it queues a re-read of the name block afterwards — **the machine pushes nothing after `0xAB`**, so
+without it the write succeeds and the page keeps asserting the opposite.
+
+**What actually goes into that transfer is decided by `src/lib/transfert.mjs`, which is pure and
+proven** (`scripts/verif-transfert.mjs`, sixteen assertions, in CI). Three rules, each repairing
+a different way of being silently wrong:
+
+- What the target does not declare does not travel, and lands in `retires` — never dropped
+  quietly.
+- **An ingredient the recipe lacks is written ABSENT, not omitted.** Omitting it would leave the
+  *previous* recipe's milk in place: the transfer would report success and the slot would pour
+  something else. The convention (quantity 0, option 255) is the machine's own and lives in
+  `ingredients.mjs`.
+- **What is not an ingredient is omitted.** `PROGRAMABLE` (24) and `VISIBLE` (25) describe the
+  slot, not the cup; applying the absence convention would set `VISIBLE` to 0 and make the slot
+  we just filled disappear from the machine.
+
+Nothing is clamped there, deliberately — but ⚠️ **the reason this file gave was false, and it is
+worth knowing which half fell.** It said "a parameter's bounds are the same from one beverage to the
+next, otherwise the machine could not prepare it". They are **not**: six real `0xB0` frames give
+`HOT_WATER` 50-260 on the travel mug and 20-420 on "Eau chaude", a `COFFEE` minimum of 20, 40 **or**
+80 depending on the drink, and `MILK` capped at 460 here and 1080 there (`doc/format-trame-boisson.md`
+§ 2.6, which walks all six byte by byte). So a value carried verbatim **can** land outside the
+target's bounds. The behaviour still stands, on a fact instead of a belief: `planTransfert` never
+receives the target's bounds, only the list of ids it declares — clamping against the *source*
+beverage's bounds would correct toward the wrong interval, which is worse than carrying the value.
+(The two messages that used to report the divergence — `editor.initialOutOfBounds` and
+`recipes.freeOutOfTarget` — have since been removed on the owner's instruction; see the free-composition
+paragraph above.) `verif-transfert.mjs` now pins **both** halves — the verbatim carry and
+the fact that the bounds differ — so neither the behaviour nor the false justification can come back
+unnoticed.
+
+⚠️ **A custom slot declares neither `HOT_WATER` (15) nor `THE_TEMP` (13)**, so a hot-water or tea
+recipe cannot be transferred at all. The refusal names **the target, never the beverage** —
+`transfert.mjs` has not learned "hot water = refuse", and the same recipe transfers fine to a
+target that does declare it. The reason crosses the API as a **key**
+(`hotWaterNotInCustomSlot` / `nothingTransferable` / `noCustomSlot`), which the page translates;
+the button disappears **saying why**, because removing it in silence would make a limit of the
+appliance look like a fault in the application.
+
+**A closed recipe card is a poster, not a fact sheet** (`apercuCompact`). Large centred drawing,
+the name, and the volumes — "Café 40 ml · Lait 100 ml" — and nothing else. The normal head stacks
+the factory name, the parameter count, the settings summary and the category counter: that answers
+`/`'s question (which beverage of the machine?), not this page's (which of *my* recipes, and how
+big?). One looks for one's own recipe by its drawing, and the rest was occupying the space the
+drawing deserved. The chevron loses its "Détails" label there — a word repeating what the arrow
+already says, on every card of the grid — but **keeps its full accessible name**, which is a screen
+reader's only landmark. Opened, the card takes its full head back: pills and legend are context
+then, not noise. The volumes are read from **`QUANTITES`**, exported by `transfert.mjs` — the module
+that already decides what fills a cup — rather than a second list of quantity ids; a zero is omitted,
+because zero is the machine's absence marker and not a volume.
+
+**Deleting lives in the details panel, never in the closed card's head.** It is the page's only
+irreversible gesture, and among the buttons of a closed card it sat one click away from "Préparer".
+
+**Ingredient composition is decided by a MEASURED rule, not by "is it a custom slot".** That
+sentence used to read "checkboxes stay the privilege of a CUSTOM SLOT"; it was replaced twice, and
+both replacements matter.
+
+*First, the machine-bound case.* `composable(params)` in `ingredients.mjs` answers yes when a
+beverage **declares at least two quantities and none of them has a usable model default** (a default
+outside its own bounds means "never configured by the model", so the model never decided what goes
+in the cup). Measured over the 28 beverages and 6 slots of an ECAM 610.75.MB: it selects **exactly
+the six custom slots and the travel mug**, nothing else. An espresso (one quantity, default 40) is
+not composable and never will be — you cannot uncheck its coffee, which is what the old rule
+existed to prevent. The rule reads **defaults, never stored values**: based on the profile's value,
+the travel mug would have stopped being composable the moment you configured it. `verif-transfert.mjs`
+pins all of it against five real `0xB0` frames, decoded by the production decoder.
+
+*Second, `/recipes` creation, and this one is an explicit owner's decision that OVERRIDES the
+paragraph above for that screen only.* A recipe you create there is a **free composition stored
+exclusively in `node:sqlite`**, so **no checkbox is restricted**. There is no beverage selector and
+no profile selector — they were removed. The bounds declaration is not a read `0xB0` frame at all:
+it is **computed** (`bevLibre` in `recipes/page.tsx`) from the model's widest declaration per
+parameter, with `def` deliberately placed out of bounds. That last detail is what makes the whole
+thing hold together without a display flag: no usable default ⇒ `composable()` answers yes on its
+own, so the three boxes open by the same measured rule that keeps an espresso closed. **Do not
+re-add a `libre` prop** — one was written and removed for exactly this reason.
+
+⚠️ **"Free" is the COMPOSITION, never the values — and that boundary is the owner's, stated
+twice.** What one chooses on that screen is which ingredients enter the cup; every value stays held
+by the range the machine publishes **for that parameter**, and the sliders enforce it, so an
+out-of-range value cannot exist and there is nothing to report. That is why the range is taken from
+the *parameter* (`bornesLarges`, the model's widest declaration for it, all beverages together) and
+never from one beverage: every reachable value is still a value the appliance declares authorized
+for that setting.
+
+**Both cards therefore mount the same declaration** — `declarationLibre(bev)` replaces the bounds
+and **nothing else**, keeping the beverage's identity so "Infos techniques" and the frame still name
+the right one. Mounted on the stored beverage instead, a re-opened recipe rendered its sliders with
+*that* beverage's narrower bounds, which is what used to require a warning.
+
+⚠️ **Two verdicts lived here and were removed on the owner's explicit instruction** —
+`recipes.freeOutOfTarget` (at save: "« Mug de voyage » n'accepterait pas ces valeurs") and
+`editor.initialOutOfBounds` (on a re-opened recipe). Both confronted a **free composition with the
+constraints of one beverage registered on the machine**, which is not the constraint that applies;
+the target beverage is an implementation detail and no longer appears on screen anywhere — the
+card's sub-title (`recipes.cardFor`) and the saved card's legend went with them. **Do not
+re-introduce a check, a message or a clamp that judges a recipe against a beverage**: what the
+appliance will accept is judged at the transfer, where `transfert.mjs` already names the *target*
+and never the beverage.
+
+`ACCESSORIO` (28) and `BLEND` (4) keep their groups; `HOT_WATER` (15) **is** an ingredient — see
+`ingredients.mjs`, which held the opposite claim for a long time on a correct measurement about
+*slots* and a wrong inference from it.
+
+**`INVERSION` (12) is a CROSSED setting: it shows outside the groups, and only when both boxes are
+ticked.** "Ordre lait/café" means nothing without both, and under "Lait" it offered to order a
+coffee that was not there. `CROISES` in `ingredients.mjs` carries it. ⚠️ **It is a display rule and
+it does not touch the value sent**: the parameter keeps its group, so `groupeDe(12)` still answers
+"milk" and unchecking the milk still writes it "sans objet" exactly as before. Giving it a second
+absence convention — 255 as soon as coffee is missing — would contradict the only measurement we
+hold: on this machine "Lacteso" (milk, no coffee) carries `INVERSION = 0`, not 255.
+`verif-transfert.mjs` pins both halves — that every crossed setting still belongs to a group, and
+that the transfer keeps writing 255 for it — because losing the group would silently stop marking
+it absent, and that failure produces a plausible cup rather than an error.
+
+**Four sentences went with all this, and the reason is the same each time: they explained a
+mechanism the interface already demonstrates.** The "tick an ingredient to open its settings" hint
+and the "no hot water here" line went first — the boxes show the one by moving, and the second
+justified an absence the screen no longer has. Then, on the creation card, the derived-support
+sentence ("it will lean on « Mug de voyage »…") and the settings count ("7 réglages disponibles"):
+both were removed on request. The card now carries its title, its drawing and its boxes, and
+nothing under the title — `legende={null}` empties that line, where **omitting the prop would
+restore the card's own**.
+
+**The identifier left the interface.** It was a primary key shown as a form field ("Identifiant
+(unique)"); it is now minted client-side, and the server still refuses a POST without one — that
+guard is what stopped anonymous recipes overwriting each other. Creation lives in a "+ Nouvelle
+recette" card **inside the grid**, which opens like any other: one visual object on the page, one
+gesture to create as to modify. ⚠️ **The two `<select>`s that used to sit there are gone** — beverage
+and profile both — on the owner's decision: nothing is chosen on that card that belongs to the
+machine. The target beverage and the profile are still *stored* (the frame needs an id, and "write
+into the profile" encodes `(profileId << 2) | action`), but they are **derived**, not asked:
+`supportLibre` is the beverage declaring the most ingredients, `PROFIL_LIBRE` is 1. Two consequences
+worth keeping: the card titles itself **"Nouvelle recette"** and not the support's name — calling it
+"Mug de voyage" made it look like you were editing that beverage of the machine — and changing the
+beverage can no longer leak the previous one's values, a bug that did exist (a constant `key` meant
+`RecipeEditor` never reseeded, so bounds updated while values did not, and 100 ml of milk from
+another slot looked perfectly plausible under the new range).
+
+**`src/app/ingredients.ts` became `src/lib/ingredients.mjs`** (plain ESM) for this: `server.mjs`
+needs the same table to build a transfer, and a TypeScript module under `src/app/` is out of its
+reach. A `.tsx` importing a `.mjs` typechecks here (`allowJs`, `moduleResolution: bundler`) —
+verified, not assumed. The cost is that it escapes ESLint, which only lints the `.mjs` at the root
+and under `scripts/`, while `tsc` still follows it from the `.tsx` that import it.
+
+`/recipes` no longer differs from `/` by lacking "Préparer" — it has one, and it is the point of
+the page. What it still does not have is `/`'s "Lire" (a recipe is local; there is nothing to read
+for it) . The `misalignedWarning` moved into the editor
+(`editor.boundsMisaligned`) because it judges the **reading** of the bounds, not the page showing
+them — so `/` gained it.
 
 **Beverage display order** — `/` lists beverages in the **machine's own order** for the active
 profile, taken from `d{260+p}_{p}_rec_priority` and exposed as `order` by `/api/beverages`. The
@@ -989,6 +1257,17 @@ appliance.** The list is in `beverage-images.json` (`choixRecettePerso`) and `do
 § 8.1; its **order is the data**, and entries 12 and 18 are deliberately the same image
 (`hot_water`) because de-duplicating would shift every index after them.
 
+**The picker is the image itself, and choosing applies immediately.** It used to be a sentence
+("Image : Doppio+") beside a "Changer l'image" button, then a grid, then an "Enregistrer l'image"
+button — three steps and two labels to designate a thing that shows itself. The drawing is now the
+button that opens the grid, and clicking a drawing in the grid applies the choice and closes it.
+There is no intermediate selection state left to hold, so the index displayed is the index that
+counts. ⚠️ **On `/` that means one click on a thumbnail writes to the appliance** (`0xAB`, name
+included — same 21-byte entry). The warning did not vanish with the button that carried it: it
+moved onto **every cell of the grid** (`titreChoix`), the same rule applied when the write dialogs
+were removed — what goes is the interruption, never the fact. `/recipes` passes its own text there,
+because choosing an image for a local recipe sends nothing.
+
 **Choosing that image lives on `/`, inside the opened card — not in the recipe editor.** The
 editor is titled "for profile N" and its write targets a profile; the image belongs to the
 **slot** and all five profiles share it, so putting the picker under that heading would have
@@ -1082,8 +1361,17 @@ table has a `machine` column and a composite primary key, with
 `settings` table rather than under a sentinel machine, which would have made the foreign key lie.
 The v1→v2 migration recreates the tables (SQLite cannot alter a primary key) and attaches every
 existing row to `m1` — the only possible reading, since a v1 base could only describe one machine —
-in a single transaction, so a crash leaves it in v1 and retryable. **CI plays that migration on a
-purpose-built v1 base**: it is the one operation in this project that can destroy a user's data. Its location is configurable — `DATA_DIR` (directory for all
+in a single transaction, so a crash leaves it in v1 and retryable. **Schema v3 adds `bean_images`**
+and is purely additive — one `CREATE TABLE`, nothing recreated, nothing copied — so a crash leaves
+the base in v2, where it works exactly as before, and the step replays at the next boot.
+**Migrations are a CHAIN, not a switch**: `migrateSchema` runs v1→v2 then v2→v3, and each step
+stamps **its own** version, never `SCHEMA_VERSION` — stamping the target from an intermediate step
+would mark the base up to date before the next step had run. That is also why `DDL_V2` and
+`DDL_BEAN_IMAGES` are separate constants: concatenated, the v1→v2 step would create the v3 table
+and the next step would fail on a table that already exists. **CI plays BOTH on purpose-built
+bases** — a v1 base through the whole chain, and a v2 base carrying data through the single v2→v3
+step, which is the real case for existing installs: it is the one operation in this project that
+can destroy a user's data. Its location is configurable — `DATA_DIR` (directory for all
 persistent state, and where the migration looks for the old JSON files) and `DATABASE_FILE` (full
 path of the DB itself). The container sets `DATA_DIR=/data` and mounts a volume there. It replaced three JSON files — `machine-beverages.json`,
 `recipes.json`, `lan-key.json` — which the module **migrates on first boot** and then renames to
@@ -1092,7 +1380,9 @@ user_version` gates that: a restart does not re-migrate.
 
 Tables: `machines` (`id`, `createdAt`, `data` JSON with the label), `props` (one row per Ayla
 property: `machine`, `name`, `at`, `kind`, `data` JSON of the rest), `bean_systems`, `stats`
-(`machine`, `id`, `value`, `at` — real columns), `recipes`, `meta` (JSON values keyed by
+(`machine`, `id`, `value`, `at` — real columns), `recipes`, `bean_images` (`machine`, `id`,
+`mime`, `bytes` BLOB, `at` — the photo of a remembered bean config, raw bytes, never base64),
+`meta` (JSON values keyed by
 `(machine, name)`: `dsn`, `machineIp`, `model`, `activeProfile`, `checksums`, `checksumsPrev`,
 `checksumsAtImport`, `importedAt`, `lanKey`) and `settings` (global, currently `defaultMachine`).
 All `STRICT`, so a wrong-typed value is refused at write time instead of surfacing as `NaN` in a
@@ -1118,7 +1408,9 @@ depends on the size of the cache (measured: 4.0 ms/property *with* fsync, vs 5.9
 - `importedAt` is bumped **only** by machine-data writes. The old `writeMachine()` bumped it on
   every write, so merely saving the active profile moved the "read on" date the pages display.
 - `/api/system` reports `storage` (engine, schema version, journal mode, row counts, size) and
-  `/systeme` shows it.
+  `/systeme` shows it. Its totals are summed over the **keys of `counts()`**, never over a list
+  written in `storageInfo` — that list existed, and a counter added to `counts()` then simply
+  failed to appear, with no error to notice.
 - ⚠️ **`data/lan-server.db` is secret material**: it holds the LAN keys (`meta.lanKey`, one per
   machine), the serial numbers and the profile names typed on the machines. Never attach it to a bug report. `data/` is
   gitignored as a whole, `-wal`/`-shm`/`.migrated` included.
@@ -1511,7 +1803,8 @@ counter. It is also the only trace of what an application RECEIVED from us.
 **`src/lib/ecam-args.mjs` is THE ECAM referential** — pure, proven by `scripts/verif-args.mjs` in
 CI (20 assertions). It holds the operation table (`ECAM_OPS`), the reading of a frame going **out**
 (`opTrame`, and `natureTrame` / `describeFrame` / `profilVise` over it), the reading of one coming
-**in** (`opReponse`), the 16-bit parameter table (`TWO`), and the argument decoder. Everything in
+**in** (`opReponse`), the 16-bit parameter table (`TWO`, declared in `trame-bornes.mjs` and
+re-exported here — see below), and the argument decoder. Everything in
 `server.mjs` that names a command reads that one table: the two journals, the task labels, and the
 **scheduler** — `natureTrame` is what decides whether a step waits for a response or for a presence
 window, so the table is not decoration, it changes behaviour.
@@ -1521,7 +1814,44 @@ It was assembled out of three places that each held a copy. `TWO` existed **thre
 `server.mjs` where only that file could reach them. A duplicated protocol table diverges at the
 first addition **without raising anything** — you get plausible, wrong values, which in a journal
 used to decide whether a real appliance just poured a coffee or overwrote a recipe is the worst
-possible outcome. `beverages.mjs` now re-exports `TWO` under its old name rather than declaring it.
+possible outcome. `beverages.mjs` now re-exports `TWO` under its old name rather than declaring it,
+and `TWO` itself later moved down into `trame-bornes.mjs` so a browser can read it — still one
+declaration, two re-exports.
+
+**`src/lib/trame-bornes.mjs` builds a `0xB0` frame, and it is the exact inverse of the decoder.**
+Pure, dependency-free, **and usable in a browser** — `Uint8Array` only, no `Buffer`. That is the
+module's reason to exist and not a style choice: `/recipes` assembles a bounds declaration that comes
+from no read at all (`declarationLibre`) and has to show it in the form this repo reads a declaration
+in — a frame — while `ecam-args.mjs`, the referential, runs a `Buffer.from` **at module load** (the
+`0x37` constant) and therefore cannot be imported client-side. ⚠️ **`TWO` was MOVED there, not
+copied**, and `ecam-args.mjs` re-exports it — a fourth copy of a protocol table was the only other
+option, and this file says elsewhere what the third one cost. An `export … from` alone is not enough:
+`ecam-args.mjs` uses it internally, so it needs `import` **then** `export`, which ESLint catches
+(`no-undef`) where `tsc` sees nothing.
+
+The round trip is **proven on the seven real frames** of `doc/format-trame-boisson.md`: decode then
+re-encode gives back the same bytes, CRC included (`verif-transfert.mjs`, 29 assertions). It is the
+strongest assertion available here — it compares the encoder against what the appliance actually
+sent, not against an idea of the format — and it closes the trap that document names: a wrong width
+raises nothing, it shifts everything after it and produces plausible values. Here it shifts the CRC
+too, and the CRC does not forgive.
+
+**"Trame lue" becomes "Trame calculée" when that is true, and two rows followed.** `/recipes` showed
+"Trame lue (bornes 0xB0)" followed by **nothing** (`hex: ""`) — two false claims at once: that a read
+had happened, and that it had returned nothing. Provenance now travels on the frame
+(`Decoded.calculee`), not on the page showing it, and `BeverageCard` picks the label — both `t()`
+calls stay **literal**, since a `t(cond ? "a" : "b")` would drop *both* keys out of
+`verif-messages.mjs`'s coverage. For the same reason a computed declaration carries
+`boundsProp: null` / `valuesProp: null`: naming `d020_rec_mug_to_go` as "Propriété bornes" beside a
+computed frame would point at the source of a value that does not come from it.
+
+⚠️ **The computed frame found a defect on its first render, which is what it is for.** The
+"never configured" default was set to `min - 1`; on a parameter whose minimum is 0 (`BLEND`,
+`INVERSION`, `ACCESSORIO`, `VISIBLE`…) that gives **-1**, which no byte carries. The encoder
+**throws** instead of truncating — truncating would have produced a valid frame carrying a different
+value than the one asked for — and `defautAbsent()` now goes out below when `min > 0` and above
+otherwise. No `0xB0` was ever leaving for the appliance, but the same width mistake in an `0x83`
+would.
 
 **The decoder is the inverse of this file's frame builders**, each case naming the one it mirrors.
 What is not protocol is **injected** (a beverage's name for this machine, a setting's name), so the

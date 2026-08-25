@@ -118,11 +118,23 @@ export interface MachineSummary {
   importedAt: number | null;
   /** Nombre de configurations de grains mémorisées côté serveur, pour cette machine. */
   beanPresets: number;
-  counts: { props: number; stats: number; beanSystems: number; recipes: number };
+  counts: { props: number; stats: number; beanSystems: number; recipes: number; beanImages: number };
   /** Réglages imposés par l'environnement : la saisie marche, mais la variable regagne au redémarrage. */
   envForced: { ip: boolean; lanKey: boolean; dsn: boolean; modelKey: boolean };
   /** Les deux prérequis du pilotage réunis : adresse connue et clé LAN présente. */
   ready: boolean;
   /** Autres entrées qui semblent désigner le même appareil — une seule recevra la session. */
   duplicates: { id: string; label: string; reason: "dsn" | "address" }[];
+}
+
+/**
+ * L'équivalent de `mfetch` pour une URL qu'on ne va pas chercher soi-même — le `src` d'une image.
+ *
+ * Même règle, et le même piège : sans le paramètre, le navigateur demanderait l'image de la machine
+ * **par défaut du serveur**, pas de celle qui est à l'écran. Un `<img>` échappe à `mfetch` puisque
+ * ce n'est pas nous qui faisons la requête, d'où cette fonction plutôt qu'un chemin écrit à la main.
+ */
+export function murl(path: string): string {
+  const id = currentMachine();
+  return id ? forId(path, id) : path;
 }

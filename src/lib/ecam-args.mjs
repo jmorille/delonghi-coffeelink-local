@@ -42,7 +42,15 @@
  * (`frameDispense`) et ce décodeur doivent lire la MÊME table — un décalage d'un octet entre les
  * deux ne lèverait aucune erreur, il produirait des valeurs plausibles et fausses.
  */
-export const TWO = new Set([1, 9, 15]);
+/**
+ * ⚠️ **`TWO` est DÉCLARÉE dans `trame-bornes.mjs` et seulement ré-exportée ici.** Ce fichier reste le
+ * référentiel ECAM, mais il exécute un `Buffer.from` au chargement (la constante `0x37` plus bas), ce
+ * qui l'interdit côté navigateur — et `/recipes` a besoin de cette table pour composer une trame de
+ * bornes dans la page. Le déplacement garde **une seule déclaration** ; l'alternative était un
+ * quatrième exemplaire d'une table de protocole, ce que ce dépôt a déjà payé une fois.
+ */
+import { TWO } from "./trame-bornes.mjs";
+export { TWO };
 
 /**
  * @param {Buffer} t     la trame ECAM, **sans** les 4 octets d'horodatage
