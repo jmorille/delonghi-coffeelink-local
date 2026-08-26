@@ -16,6 +16,7 @@ import { QUANTITES } from "@/lib/transfert.mjs";
 import { INGREDIENTS } from "@/lib/ingredients.mjs";
 import { TWO, encodeRecipeBounds } from "@/lib/trame-bornes.mjs";
 import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
 
 /**
  * **La bibliothèque de recettes locales, avec la carte et l'éditeur des boissons — pas les siens.**
@@ -668,7 +669,7 @@ export default function Recipes() {
                   <div className="toucheBev">
                     <div className="titreLigne">
                       <h2 className="cardTitle">{e.recipe.name}</h2>
-                      <span className="pill off">{t("unknownBeverage", { id: e.recipe.beverageId })}</span>
+                      <Badge variant="arret">{t("unknownBeverage", { id: e.recipe.beverageId })}</Badge>
                     </div>
                   </div>
                   <div className="row actions">
@@ -714,7 +715,7 @@ export default function Recipes() {
                  système de grains, qui est un état de l'appareil. Reste ce qui décrit la tasse.
                  Le désalignement des bornes n'est pas perdu : l'éditeur le dit lui-même
                  (`editor.boundsMisaligned`), juste au-dessus des curseurs qu'il rend douteux. */
-              pastilles={bev.milk ? <span className="pill">{tb("milk")}</span> : null}
+              pastilles={bev.milk ? <Badge variant="plaque">{tb("milk")}</Badge> : null}
               /* Le dessin choisi pour la recette, pas l'illustration d'usine de la boisson. Carte
                  ouverte, c'est celui du BROUILLON : sans ça, choisir un dessin dans la grille ne
                  changerait rien à l'écran jusqu'à l'enregistrement, et le sélecteur paraîtrait

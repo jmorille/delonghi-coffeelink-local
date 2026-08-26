@@ -7,6 +7,7 @@ import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import { Input } from "@/ui/input";
 import { Switch } from "@/ui/switch";
+import { Badge } from "@/ui/badge";
 
 /**
  * Un réglage de la machine, tel que le serveur le publie (`vueReglages`).
@@ -172,7 +173,7 @@ export default function Reglages() {
                               });
                             }}
                           />
-                          {b.value == null && <span className="pill off">{t("notRead")}</span>}
+                          {b.value == null && <Badge variant="arret">{t("notRead")}</Badge>}
                         </dd>
                       </div>
                     ))}
@@ -182,7 +183,7 @@ export default function Reglages() {
                     <div className="titreLigne">
                       <span className="valeur">{r.value ?? tc("dash")}</span>
                       {echelle(r.cle, r.value) && <span className="sub">{echelle(r.cle, r.value)}</span>}
-                      {r.value == null && <span className="pill off">{t("notRead")}</span>}
+                      {r.value == null && <Badge variant="arret">{t("notRead")}</Badge>}
                     </div>
                     <div className="row">
                       <div className="champBloc">

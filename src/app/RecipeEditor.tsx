@@ -8,6 +8,7 @@ import Icone from "./icons";
 import Alerte from "./Alerte";
 import { Slider } from "@/ui/slider";
 import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -463,9 +464,9 @@ export default function RecipeEditor({
         <h4 className="cardTitle">{t("heading", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</h4>
         <div className="row">
           {!bev.values && (
-            <span className="pill off" title={t("valuesNotReadHint")}>
+            <Badge variant="arret" title={t("valuesNotReadHint")}>
               {t("valuesNotRead")}
-            </span>
+            </Badge>
           )}
           {dirty && (
             <button

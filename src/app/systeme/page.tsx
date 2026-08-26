@@ -5,6 +5,7 @@ import { mfetch } from "../machine";
 import Alerte, { TitreAlerte } from "../Alerte";
 import Icone from "../icons";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { Badge } from "@/ui/badge";
 
 interface Finding {
   level: "warn" | "info";
@@ -293,7 +294,7 @@ export default function Systeme() {
                   <span className="sub">{t("cloudNever")}</span>
                 ) : d.ota.cloud.last.updateAvailable ? (
                   <>
-                    <span className="pill off">{t("cloudAvailable")}</span>{" "}
+                    <Badge variant="arret">{t("cloudAvailable")}</Badge>{" "}
                     <span className="sub">
                       {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
                     </span>
@@ -316,9 +317,9 @@ export default function Systeme() {
             </p>
             <div className="kv">
               <span className="k">{t("reachable")}</span>
-              <span className={d.local.reachable ? "pill on" : "pill off"}>
+              <Badge variant={d.local.reachable ? "marche" : "arret"}>
                 {d.local.reachable ? t("reachableYes", { status: d.local.status ?? 0 }) : t("reachableNo", { error: d.local.error ?? "" })}
-              </span>
+              </Badge>
             </div>
             {d.local.regtoken &&
               Object.entries(d.local.regtoken).map(([k, v]) => (

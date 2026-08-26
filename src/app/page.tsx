@@ -25,6 +25,7 @@ import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
 import { Switch } from "@/ui/switch";
+import { Badge } from "@/ui/badge";
 
 // Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
@@ -819,15 +820,15 @@ export default function Boissons() {
                    est un attribut a lire quand on regle, pas quand on choisit. */
                 marques={
                   <>
-                    {b.milk && <span className="pill">{t("milk")}</span>}
+                    {b.milk && <Badge variant="plaque">{t("milk")}</Badge>}
                     {(() => {
                       const lu = b.bounds ?? b.values;
                       if (!lu) return null;
                       if (!lu.exact) {
                         return (
-                          <span className="pill off aDroite" title={t("misalignedHint")}>
+                          <Badge variant="arret" className="aDroite" title={t("misalignedHint")}>
                             {t("misaligned")}
-                          </span>
+                          </Badge>
                         );
                       }
                       return (
@@ -1071,38 +1072,41 @@ function PowerCard({
                 et un témoin rouge « hors session », deux sens opposés au même instant, sans qu'on
                 puisse savoir lequel primait. */}
             {running && (
-              <span
-                className={status?.session?.active ? "pill on" : "pill attente"}
+              /* Hors session, la plaquette prend la hachure d'attente plutôt que le vert : une
+                 commande partie et pas encore acquittée n'est pas une commande qui marche. */
+              <Badge
+                variant={status?.session?.active ? "marche" : "plaque"}
+                className={status?.session?.active ? undefined : "attente"}
                 title={status?.session?.active ? undefined : t("staleBadgeHint")}
               >
                 {t("programBadge", { counter: status?.program?.counter ?? 0 })}
-              </span>
+              </Badge>
             )}
             {stale && !running && (
-              <span className="pill off" title={t("staleBadgeHint")}>
+              <Badge variant="arret" title={t("staleBadgeHint")}>
                 {t("staleBadge")}
-              </span>
+              </Badge>
             )}
             {/* **Ce que la machine RÉCLAME n'est pas ce qu'elle rapporte.** Les treize capteurs
                 arrivaient dans une seule pastille verte : « niveau d'eau bas · carafe à lait » en
                 couleur de marche, à côté d'une alarme en rouge. Le produit annonçait en vert la
                 seule chose qui empêchait de faire un café. Voir `splitSensors`. */}
             {capteurs.attention.length > 0 && (
-              <span className="pill off" title={t("sensorsAttention")}>
+              <Badge variant="arret" title={t("sensorsAttention")}>
                 {capteurs.attention.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
-              </span>
+              </Badge>
             )}
             {capteurs.presents.length > 0 && (
-              <span className="pill" title={t("switchesHint")}>
+              <Badge variant="plaque" title={t("switchesHint")}>
                 {capteurs.presents.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
-              </span>
+              </Badge>
             )}
             {/* Un lien, pas une pastille inerte : la seule route vers « quelle alarme ? » était un
                 attribut `title`, donc rien sur la tablette et le téléphone. */}
             {mon?.alarmBits ? (
-              <a className="pill off" href="/pilotage#alarmes" title={t("alarmsHint")}>
+              <Badge asChild variant="arret"><a href="/pilotage#alarmes" title={t("alarmsHint")}>
                 {t("alarms")}
-              </a>
+              </a></Badge>
             ) : null}
             {/* **Le grain sélectionné.** Un lien, pas une pastille inerte, et pour la même raison
                 que les alarmes juste au-dessus : la seule route vers « lequel, et pourquoi
@@ -1115,8 +1119,8 @@ function PowerCard({
                 sait le NOMMER qu'après un balayage `0xBA`. Afficher « Grain n° 2 » est alors
                 exact ; inventer un nom, ou masquer la pastille, le serait moins. */}
             {bean && (
-              <a
-                className="pill"
+              <Badge asChild variant="plaque"><a
+               
                 href="/beans"
                 title={
                   bean.name
@@ -1125,24 +1129,24 @@ function PowerCard({
                 }
               >
                 {bean.name ? t("bean", { name: bean.name }) : t("beanIndex", { index: bean.index })}
-              </a>
+              </a></Badge>
             )}
             {/* **Un désaccord est DIT, jamais arbitré.** Le serveur rend les deux index parce qu'il
                 refuse de trancher (voir `activeBeanSystem`) ; s'il le disait et que l'interface le
                 taisait, ce refus ne servirait à rien — l'écran montrerait l'un des deux comme s'il
                 n'y avait jamais eu de doute. */}
             {bean?.disagree && (
-              <a
-                className="pill off"
+              <Badge asChild variant="arret"><a
+               
                 href="/beans"
                 title={t("beanDisagreeHint", { sync: bean.disagree.sync, flag: bean.disagree.flag })}
               >
                 {t("beanDisagree")}
-              </a>
+              </a></Badge>
             )}
-            <span className={status?.session?.active ? "pill on" : "pill off"}>
+            <Badge variant={status?.session?.active ? "marche" : "arret"}>
               {status?.session?.active ? t("lanSession") : t("noSession")}
-            </span>
+            </Badge>
           </div>
         </div>
         {/*

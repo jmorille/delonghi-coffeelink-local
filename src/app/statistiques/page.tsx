@@ -5,6 +5,7 @@ import { mfetch } from "../machine";
 import Icone from "../icons";
 import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
+import { Badge } from "@/ui/badge";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -201,7 +202,7 @@ export default function Statistiques() {
           <span className="lbl">{t("readAll")}</span>
         </button>
         {d?.scan && (
-          <span className="pill on">{t("scanning", { remaining: d.scan.remaining })}</span>
+          <Badge variant="marche">{t("scanning", { remaining: d.scan.remaining })}</Badge>
         )}
       </div>
       {/* Le compte rendu sort de la barre : `.barreActions` est une rangee de commandes centrees,

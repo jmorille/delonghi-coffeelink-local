@@ -508,33 +508,16 @@ h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
    variantes qui rapportent un état de l'appareil portent EN PLUS une lampe, dessinée en
    pseudo-élément — c'est ce qui sépare « ce que la machine dit » d'une simple catégorie, et c'est
    la raison pour laquelle `.pill` nue n'en reçoit aucune. */
-.pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 8px; border-radius: var(--r-plaque);
-  font-size: var(--t-mini); font-weight: 650; line-height: var(--lead-dense);
-  letter-spacing: var(--suivi-legende); text-transform: uppercase;
-  background: var(--creux); color: var(--encre-douce); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-.pill.on::before, .pill.off::before, .pill.info::before {
-  content: ""; inline-size: 7px; block-size: 7px; border-radius: 999px; flex: none;
-  background: currentColor; box-shadow: 0 0 6px -1px currentColor;
-}
-/* Ce que la machine rapporte. Le vert et le rouge ne servent qu'à ça. */
-.pill.on { background: var(--vert-verre); color: var(--vert); }
-.pill.off { background: var(--rouge-verre); color: var(--rouge-encre); }
-/* Ce que nous avons choisi ou lu : profil de grain, provenance d'une valeur. Distinct du vert
-   parce que ce n'est pas un état de l'appareil — « Bean Adapt : Grain A » décrit une
-   configuration, pas une machine prête. */
-.pill.info { background: var(--ambre-verre); color: var(--ambre); }
-/* **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un
+/* **La plaquette est passée au composant** (`src/ui/badge.tsx`), lampe comprise. La règle qui
+   comptait est écrite là-bas : le témoin est posé sur la plaquette qui porte déjà le NOM de
+   l'état, jamais à côté — c'est ce qui a condamné le composant `Etat` de l'ancienne façade.
+
+   **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un
    attribut `title` — donc nulle part sur la tablette et le téléphone, les deux appareils que
-   PRODUCT.md met au premier rang. La pastille est maintenant un lien vers la page qui les nomme.
-   Elle garde exactement l'apparence de la pastille correspondante : c'est un lien parce qu'elle
-   mène quelque part, pas pour se distinguer de ses voisines. */
-a.pill { text-decoration: none; }
-a.pill:hover { text-decoration: underline; text-underline-offset: 2px; }
-a.pill:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+   PRODUCT.md met au premier rang. La pastille est donc un LIEN vers la page qui les nomme, et elle
+   garde exactement l'apparence de la plaquette correspondante : elle est un lien parce qu'elle
+   mène quelque part, pas pour se distinguer de ses voisines. C'est ce que fait `asChild`. */
+
 /* **Le champ de saisie est passé au composant** (`src/ui/input.tsx`), qui porte le creux, l'arête
    de commande et la hauteur `--h-ctl`. Il ne restait ici qu'une règle de balise, et elle perdait
    de toute façon : les classes de base d'un composant shadcn vivent dans `utilities`, qui bat
@@ -1158,7 +1141,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    nature est SÉRIGRAPHIÉE, pas encapsulée. Elle garde donc les capitales espacées et l'encre
    faible de `.pill`, et perd le contenant. Les pastilles d'ÉTAT (`.on`, `.off`, `.info`) gardent
    le leur : leur teinte porte l'information, et « désaligné » doit rester une anomalie visible. */
-.marques > .pill:not(.on):not(.off):not(.info) {
+.marques > [data-slot="badge"][data-variant="plaque"] {
   background: none;
   box-shadow: none;
   padding-inline: 0;
@@ -1445,8 +1428,8 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
      agrandit la zone de contact, pas le dessin. 23 + 2 × 11 = 45 px. Le débordement recouvre des
      pastilles voisines qui ne sont pas cliquables : un doigt imprécis atteint l'alarme au lieu de
      rien, ce qui est le bon échec. */
-  a.pill { position: relative; }
-  a.pill::after { content: ""; position: absolute; inset: -11px -8px; }
+  a[data-slot="badge"] { position: relative; }
+  a[data-slot="badge"]::after { content: ""; position: absolute; inset: -11px -8px; }
   /* Les commandes de la COQUILLE — sélecteur de finition, ouverture et fermeture du panneau,
      sélecteur de machine — sont écrites en utilitaires Tailwind, donc dans la couche `utilities`,
      qui bat celle-ci quoi qu'on y mette. Elles portent leur propre agrandissement au doigt, par la

@@ -9,6 +9,7 @@ import { useBeverageLabel } from "../../i18n/labels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
 
 interface OrderEntry {
   id: number;
@@ -386,9 +387,9 @@ export default function Profils() {
                       {p.name ? ` — ${p.name}` : ""}
                     </h3>
                     {!p.name && (
-                      <span className="pill off">
+                      <Badge variant="arret">
                         {t("nameNotRead")}
-                      </span>
+                      </Badge>
                     )}
                     {/* « icône 12 » est une phrase avec un nombre, pas un identifiant : le monospace
                         n'y avait rien à faire. */}

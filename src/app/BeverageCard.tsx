@@ -10,6 +10,7 @@ import { beverageParams, isSet, type Beverage, type Param, type RecipeParam } fr
 // aurait donné une ligne « Trame » qui ressemble à ce qui part sans en être la preuve.
 import { MODE, actionPreparer, encodeDispense } from "@/lib/trame-boisson.mjs";
 import Icone from "./icons";
+import { Badge } from "@/ui/badge";
 
 /**
  * **La carte d'une boisson — le composant que `/` et `/recettes` montent tous les deux.**
@@ -514,11 +515,11 @@ export default function BeverageCard({
             pastilles
           ) : (
             <>
-          {bev.milk && <span className="pill">{t("milk")}</span>}
-          {read && <span className="pill info">{t("readFromMachine")}</span>}
+          {bev.milk && <Badge variant="plaque">{t("milk")}</Badge>}
+          {read && <Badge variant="choisi">{t("readFromMachine")}</Badge>}
           {bev.beanSystem?.name && (
-            <span
-              className="pill info"
+            <Badge variant="choisi"
+             
               /* **Pas d'infobulle plutôt qu'une infobulle à zéros.** Le nom du grain et ses trois
                  réglages arrivent dans la même trame `0xBA`, donc en pratique ils vont ensemble —
                  mais l'index du grain, lui, peut venir de la lecture rapide seule, et le type le
@@ -536,12 +537,12 @@ export default function BeverageCard({
               }
             >
               {t("beanSystem", { name: bev.beanSystem.name })}
-            </span>
+            </Badge>
           )}
           {read && !read.exact && (
-            <span className="pill off" title={t("misalignedHint")}>
+            <Badge variant="arret" title={t("misalignedHint")}>
               {t("misaligned")}
-            </span>
+            </Badge>
           )}
             </>
           )}

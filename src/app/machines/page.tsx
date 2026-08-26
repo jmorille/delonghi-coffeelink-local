@@ -7,6 +7,7 @@ import { useConfirm } from "../confirm";
 import Alerte from "../Alerte";
 import Icone from "../icons";
 import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -529,17 +530,17 @@ export default function Machines() {
                     navigateur regarde — donc de l'ambre, qui veut dire « choisi ou configuré », et
                     non du vert, qui est réservé à ce que l'appareil fait. Un témoin vert ici
                     diluait la seule couleur qui doit se lire d'un coup d'œil. */}
-                {m.id === courante && <span className="pill info">{t("current")}</span>}
-                {m.id === d.defaultId && <span className="pill">{t("isDefault")}</span>}
+                {m.id === courante && <Badge variant="choisi">{t("current")}</Badge>}
+                {m.id === d.defaultId && <Badge variant="plaque">{t("isDefault")}</Badge>}
                 {/* « pilotable » est une CAPACITÉ : ni une marche, ni un défaut. Elle n'allume donc
                     aucun témoin quand elle est acquise. Son absence, en revanche, bloque tout geste
                     sur l'appareil — c'est à ce titre qu'elle prend le rouge. */}
                 <span className={`pill ${m.ready ? "" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
-                {m.sessionActive && <span className="pill on">{t("session")}</span>}
+                {m.sessionActive && <Badge variant="marche">{t("session")}</Badge>}
                 {m.reading && (
-                  <span className="pill on">{t("readingNow", { remaining: m.reading.remaining })}</span>
+                  <Badge variant="marche">{t("readingNow", { remaining: m.reading.remaining })}</Badge>
                 )}
-                {m.running && <span className="pill on">{m.running}</span>}
+                {m.running && <Badge variant="marche">{m.running}</Badge>}
               </div>
               {/* **Boutons à icônes, comme le reste du site.** PRODUCT.md pose l'icône comme canal
                   principal de l'affordance ; cette page était la seule surface de configuration à
@@ -614,7 +615,7 @@ export default function Machines() {
               <span>
                 {m.ip ? <span className="mono">{m.ip}</span> : t("noAddress")}
                 {provenance(!!m.ip, m.ipSource)}
-                {m.envForced.ip && <span className="pill"> {t("envForced")}</span>}
+                {m.envForced.ip && <Badge variant="plaque"> {t("envForced")}</Badge>}
               </span>
             </div>
             <div className="kv">

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
 
 interface Bean {
   index: number;
@@ -450,15 +451,15 @@ export default function Beans() {
               </div>
               <div className="row serre note">
                 {bs.active && (
-                  <span className="pill on" title={t("activeHint")}>
+                  <Badge variant="marche" title={t("activeHint")}>
                     {t("activeBadge")}
-                  </span>
+                  </Badge>
                 )}
-                {bs.visible === false && <span className="pill off">{t("hiddenBadge")}</span>}
+                {bs.visible === false && <Badge variant="arret">{t("hiddenBadge")}</Badge>}
                 {bs.isToggle && (
-                  <span className="pill off" title={t("toggleHint")}>
+                  <Badge variant="arret" title={t("toggleHint")}>
                     {t("toggleBadge")}
-                  </span>
+                  </Badge>
                 )}
               </div>
               {!bs.isToggle && (

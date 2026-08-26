@@ -9,6 +9,14 @@ import { cleAnnonce, echecAnnonce } from "../register";
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stateTone, stepLabel, taskLabel } from "../machineState";
 import Alerte from "../Alerte";
 import Icone from "../icons";
+import { Badge } from "@/ui/badge";
+
+/**
+ * `stateTone` rend le vocabulaire des anciennes classes (`""`, `"on"`, `"info"`) ; les plaquettes
+ * parlent maintenant en variantes. La table est ici plutôt que dans `machineState.ts` : cette
+ * fonction décrit un ÉTAT MACHINE, et le nom de sa teinte est une affaire d'affichage.
+ */
+const TON_PLAQUETTE = { "": "plaque", on: "marche", info: "choisi" } as const;
 
 /** Partie du monitor qu'on exploite ici — le reste de `/api/status` reste souple. */
 interface Monitor {
@@ -290,7 +298,7 @@ export default function Dashboard() {
    * devant un balayage lancé bien avant ressemble à un défaut plutôt qu'à une règle.
    */
   const Rang = ({ n }: { n: number }) => (
-    <span className={"pill" + (n === 0 ? " off" : "")}>{t(("rank" + n) as any)}</span>
+    <Badge variant={n === 0 ? "arret" : "plaque"}>{t(("rank" + n) as any)}</Badge>
   );
 
   /**
@@ -518,9 +526,9 @@ export default function Dashboard() {
                   ne répond pas ». `lastContactAt` est daté par chaque datapaquet reçu : au-delà de
                   `AGE_PERIME`, la pastille cesse d'être verte et la ligne dit depuis quand. */}
               <dd className="titreLigne">
-                <span className={"pill " + (sess?.active ? (contactVieux ? "" : "on") : "off")}>
+                <Badge variant={sess?.active ? (contactVieux ? "plaque" : "marche") : "arret"}>
                   {sess?.active ? t("sessionEstablished") : t("sessionWaiting")}
-                </span>
+                </Badge>
                 {sess?.active && contactSec != null && (
                   <span className="sub">
                     {contactVieux
@@ -554,7 +562,7 @@ export default function Dashboard() {
                     (⚪ 🟢 🟠) et une cascade de ternaires recopiée — le même état de la même
                     machine avait deux apparences selon la page. */}
                 {mon ? (
-                  <span className={("pill " + stateTone(mon.stateByte)).trim()}>{stateLabel(mon.stateByte, tp)}</span>
+                  <Badge variant={TON_PLAQUETTE[stateTone(mon.stateByte)]}>{stateLabel(mon.stateByte, tp)}</Badge>
                 ) : (
                   tc("dash")
                 )}
@@ -595,9 +603,9 @@ export default function Dashboard() {
                   {progFraiche ? (
                     mon.etapeCle ? <span>{stepLabel(mon.etapeCle, tp)}</span> : null
                   ) : (
-                    <span className="pill off" title={t("monitorProgressStaleHint")}>
+                    <Badge variant="arret" title={t("monitorProgressStaleHint")}>
                       {t("monitorProgressStale", { age: fmtAge(ageSec as number, tp) })}
-                    </span>
+                    </Badge>
                   )}
                   {/* **Le nom de la boisson plutot que les trois octets.** « 100 % · fonction 0,
                       etape 2 » ne dit rien a personne a cote d'un libelle qui annonce une
@@ -739,7 +747,7 @@ export default function Dashboard() {
                     <dt className="k">{nomTache(encours)}</dt>
                     <dd className="titreLigne">
                       <Rang n={encours.rang} />
-                      <span className="pill on">{t("taskProgress", { faits: encours.faits, total: encours.total })}</span>
+                      <Badge variant="marche">{t("taskProgress", { faits: encours.faits, total: encours.total })}</Badge>
                       {/* Le pas courant est un nom de propriété Ayla ou un libellé de trame :
                           chasse fixe, comme partout où cette page montre du protocole. */}
                       {encours.pasCourant && <span className="mono sub">{t("taskStep", { pas: encours.pasCourant })}</span>}
@@ -798,9 +806,9 @@ export default function Dashboard() {
                     <div className="kv" key={tache.id}>
                       <dt className="k">{nomTache(tache)}</dt>
                       <dd className="titreLigne">
-                        <span className={"pill " + (tache.etat === "faite" ? "on" : "off")}>
+                        <Badge variant={tache.etat === "faite" ? "marche" : "arret"}>
                           {t(("state_" + tache.etat) as any)}
-                        </span>
+                        </Badge>
                         <span className="sub">{t("taskProgress", { faits: tache.faits, total: tache.total })}</span>
                         {/* **Le compte des demandes repliées.** Les terminées se replient sur leur
                             clé : une présence rejouée cinq fois ne laisse que son dernier verdict,
@@ -916,9 +924,9 @@ export default function Dashboard() {
                   <div className="kv" key={`${r.from}-${r.motif}-${i}`}>
                     <dt className="k">{r.from}</dt>
                     <dd>
-                      <span className="pill off">
+                      <Badge variant="arret">
                         {tapps.has(`motif_${r.motif}`) ? tapps(`motif_${r.motif}` as any) : r.motif}
-                      </span>
+                      </Badge>
                       {r.detail && <span className="sub">{r.detail}</span>}
                       {/* Le compte, jamais perdu : une ligne repliée sans lui se lit comme un
                           incident isolé là où il y en a eu une douzaine. Même règle que le journal. */}
@@ -953,13 +961,13 @@ export default function Dashboard() {
           <div className="row">
             {mon.alarms.map((a) =>
               a.name ? (
-                <span className="pill off" key={a.bit}>
+                <Badge variant="arret" key={a.bit}>
                   {ta.has(a.name) ? ta(a.name) : a.name}
-                </span>
+                </Badge>
               ) : (
-                <span className="pill" key={a.bit}>
+                <Badge variant="plaque" key={a.bit}>
                   {t("alarmIgnored")}
-                </span>
+                </Badge>
               ),
             )}
           </div>
@@ -982,14 +990,14 @@ export default function Dashboard() {
              « carafe à lait ». Les deux étaient vertes. */
           <div className="row">
             {splitSensors(mon.switches).attention.map((sw) => (
-              <span className="pill off" key={sw.name} title={tp("sensorsAttention")}>
+              <Badge variant="arret" key={sw.name} title={tp("sensorsAttention")}>
                 {sensorLabel(sw, tsens)}
-              </span>
+              </Badge>
             ))}
             {splitSensors(mon.switches).presents.map((sw) => (
-              <span className="pill" key={sw.name}>
+              <Badge variant="plaque" key={sw.name}>
                 {sensorLabel(sw, tsens)}
-              </span>
+              </Badge>
             ))}
           </div>
         )}
