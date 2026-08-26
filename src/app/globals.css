@@ -43,6 +43,11 @@
    rail, c'est-à-dire exactement là où il n'y a que des doigts.
    La variante répond à la même question, dans la même couche que ce qu'elle corrige. */
 @custom-variant tactile (@media (pointer: coarse));
+/* **L'écran bas, pas l'écran étroit.** 480 px de HAUTEUR : c'est le téléphone tenu en paysage
+   devant la machine, où la page perd sa place verticale sans rien perdre en largeur. Une variante
+   plutôt qu'une `@media` dans `surfaces.css`, parce qu'un rembourrage posé en utilitaire ne peut
+   plus être repris par la feuille — les couches, pas la spécificité, décident. */
+@custom-variant court (@media (max-height: 480px));
 
 /* **`dark:` doit vouloir dire « le graphite », et le graphite est le DÉFAUT ici.**
 

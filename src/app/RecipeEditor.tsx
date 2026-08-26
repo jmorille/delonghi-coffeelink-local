@@ -10,6 +10,8 @@ import { Slider } from "@/ui/slider";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Checkbox } from "@/ui/checkbox";
+import { Switch } from "@/ui/switch";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -341,17 +343,12 @@ export default function RecipeEditor({
           {b.unit ? ` (${unitLabel(b.unit)})` : ""}
         </span>
         <div className="ctl">
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={v === 1}
-              aria-label={paramLabel(b)}
-              onChange={(e) => set(b, e.target.checked ? 1 : 0)}
-            />
-            <span className="track" aria-hidden="true">
-              <span className="knob" />
-            </span>
-          </label>
+          <Switch
+            size="sm"
+            checked={v === 1}
+            aria-label={paramLabel(b)}
+            onCheckedChange={(c) => set(b, c ? 1 : 0)}
+          />
           {defOf(b) !== null ? (
             <Button type="button" variant="neutre" size="coquille"
               
@@ -516,17 +513,17 @@ export default function RecipeEditor({
               </p>
             ) : (
               <div className={"blocIngredient" + (parIngredients ? "" : " fixe")} key={g.cle}>
-                <label className="caseLibelle" title={parIngredients ? undefined : t("groupFixedHint")}>
-                  <input
-                    type="checkbox"
+                <span className="caseLibelle" title={parIngredients ? undefined : t("groupFixedHint")}>
+                  <Checkbox
                     checked={coche(g.cle)}
+                    aria-label={nomGroupe(g.cle)}
                     // Inerte hors d'un emplacement perso : les ingrédients y sont fixés par le
                     // modèle, seules leurs quantités se règlent.
                     disabled={!parIngredients}
-                    onChange={(e) => basculerIngredient(g, e.target.checked)}
+                    onCheckedChange={(v) => basculerIngredient(g, v === true)}
                   />
                   <span>{nomGroupe(g.cle)}</span>
-                </label>
+                </span>
                 {coche(g.cle) && (
                   <>
                     {reglage(qte)}

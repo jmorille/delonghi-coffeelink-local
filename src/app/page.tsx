@@ -27,6 +27,7 @@ import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLa
 import { Switch } from "@/ui/switch";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 // Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
@@ -1017,7 +1018,7 @@ function PowerCard({
   else label = stateLabel(mon.stateByte, t);
 
   return (
-    <div className="card machine">
+    <Card variant="machine">
       {/* **L'interrupteur mène, l'arrêt suit.** La rangée était en `space-between` : le nom de la
           machine d'un côté, ses pastilles d'état de l'autre, 413 px de vide entre les deux dans une
           carte de 1 140 px — et un bouton rouge plein six fois plus grand que l'interrupteur dont
@@ -1290,7 +1291,7 @@ function PowerCard({
       <p className={"status " + (report?.kind === "err" ? "err" : "ok")} role="status">
         {report?.text ?? (busy && !working ? tc("busyReason") : "")}
       </p>
-    </div>
+    </Card>
   );
 }
 

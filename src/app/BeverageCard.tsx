@@ -12,6 +12,7 @@ import { MODE, actionPreparer, encodeDispense } from "@/lib/trame-boisson.mjs";
 import Icone from "./icons";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * **La carte d'une boisson — le composant que `/` et `/recettes` montent tous les deux.**
@@ -463,7 +464,14 @@ export default function BeverageCard({
     /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
        l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
        fait de la grille la cause d'un formulaire illisible. */
-    <div id={`b${bev.id}`} className={"card" + (open ? " open" : "")} role="listitem">
+    <Card
+      id={`b${bev.id}`}
+      /* Fermée, la carte de boisson EST une touche du clavier — voir `card.tsx`. Ouverte, elle
+         redevient la plaque ordinaire : c'est ce contraste qui dit lequel des 28 est le sujet. */
+      variant={open ? "plaque" : "touche"}
+      className={open ? "open" : undefined}
+      role="listitem"
+    >
       {compacte ? (
         /* **L'affiche — et c'est maintenant la forme de la carte fermée des DEUX pages.**
            L'image d'abord, en grand et centrée : c'est elle qu'on balaie du regard pour retrouver
@@ -671,6 +679,6 @@ export default function BeverageCard({
           {dessous}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

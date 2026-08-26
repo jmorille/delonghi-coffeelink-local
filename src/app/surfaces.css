@@ -186,7 +186,7 @@ h2 {
    liste de onze constats, les quatre en avertissement faisaient 66ch de large et les sept autres
    toute la largeur — deux gabarits dans une même liste, sans raison lisible. Le texte reste borné :
    les paragraphes internes (`.legende`, `.note`) portent la mesure eux-mêmes. */
-.card.warn { max-width: none; }
+[data-slot="card"].warn { max-width: none; }
 .chapeau:has(> .kv), .note:has(> .kv), .legende:has(> .kv) { max-width: none; }
 /* **Aucune exception, et c'est une correction.** J'avais dispensé la cellule de tableau et la
    valeur d'une ligne clé/valeur, en pensant qu'on n'y trouve que des fragments. Mesuré : une
@@ -260,15 +260,16 @@ h2 {
    **Le libelle bascule, la note explique.** Elles etaient dans le meme `<label>` : le nom
    accessible de la case faisait 130 caracteres, et sa zone cliquable 317 x 99 px sur telephone
    — pour le seul reglage de la page qui ecrive un secret de compte sur le disque. Le pouce qui
-   fait defiler la page la cochait. */
+   fait defiler la page la cochait.
+
+   Depuis que la case est celle de Radix — un bouton, que `<label>` ne nomme pas — c'est
+   `aria-labelledby` qui la relie a son texte, et ce texte ne bascule plus au clic. La cible
+   redevient la case seule : 18 px de dessin dans les 44 px que le composant se reserve. */
 .caseLibelle {
   display: inline-flex; align-items: center; gap: var(--s-2);
-  cursor: pointer; min-height: var(--h-ctl);
-  /* La cible reste confortable sans etre une bande : le libelle est court, la note reste dehors. */
+  min-height: var(--h-ctl);
   padding-inline-end: var(--s-2);
 }
-.caseLibelle > input { flex: none; width: 18px; height: 18px; margin: 0; }
-.caseLibelle:has(input:focus-visible) { outline: 2px solid var(--accent-edge); outline-offset: 2px; border-radius: var(--r-touche); }
 
 /* Liste de contraintes : des puces, pas des `<br>`. Le retrait suit l'echelle d'espacement plutot
    que le defaut du navigateur, qui est en `px` et ne suit aucun de nos rythmes. */
@@ -294,40 +295,13 @@ h2 {
      plutôt que la carte. */
   overflow-wrap: anywhere;
 }
-/* **Une carte n'a pas de contour : elle a des arêtes.** C'était le dernier reste de la grammaire
-   que la thèse refuse — une boîte remplie, cerclée d'un pixel, à coins arrondis. Un boîtier
-   d'appareil ne connaît pas ce trait : il connaît une plaque vissée dessus, dont le relief vient
-   d'un biseau — arête haute claire en haut, arête basse sombre en bas — et d'une ombre COURTE.
-   La même matière que `.plaque` dans globals.css ; écrite ici parce que c'est `.card` que les neuf
-   pages emploient, et qu'un alias de plus n'aurait servi qu'à ce que les deux divergent. */
-.card {
-  background: var(--panel); border: 0;
-  border-radius: var(--radius); padding: var(--s-4); margin-bottom: var(--s-3);
-  box-shadow:
-    inset 0 var(--trait) 0 0 var(--arete-haute),
-    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-basse),
-    0 1px 2px -1px color-mix(in srgb, var(--arete-basse) 70%, transparent);
-}
-/* **Chaque carte s'interroge elle-même.** Une carte dans une grille fait ~320 px de large que la
-   fenêtre en fasse 800 ou 1400 : c'est SA largeur qui décide si un libellé de bouton tient, pas
-   celle de la fenêtre. D'où une container query et non une media query — voir `.iconBtn`. */
-.card { container-type: inline-size; container-name: carte; }
-/* Le premier et le dernier enfant d'une carte ne debordent pas de son rembourrage. Sans ces deux
-   règles, chaque site devait le dire lui-même : `<h2 style={{ marginTop: 0 }}>` six fois,
-   `marginBottom: 0` autant. Une carte sait où elle commence. */
-.card > :first-child { margin-top: 0; }
-.card > :last-child { margin-bottom: 0; }
-/* La carte de la machine n'est pas un élément de la liste des boissons : c'est l'état de
-   l'appareil. Elle se distingue par sa surface et son contour, pas par sa position — un simple
-   trait à 1,26:1 la rendait indiscernable de la carte de boisson n°0. */
-.card.machine {
-  background: var(--raise);
-  border-color: transparent;
-  box-shadow:
-    inset 0 1px 0 0 var(--arete-haute),
-    inset 0 -1px 0 0 var(--arete-basse),
-    0 2px 6px -3px var(--arete-basse);
-}
+/* **La matière de la carte a émigré dans `src/ui/card.tsx`** — plaque, biseau, rembourrage,
+   requête de conteneur, marges du premier et du dernier enfant. Les utilitaires l'emportent sur
+   cette feuille dans la cascade en couches : la peindre ici l'aurait laissée perdre contre le
+   `bg-card` du composant, en silence. Ne restent ici que les modificateurs qui ne touchent PAS à
+   la matière : `.warn` (la mesure), `.open` (la place dans la grille), `.log` (la police). Les
+   trois qui la touchaient — la plaque, la touche du clavier, la carte de machine — sont devenus
+   les variantes de `src/ui/card.tsx`, seul endroit où elles peuvent encore gagner. */
 /* **Tout bouton est une touche encastrée.** C'est la règle qui fait basculer les neuf surfaces
    d'un coup : le relief vient d'un biseau — arête haute claire, arête basse sombre, plus une ombre
    COURTE et décalée — et l'appui enfonce réellement la touche d'un pixel en inversant ce biseau.
@@ -764,12 +738,12 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* `align-items: start` : sans lui une carte courte s'étire à la hauteur de la plus grande de sa
    rangée, ce qui laisse des blancs et fait croire à une donnée manquante. */
 /* La gouttière remplace la marge : sinon les deux s'additionnent entre les rangs. */
-.cards > .card { margin-bottom: 0; }
+.cards > [data-slot="card"] { margin-bottom: 0; }
 /* **La carte ouverte prend toute la rangée.** L'éditeur de recette a besoin de largeur — un
    curseur, ses bornes, un champ et une puce de défaut ne tiennent pas dans 19 rem — et l'écraser
    dans une colonne aurait rendu la grille responsable d'un formulaire illisible. Ouverte, la carte
    cesse d'être un élément de liste et devient le sujet de la page. */
-.cards > .card.open { grid-column: 1 / -1; }
+.cards > [data-slot="card"].open { grid-column: 1 / -1; }
 
 /* ── Le catalogue n'est pas une grille de tuiles : c'est un clavier ───────────────────────────
    ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -832,35 +806,20 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
     12 px   le rembourrage de la touche     — puis 12 px de gouttière : la frontière est double
    ────────────────────────────────────────────────────────────────────────────────────── */
 .cards.clavier { row-gap: var(--s-3); }
-/* **La carte fermée EST la touche.** Fraisage d'un pixel tout autour — l'ouverture dans la tôle —
-   puis le biseau inversé : sombre en haut, clair en bas, c'est-à-dire une surface enfoncée. C'est
-   exactement la géométrie que portait la seule ligne de titre ; elle a changé d'échelle, pas de
-   nature.
-
-   `background` et `box-shadow` sont réécrits plutôt qu'hérités : `.card` déclare la PLAQUE — relief
-   en saillie, ombre courte vers le bas — et une plaque n'est pas une touche. La carte OUVERTE la
-   reprend telle quelle, et c'est le contraste qu'on veut : fermée elle est un élément du clavier,
-   ouverte elle est le sujet de la page. */
-.cards.clavier > .card:not(.open) {
-  background: var(--panel-2);
-  border-radius: var(--r-touche);
-  padding: var(--s-3);
-  box-shadow:
-    0 0 0 var(--trait) var(--rule),
-    inset 0 var(--trait) 0 0 var(--arete-basse),
-    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-haute);
-}
-.cards.clavier > .card:not(.open) > .cardHead { flex-direction: column; align-items: stretch; }
+/* **La carte fermée EST la touche** — matière dans la variante `touche` de `src/ui/card.tsx`.
+   Ne reste ici que ce que la variante ne peut pas savoir : la mise en colonne de son en-tête,
+   qui dépend de la grille où elle est posée. */
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead { flex-direction: column; align-items: stretch; }
 /* `.cardHead > :first-child { flex: 1 1 12rem }` visait la rangée ; en colonne il ferait grandir la
    face pour remplir la hauteur de la piste, et les 28 touches n'auraient plus la même taille. */
-.cards.clavier > .card:not(.open) > .cardHead > .toucheBev { flex: 0 0 auto; }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .toucheBev { flex: 0 0 auto; }
 
 /* **Le creux a déménagé d'un cran vers l'extérieur : il n'en reste donc aucun ici.**
    `.toucheBev` portait le fraisage et le biseau inversé tant que la face n'était que la ligne de
    titre. C'est la carte qui les porte maintenant, et un second creux dedans ferait un creux dans un
    creux — la faute exacte de la carte imbriquée, en matière plutôt qu'en boîte. Ne reste que la
    disposition, qui n'a jamais été décorative. */
-.cards.clavier > .card:not(.open) > .cardHead > .toucheBev {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .toucheBev {
   display: flex; flex-direction: column; gap: var(--s-1);
 }
 /* La légende, sous la touche. Le retrait latéral l'aligne sur le NOM de la boisson et non sur le
@@ -880,20 +839,20 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    L'interligne, lui, reste dit ici : sous une touche, cette ligne fait deux à trois lignes dans une
    colonne de 19 rem, et l'interligne de prose y ouvre un blanc qui la détache de la touche qu'elle
    nomme. `--lead-dense` est le pas prévu pour ça. */
-.cards.clavier > .card:not(.open) > .cardHead > .legende {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .legende {
   margin-top: var(--s-1);
   padding-inline: var(--s-1);
   line-height: var(--lead-dense);
 }
-.cards.clavier > .card:not(.open) > .cardHead > .actions { margin-top: var(--s-2); }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .actions { margin-top: var(--s-2); }
 
 /* La tête « affiche » suit le même pas : la vignette et son nom sont collés (4 px), et les
    commandes prennent leurs 8 px — le total sous le nom est le même que sous une légende de touche,
    donc les deux formes de carte ont un rythme identique bien qu'elles n'aient pas la même tête. */
-.cards.clavier > .card:not(.open) > .cardHead.compacte { gap: var(--s-1); }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead.compacte { gap: var(--s-1); }
 /* La contenance qualifie le nom : 2 px, pas 4. La gouttiere de la colonne en pose deja 4, d'ou le
    retrait negatif plutot qu'un `gap` a part. */
-.cards.clavier > .card:not(.open) > .cardHead.compacte > .sub {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead.compacte > .sub {
   margin-top: calc(var(--s-hair) - var(--s-1));
 }
 
@@ -915,7 +874,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    élément de la ligne de titre, donc elle n'a besoin d'aucun positionnement absolu. Elle est
    décorative au sens strict : l'`aria-expanded` du chevron porte déjà l'état pour qui ne la voit
    pas, donc un `content: ""` est ici la bonne réponse et non un raccourci. */
-.cards.clavier > .card.open > .cardHead > .toucheBev > .titreLigne::before {
+.cards.clavier > [data-slot="card"].open > .cardHead > .toucheBev > .titreLigne::before {
   content: "";
   flex: none;
   inline-size: 8px; block-size: 8px;
@@ -1105,7 +1064,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* **La vignette d'affiche suit la largeur de SA carte, pas un chiffre fixe.** 6,5 rem étaient
    justes dans une colonne de 19 rem et petits dans les 350 px qu'une tablette 11" en paysage donne
    à chacune de ses trois colonnes — or c'est l'appareil de pilotage. `cqi` mesure la carte
-   elle-même (`container-name: carte`, déjà déclaré sur `.card`), donc le dessin grandit avec la
+   elle-même (`container-name: carte`, déjà déclaré sur `[data-slot="card"]`), donc le dessin grandit avec la
    piste : 95 px dans une colonne étroite de téléphone, 111 px sur la tablette, plafonné à 128 px
    pour qu'une carte ouverte-puis-refermée en pleine largeur ne devienne pas une affiche de cinéma.
 
@@ -1329,7 +1288,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* Panneau de l'éditeur de recette. Il était le seul bloc de la page écrit en style inline —
    `borderRadius: 10, padding: 12` en dur, alors que `--radius` et l'échelle d'espacement
    existent. Une carte imbriquée dans une carte reste une carte imbriquée : on garde donc le
-   fond de second plan et le filet, sans reprendre `.card`, qui porterait une deuxième ombre et
+   fond de second plan et le filet, sans reprendre `[data-slot="card"]`, qui porterait une deuxième ombre et
    une deuxième marge de bas de carte. */
 .blocEditeur {
   background: var(--panel-2); border: 1px solid var(--rule);
@@ -1465,7 +1424,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 @media (max-height: 480px) {
   h1 { font-size: var(--t-section); }
   h2 { margin: var(--s-4) 0 var(--s-2); }
-  .card { padding: var(--s-3); margin-bottom: var(--s-3); }
+  /* Le rembourrage de la carte est passé dans la variante `court:` — voir `src/ui/card.tsx`. */
 }
 
 
@@ -1665,8 +1624,7 @@ button.danger.discret { color: var(--danger-text); }
    VISIBLE et cochee, inerte : elle dit que le modele declare cet ingredient, et son infobulle dit
    qu'il ne se retire pas. La cacher aurait obtenu la meme interdiction en supprimant l'information,
    ce que ce projet refuse ailleurs sous le nom de « refuser en disant pourquoi ». */
-.blocIngredient.fixe > .caseLibelle { cursor: default; color: var(--encre-douce); }
-.blocIngredient.fixe > .caseLibelle > input { cursor: default; }
+.blocIngredient.fixe > .caseLibelle { color: var(--encre-douce); }
 /* **Un ingredient que ce modele ne porte pas pour cette boisson.** Une ligne, pas une boite vide :
    « Lait — non declare » distingue « cette boisson n'en a pas » de « on n'a pas regarde », et une
    boite vide aurait coute sa hauteur sur les douze boissons sans lait. */

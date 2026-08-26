@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 interface OrderEntry {
   id: number;
@@ -278,7 +279,7 @@ export default function Profils() {
       {pending && <p className="sub">{t("pushWaiting")}</p>}
       {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card">
+      <Card>
         <h2>{t("importHeading")}</h2>
         <p className="chapeau">{t("importNote")}</p>
         <div className="row">
@@ -358,7 +359,7 @@ export default function Profils() {
           </Table>
           </div>
         )}
-      </div>
+      </Card>
 
       {!data ? (
         <p className="sub">{tc("loading")}</p>
@@ -374,7 +375,7 @@ export default function Profils() {
               quatre lignes, ce qui rendrait les cartes plus hautes qu'elles ne sont larges. */}
           <div className="cards">
           {data.profiles.map((p) => (
-            <div className="card" key={p.id}>
+            <Card key={p.id}>
               <div className="cardHead">
                 <div>
                   {/* Le nom, sa pastille et son numéro d'icône forment UNE ligne de titre. Ils
@@ -497,12 +498,12 @@ export default function Profils() {
                   )}
                 </>
               )}
-            </div>
+            </Card>
           ))}
           </div>
 
           <h2>{t("customsHeading", { count: data.model.nCustomRecipes })}</h2>
-          <div className="card">
+          <Card>
             <div className="tableWrap">
             <Table>
               <TableHeader>
@@ -572,7 +573,7 @@ export default function Profils() {
             <p className="note">
               {t("customsNote")}
             </p>
-          </div>
+          </Card>
         </>
       )}
       {dialogue}

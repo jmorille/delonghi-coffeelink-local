@@ -11,6 +11,7 @@ import Alerte from "../Alerte";
 import Icone from "../icons";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * `stateTone` rend le vocabulaire des anciennes classes (`""`, `"on"`, `"info"`) ; les plaquettes
@@ -507,7 +508,7 @@ export default function Dashboard() {
       {/* Six sections sur sept portaient un titre ; celle-ci n'en avait pas, et les deux colonnes
           démarraient donc à des hauteurs différentes. Un panneau se nomme. */}
       <h2 id="titre-liaison">{t("connection")}</h2>
-      <div className="card">
+      <Card>
         {/* Le bouton était à droite d'un `space-between`, donc à 700 px des lignes qu'il concerne
             dans une carte pleine largeur. On lit l'état, puis on agit : il passe dessous. */}
         {/* **`<dl>`, et pas un `<div>` de `<span>`.** Ces lignes SONT des paires nom/valeur, et
@@ -648,12 +649,12 @@ export default function Dashboard() {
             <span className="lbl">{t("announce")}</span>
           </Button>
         </div>
-      </div>
+      </Card>
       </section>
 
       <section aria-labelledby="titre-commandes">
       <h2 id="titre-commandes">{t("machineCommands")}</h2>
-      <div className="card">
+      <Card>
         <div className="row">
           <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={busy} onClick={() => power(true)}>
             <Icone nom="marche" />
@@ -700,7 +701,7 @@ export default function Dashboard() {
           </Button>
         </div>
         <Statut scope="power" />
-      </div>
+      </Card>
       </section>
 
       {/* **Le panneau qui manquait, à la place d'une table qui ne pouvait rien afficher.**
@@ -730,7 +731,7 @@ export default function Dashboard() {
           `atomic=true`, donc la carte ENTIÈRE serait relue à chaque fois — et comme `étape n`
           s'incrémente toutes les deux secondes, ce serait quatre lignes relues en boucle. À `false`,
           seul le fragment qui a bougé est annoncé : « étape 5 », ou la ligne qui vient d'apparaître. */}
-      <div className="card" role="status" aria-atomic="false">
+      <Card role="status" aria-atomic="false">
         {rienEnFile ? (
           <p className="sub">{t("activityIdle")}</p>
         ) : (
@@ -848,7 +849,7 @@ export default function Dashboard() {
           </>
         )}
         <Statut scope="activite" />
-      </div>
+      </Card>
       </section>
 
       {/* `id` : la pastille « alarme signalée » de l'accueil mène ici. C'était la seule route vers
@@ -872,7 +873,7 @@ export default function Dashboard() {
         */}
       <section aria-labelledby="titre-apps">
       <h2 id="titre-apps">{tapps("heading")}</h2>
-      <div className="card">
+      <Card>
         {/* Trois états, pas deux. Tant que `/api/apps` n'a pas répondu, on ne sait pas — et la
             première version affichait « multiplexeur éteint » pendant ce temps, c'est-à-dire une
             affirmation fausse sur un onglet fraîchement ouvert alors qu'une vraie application était
@@ -937,12 +938,12 @@ export default function Dashboard() {
             )}
           </>
         )}
-      </div>
+      </Card>
       </section>
 
       <section id="alarmes" aria-labelledby="titre-alarmes">
       <h2 id="titre-alarmes">{t("alarms")}</h2>
-      <div className="card">
+      <Card>
         {!mon ? (
           <p className="sub">
             {t("alarmsUnread")}
@@ -971,12 +972,12 @@ export default function Dashboard() {
             )}
           </div>
         )}
-      </div>
+      </Card>
       </section>
 
       <section aria-labelledby="titre-capteurs">
       <h2 id="titre-capteurs">{t("sensors")}</h2>
-      <div className="card">
+      <Card>
         {!mon?.switches?.length ? (
           <p className="sub">
             {/* La section Capteurs empruntait le message des alarmes : elle annonçait « l'état des
@@ -1000,7 +1001,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
-      </div>
+      </Card>
       </section>
 
       {/* **La carte « Boissons » a été retirée.** Elle rejouait la grille de l'accueil — une
@@ -1031,7 +1032,7 @@ export default function Dashboard() {
       {apps?.actif && (
         <section className="pleine" aria-labelledby="titre-journal-apps">
         <h2 id="titre-journal-apps">{tapps("journalHeading")}</h2>
-        <div className="card log">
+        <Card className="log">
           {!apps.journal?.length ? (
             <p className="sub">{tapps("journalNone")}</p>
           ) : (
@@ -1049,13 +1050,13 @@ export default function Dashboard() {
               </div>
             ))
           )}
-        </div>
+        </Card>
         </section>
       )}
 
       <section className="pleine" aria-labelledby="titre-journal">
       <h2 id="titre-journal">{t("journal")}</h2>
-      <div className="card log">
+      <Card className="log">
         {status?.log?.map((e: any, i: number) => (
           <div key={e.n ?? i} className={e.dir}>
             [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
@@ -1068,7 +1069,7 @@ export default function Dashboard() {
             {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
           </div>
         ))}
-      </div>
+      </Card>
       </section>
       </div>
       {dialogue}

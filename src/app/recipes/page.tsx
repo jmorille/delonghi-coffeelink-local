@@ -18,6 +18,7 @@ import { TWO, encodeRecipeBounds } from "@/lib/trame-bornes.mjs";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * **La bibliothèque de recettes locales, avec la carte et l'éditeur des boissons — pas les siens.**
@@ -639,7 +640,7 @@ export default function Recipes() {
                second donnait deux boutons identiques côte à côte. */
           />
         ) : (
-          <div className="card" role="listitem">
+          <Card role="listitem">
             <div className="cardHead">
               <div className="toucheBev">
                 <div className="titreLigne">
@@ -654,7 +655,7 @@ export default function Recipes() {
               </div>
             </div>
             <p className="sub">{beverages.length ? t("newCardHint") : tc("loading")}</p>
-          </div>
+          </Card>
         )}
 
         {data?.recipes.map((e) => {
@@ -665,7 +666,7 @@ export default function Recipes() {
                On ne fabrique pas une boisson de circonstance : la carte le dit, ce qui est vrai et
                utile, et la suppression reste offerte. */
             return (
-              <div className="card" role="listitem" key={e.recipe.id}>
+              <Card role="listitem" key={e.recipe.id}>
                 <div className="cardHead">
                   <div className="toucheBev">
                     <div className="titreLigne">
@@ -681,7 +682,7 @@ export default function Recipes() {
                   </div>
                 </div>
                 <p className="sub">{e.recipe.apercu?.label ?? String(e.recipe.beverageId)}</p>
-              </div>
+              </Card>
             );
           }
           const bev = e.beverage;

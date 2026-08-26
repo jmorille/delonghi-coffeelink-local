@@ -9,6 +9,8 @@ import Icone from "../icons";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Checkbox } from "@/ui/checkbox";
+import { Card } from "@/ui/card";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -512,7 +514,7 @@ export default function Machines() {
         // Le champ non touché reflète le libellé enregistré ; vidé, il rend son nom dérivé.
         const nom = renaming[m.id] ?? m.custom ?? "";
         return (
-          <div className="card" key={m.id}>
+          <Card key={m.id}>
             <div className="cardHead chapeau">
               <div className="row">
                 {/* L'accueil donne un `<h3>` à chacune de ses 28 cartes de boisson ; ici la carte
@@ -884,16 +886,18 @@ export default function Machines() {
                         — pour une case qui écrit un jeton de compte sur le disque. Le libellé seul
                         nomme, la note décrit, et seul le libellé bascule au clic. */}
                     <div className="row note">
-                      <label className="caseLibelle" htmlFor={"mem-" + m.id}>
-                        <input
+                      {/* `aria-labelledby` et non `htmlFor` : la case de Radix est un bouton, qu'un
+                          `<label>` ne nomme pas. Le libellé visible reste la seule source du nom. */}
+                      <span className="caseLibelle">
+                        <Checkbox
                           id={"mem-" + m.id}
-                          type="checkbox"
                           checked={remember}
+                          aria-labelledby={"mem-l-" + m.id}
                           aria-describedby={"mem-n-" + m.id}
-                          onChange={(e) => setRemember(e.target.checked)}
+                          onCheckedChange={(v) => setRemember(v === true)}
                         />
-                        <span>{t("remember")}</span>
-                      </label>
+                        <span id={"mem-l-" + m.id}>{t("remember")}</span>
+                      </span>
                     </div>
                     <p className="legende" id={"mem-n-" + m.id}>{t("rememberNote")}</p>
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
@@ -924,11 +928,11 @@ export default function Machines() {
             <p className={"status " + (note[m.id]?.kind === "err" ? "err" : "ok")} role="status">
               {note[m.id]?.text ?? ""}
             </p>
-          </div>
+          </Card>
         );
       })}
 
-      <div className="card">
+      <Card>
         <h2>{t("addTitle")}</h2>
         {/* **Les deux étiquettes existaient déjà — sans `for`, et sans envelopper leur champ.**
             Elles s'affichaient donc, ne nommaient rien, et cliquer dessus ne donnait pas le focus.
@@ -972,11 +976,11 @@ export default function Machines() {
             <span className="lbl">{t("add")}</span>
           </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Ce qui limite le multi-machines, en trois lignes. Le détail — protocole, réseau,
           conteneur — vit dans doc/ et DOCKER.md, pas dans un écran de saisie. */}
-      <div className="card">
+      <Card>
         <div className="kv">
           <span className="k">{tm("ourServer")}</span>
           <span className={d?.server.problem ? "mono alerte" : "mono"}>
@@ -1015,7 +1019,7 @@ export default function Machines() {
             <li>{t("limitsRouting")}</li>
           </ul>
         </div>
-      </div>
+      </Card>
       {dialogue}
     </>
   );

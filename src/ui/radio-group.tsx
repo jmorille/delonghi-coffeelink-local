@@ -42,4 +42,50 @@ function RadioGroupItem({
   )
 }
 
-export { RadioGroup, RadioGroupItem }
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════════════════
+ * LE CRAN — UN CHOIX EXCLUSIF QUI SE DESSINE COMME UNE TOUCHE, PAS COMME UNE PASTILLE
+ * ═══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `RadioGroupItem` au-dessus est la pastille de la CLI : un rond de 16 px avec un point au
+ * milieu. C'est le bon dessin pour une liste de réglages, et le mauvais pour un sélecteur de
+ * barre, où les trois positions sont **fraisées dans un rail** et où celle qui est engagée est
+ * une touche en relief. On garde donc les deux : la pastille pour les formulaires à venir, le
+ * cran pour les rails.
+ *
+ * Ce qui est repris de Radix et qu'on ne réécrit pas : le groupement, le nom accessible, le
+ * `tabindex` roulant et la navigation aux flèches. C'est exactement ce que les `<input
+ * type="radio">` natifs donnaient — la raison pour laquelle ce sélecteur les employait — et le
+ * seul motif de la bascule est qu'une case masquée sous une étiquette n'était plus le geste du
+ * reste du produit.
+ *
+ * ⚠️ **Pas de lampe ambre sur un cran.** L'ambre dit « choisi » à propos de la MACHINE — profil
+ * actif, page courante. L'étendre à une préférence d'affichage du navigateur diluerait la seule
+ * chose qui rend cette couleur lisible d'un coup d'œil.
+ */
+function RadioGroupCran({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
+  return (
+    <RadioGroupPrimitive.Item
+      data-slot="radio-group-cran"
+      className={cn(
+        "relative grid place-items-center rounded-touche transition-colors outline-none",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ambre",
+        "text-encre-faible hover:text-encre disabled:pointer-events-none disabled:opacity-45",
+        /* Engagé : la plaque en relief, biseau haut clair et biseau bas sombre — la même
+           physique que `Button`, sans l'enfoncement, puisqu'un cran ne s'appuie pas : il reste. */
+        "data-[state=checked]:bg-releve data-[state=checked]:text-encre",
+        "data-[state=checked]:shadow-[inset_0_1px_0_0_var(--color-arete-haute),inset_0_-1px_0_0_var(--color-arete-basse)]",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </RadioGroupPrimitive.Item>
+  )
+}
+
+export { RadioGroup, RadioGroupItem, RadioGroupCran }

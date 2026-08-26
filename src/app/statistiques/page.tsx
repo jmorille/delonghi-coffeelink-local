@@ -7,6 +7,7 @@ import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -181,12 +182,12 @@ export default function Statistiques() {
       {pending && <p className="sub">{t("pushWaiting")}</p>}
       {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card warn">
+      <Card className="warn">
         <TitreAlerte>{t("categoryWarningTitle")}</TitreAlerte>
         <div className="legende">
           {t("categoryWarning")}
         </div>
-      </div>
+      </Card>
 
       <div className="row barreActions">
         {/* **Le meme glyphe sur les deux, et c'est exact.** Les deux boutons font la meme chose —
@@ -212,13 +213,13 @@ export default function Statistiques() {
       {msg && <p className="legende">{msg}</p>}
 
       {!d || d.count === 0 ? (
-        <div className="card">
+        <Card>
           <p className="sub">{t("nothingYet")}</p>
-        </div>
+        </Card>
       ) : (
         <>
           {derived && derived.total !== undefined && (
-            <div className="card">
+            <Card>
               <div className="kv">
                 <span className="k">{t("totalBeverages")}</span>
                 <span className="valeur">
@@ -228,11 +229,11 @@ export default function Statistiques() {
               <p className="legende">
                 {derived.complete ? t("totalNote") : t("totalPartial")}
               </p>
-            </div>
+            </Card>
           )}
 
           <h2>{t("knownHeading")}</h2>
-          <div className="card">
+          <Card>
             {d.known.length === 0 ? (
               <p className="sub">{t("noKnownYet")}</p>
             ) : (
@@ -262,10 +263,10 @@ export default function Statistiques() {
                 {t("hotMilkSum", { total: fmt(derived.hot) })}
               </p>
             )}
-          </div>
+          </Card>
 
           <h2>{t("unknownHeading")}</h2>
-          <div className="card">
+          <Card>
             <p className="chapeau">{t("unknownNote")}</p>
             {unknownIds.length === 0 ? (
               <p className="sub">{t("unknownEmpty")}</p>
@@ -283,7 +284,7 @@ export default function Statistiques() {
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
           <p className="sub">{t("protocolNote", { count: d.count })}</p>
         </>

@@ -7,6 +7,7 @@ import Icone from "../icons";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 interface Finding {
   level: "warn" | "info";
@@ -219,7 +220,7 @@ export default function Systeme() {
       <div className="panneaux">
         <section>
           <h2>{t("firmware")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("fullVersion")}</span>
               <span className="mono">{String(fw.sw_version)}</span>
@@ -248,11 +249,11 @@ export default function Systeme() {
                 {String(fw.module_updated_at).slice(0, 10)} {fw.neverUpdated ? t("neverUpdated") : ""}
               </span>
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("ota")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("otaRequests")}</span>
               <span className="num">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
@@ -308,11 +309,11 @@ export default function Systeme() {
                 )}
               </span>
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("wifiModule")}</h2>
-          <div className="card">
+          <Card>
             <p className="sub">
               {t("liveNote", { others: "status.json, wifi_status.json, time.json, module_info.json, ota.json, wifi_scan.json" })}
             </p>
@@ -332,20 +333,20 @@ export default function Systeme() {
             <div className="blocSuite">
               <Rows obj={d.deviceSheet.hardware} />
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("aylaPlatform")}</h2>
-          <div className="card">
+          <Card>
             <Rows obj={d.deviceSheet.platform} />
             <div className="blocSuite">
               <Rows obj={d.deviceSheet.lifecycle} />
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("machineModel")}</h2>
-          <div className="card">
+          <Card>
             <Rows
               obj={{
                 type: d.model.type,
@@ -372,11 +373,11 @@ export default function Systeme() {
                 {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
               </Alerte>
             )}
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("identification")}</h2>
-          <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
+          <Card className={d.identification.matchesCatalog === false ? "warn" : undefined}>
             {d.identification.matchesCatalog === false && (
               <p className="chapeau">
                 <TitreAlerte>
@@ -430,11 +431,11 @@ export default function Systeme() {
             <p className="legende">
               {t("idScopeNote")}
             </p>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("machineState")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("monitor")}</span>
               <span className="mono">
@@ -494,11 +495,11 @@ export default function Systeme() {
                 </div>
               </>
             )}
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("storage")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("storageEngine")}</span>
               <span className="mono">
@@ -525,16 +526,16 @@ export default function Systeme() {
               </span>
             </div>
             <p className="note">{t("storageNote")}</p>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("protocolNetwork")}</h2>
-          <div className="card">
+          <Card>
             <Rows obj={d.protocol} />
             <div className="blocSuite">
               <Rows obj={d.network} />
             </div>
-          </div>
+          </Card>
         </section>
         {/* Les constats se rangent en grille : onze cartes de 70 a 113 px de haut, homogenes,
             faites pour etre balayees — une bande de 1 140 px par constat les rendait plus longs a
@@ -548,14 +549,14 @@ export default function Systeme() {
           <h2>{t("findings")}</h2>
           <div className="cards dense">
             {d.deviceSheet.findings.map((f, i) => (
-              <div className={f.level === "warn" ? "card warn" : "card"} key={i}>
+              <Card className={f.level === "warn" ? "warn" : undefined} key={i}>
                 {/* Onze constats, dont quatre en avertissement : le pictogramme est ce qui les distingue
                     en balayant la liste, et il est maintenant dessiné comme les autres. */}
                 {f.level === "warn" ? <TitreAlerte>{f.title}</TitreAlerte> : <strong>{f.title}</strong>}
                 <div className="legende">
                   {f.detail}
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         </section>

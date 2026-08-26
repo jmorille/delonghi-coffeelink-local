@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 interface Bean {
   index: number;
@@ -399,12 +400,12 @@ export default function Beans() {
           la teinte ambre que le reste du produit emploie pour la mise en garde — et depuis que
           l'avertissement se reconnaît aussi à son triangle, une boîte ambre sans triangle ne veut
           plus rien dire. Une carte ordinaire, dont le titre suffit. */}
-      <div className="card">
+      <Card>
         <strong>{t("localTitle")}</strong>
         <div className="legende">
           {t("localDetail")}
         </div>
-      </div>
+      </Card>
 
       <h2>{t("profilesHeading")}</h2>
       {/* Une carte pour une phrase et un bouton : le gabarit tenait lieu de composition. C'est une
@@ -419,7 +420,7 @@ export default function Beans() {
       {!data ? (
         <p className="sub">{tc("loading")}</p>
       ) : !data.beans.length ? (
-        <div className="card">
+        <Card>
           <p className="sub">
             {t("noneRead")}
           </p>
@@ -431,7 +432,7 @@ export default function Beans() {
               </Button>
             ))}
           </div>
-        </div>
+        </Card>
       ) : (
         // Une carte par emplacement. La grille aligne les valeurs d'une carte à l'autre, ce que la
         // disposition en pleine largeur ne permettait pas : on comparait mal deux grains.
@@ -439,7 +440,7 @@ export default function Beans() {
         // ligne, ce qui laisserait des blancs et ferait croire à une donnée manquante.
         <div className="cards dense">
           {data.beans.map((bs) => (
-            <div className="card" key={bs.index}>
+            <Card key={bs.index}>
               <div className="cardHead">
                 {/* Le nom d'un emplacement de grain : un titre, pas une mise en gras. Les deux
                     grilles de cette page — six emplacements machine, N configurations mémorisées —
@@ -505,7 +506,7 @@ export default function Beans() {
                   </>
                 )}
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
@@ -520,7 +521,7 @@ export default function Beans() {
         {(data?.presets ?? []).map((p) => {
           const enEdition = edition?.id === p.id;
           return (
-            <div className={`card${enEdition ? " open" : ""}`} key={p.id}>
+            <Card className={enEdition ? "open" : undefined} key={p.id}>
               <div className="cardHead">
                 {/* La vignette est DANS le titre, pas à côté : `.cardHead` étire son premier enfant,
                     donc une image posée en frère du titre lui volerait sa colonne. En édition elle
@@ -605,7 +606,7 @@ export default function Beans() {
                   </div>
                 </>
               )}
-            </div>
+            </Card>
           );
         })}
 
@@ -613,7 +614,7 @@ export default function Beans() {
             **Une carte dans la grille, pas un bouton flottant** : c'est le motif de `/recettes`.
             Un seul objet visuel par chose, et le même geste pour créer que pour modifier — d'où le
             MÊME formulaire que celui d'une fiche ouverte en édition, `ReglagesGrains`. */}
-        <div className={`card${nouveau ? " open" : ""}`} key="nouvelle">
+        <Card className={nouveau ? "open" : undefined} key="nouvelle">
           {!nouveau ? (
             <>
               <div className="cardHead">
@@ -654,13 +655,13 @@ export default function Beans() {
               </div>
             </>
           )}
-        </div>
+        </Card>
       </div>
 
       {draft && bean && b && (
         <>
           <h2>{t("assistantHeading", { name: bean.name ?? t("unnamed") })}</h2>
-          <div className="card">
+          <Card>
             <p className="sub">
               {t("assistantIntro")}
             </p>
@@ -757,10 +758,10 @@ export default function Beans() {
                 </div>
               </div>
             )}
-          </div>
+          </Card>
 
           <h2>{t("manualHeading")}</h2>
-          <div className="card">
+          <Card>
             <div className="row">
               <div>
                 <label htmlFor="bname">{t("name")}</label>
@@ -840,7 +841,7 @@ export default function Beans() {
                 <span className="lbl">{t("delete")}</span>
               </Button>
             </div>
-          </div>
+          </Card>
         </>
       )}
 

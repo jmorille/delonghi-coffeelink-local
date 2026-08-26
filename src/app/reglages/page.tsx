@@ -9,6 +9,7 @@ import { Input } from "@/ui/input";
 import { Switch } from "@/ui/switch";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * Un réglage de la machine, tel que le serveur le publie (`vueReglages`).
@@ -122,9 +123,9 @@ export default function Reglages() {
 
       {/* **La mise en garde d'abord, parce qu'elle porte sur tout ce qui suit.** Ces écritures
           modifient la configuration de l'appareil, pas un cache : elles survivent à l'extinction. */}
-      <div className="card warn">
+      <Card className="warn">
         <div className="legende">{t("warning")}</div>
-      </div>
+      </Card>
 
       <div className="row barreActions">
         <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={lire} title={t("readTitle")}>
@@ -141,7 +142,7 @@ export default function Reglages() {
         <>
           <div className="cards">
             {dispo.map((r) => (
-              <div className="card" key={r.addr}>
+              <Card key={r.addr}>
                 <div className="titreLigne">
                   <h3 className="cardTitle">{nom(r.cle)}</h3>
                   {/* L'adresse est du protocole : chasse fixe, comme partout ici. */}
@@ -223,14 +224,14 @@ export default function Reglages() {
                   {r.source ? t("source", { source: r.source }) : t("sourceNone")}
                   {r.prop ? ` · ${r.prop}` : ""}
                 </p>
-              </div>
+              </Card>
             ))}
           </div>
 
           {absents.length > 0 && (
             <>
               <h2>{t("unsupportedHeading")}</h2>
-              <div className="card">
+              <Card>
                 <p className="chapeau">{t("unsupportedNote")}</p>
                 <ul>
                   {absents.map((r) => (
@@ -239,7 +240,7 @@ export default function Reglages() {
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Card>
             </>
           )}
         </>
