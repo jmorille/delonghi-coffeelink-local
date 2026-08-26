@@ -6,6 +6,7 @@ import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import { useBeverageLabel } from "../../i18n/labels";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 
 interface OrderEntry {
   id: number;
@@ -279,13 +280,16 @@ export default function Profils() {
         <div className="row">
           <div>
             <label htmlFor="scope">{t("whatToRead")}</label>
-            <select id="scope" value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
-              {SCOPES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {t(s.key)}
-                </option>
-              ))}
-            </select>
+            <Select value={scope} onValueChange={(v) => setScope(v as Scope)}>
+              <SelectTrigger id="scope" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SCOPES.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {t(s.key)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {/* Importer, c'est LIRE sur la machine : le glyphe est celui que /machines et l'accueil
               emploient deja pour ca — une valeur qui descend de l'appareil vers nous. */}

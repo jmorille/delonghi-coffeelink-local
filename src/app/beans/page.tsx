@@ -6,6 +6,8 @@ import Icone from "../icons";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import ReglagesGrains, { type Bound, type Brouillon } from "../ReglagesGrains";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
+import { Slider } from "@/ui/slider";
 
 interface Bean {
   index: number;
@@ -666,19 +668,25 @@ export default function Beans() {
               </div>
               <div>
                 <label htmlFor="crema">{t("crema")}</label>
-                <select id="crema" value={crema} onChange={(e) => setCrema(Number(e.target.value))}>
-                  <option value={1}>{t("crema1")}</option>
-                  <option value={2}>{t("crema2")}</option>
-                  <option value={3}>{t("crema3")}</option>
-                </select>
+                <Select value={String(crema)} onValueChange={(v) => setCrema(Number(v))}>
+                  <SelectTrigger id="crema" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">{t("crema1")}</SelectItem>
+                    <SelectItem value="2">{t("crema2")}</SelectItem>
+                    <SelectItem value="3">{t("crema3")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label htmlFor="taste">{t("taste")}</label>
-                <select id="taste" value={taste} onChange={(e) => setTaste(Number(e.target.value))}>
-                  <option value={1}>{t("taste1")}</option>
-                  <option value={2}>{t("taste2")}</option>
-                  <option value={3}>{t("taste3")}</option>
-                </select>
+                <Select value={String(taste)} onValueChange={(v) => setTaste(Number(v))}>
+                  <SelectTrigger id="taste" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">{t("taste1")}</SelectItem>
+                    <SelectItem value="2">{t("taste2")}</SelectItem>
+                    <SelectItem value="3">{t("taste3")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <button className="primary iconBtn" disabled={busy} onClick={simulate}>
                 <Icone nom="reglages" />
@@ -780,13 +788,12 @@ export default function Beans() {
                   <span className="sub num">
                     {bound.min}
                   </span>
-                  <input
-                    type="range"
+                  <Slider
                     min={bound.min}
                     max={bound.max}
-                    value={draft[key]}
+                    value={[draft[key]]}
                     aria-label={`${t(key)} (${bound.min}–${bound.max})`}
-                    onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })}
+                    onValueChange={([v]) => setDraft({ ...draft, [key]: v })}
                   />
                   <span className="sub num">
                     {bound.max}

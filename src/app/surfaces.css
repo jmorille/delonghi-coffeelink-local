@@ -1013,39 +1013,43 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    lui, `display: none → block` saute l'animation d'entrée et le panneau surgit d'un coup. C'est le
    détail que presque personne n'écrit, et c'est lui qui fait toute la différence ici.
    ═════════════════════════════════════════════════════════════════════════════════════════════ */
-dialog.drawer {
-  position: fixed; inset: 0 auto 0 0; margin: 0;
-  width: min(20rem, 86vw); max-width: none;
+/* **Le panneau de navigation — le seul mouvement authored du produit.**
+
+   Il était porté par `<dialog>` : `[open]`, `@starting-style` et `::backdrop`. Depuis le passage à
+   `Sheet` (Radix), les mêmes règles s'écrivent sur `data-state`, et le voile est un nœud à part au
+   lieu d'un pseudo-élément. La MATIÈRE, elle, ne bouge pas — c'est elle qui vaut d'être ici.
+
+   La sortie est plus rapide que l'entrée, comme tout mouvement qui a un sens : on arrive posément,
+   on s'efface vite. 240 ms à l'ouverture contre 160 à la fermeture, sur une courbe qui décélère
+   fortement — un panneau lourd qui arrive en butée.
+
+   ⚠️ **Les durées et la géométrie doivent battre celles de `Sheet`**, qui pose les siennes en
+   utilitaires (`duration-500`, `w-3/4`, `sm:max-w-sm`). D'où `!important` — l'exception assumée de
+   cette feuille : la couche `utilities` bat `surfaces`, et c'est ici la seule règle du produit qui
+   doit gagner contre un composant plutôt que se poser sur lui. Ailleurs, la matière passe par le
+   `className` du composant ; ici elle décrit un mouvement, qui ne se dit pas en utilitaires. */
+[data-slot="sheet-content"].drawer {
+  width: min(20rem, 86vw) !important;
+  max-width: none !important;
   /* `dvh` et non `vh` : la barre d'adresse mobile se rétracte, et en `vh` le panneau dépassait
      alors du bas d'un écran de téléphone. */
   height: 100dvh; max-height: 100dvh;
-  padding: 0; border: 0; border-right: var(--trait) solid var(--rule); border-radius: 0;
+  padding: 0; gap: 0;
+  border: 0; border-right: var(--trait) solid var(--rule); border-radius: 0;
   /* Le boîtier, pas une plaque : le panneau est une TRANCHE de l'appareil qu'on ouvre, et il porte
      la même grille perforée que le fond (posée par `Nav.tsx`, qui compose). */
   background: var(--bg); color: var(--text);
-  display: flex; flex-direction: column;
-  translate: -100% 0;
-  /* **La sortie est plus rapide que l'entrée**, comme tout mouvement qui a un sens : on arrive
-     posément, on s'efface vite. 160 ms ici, qui est la durée de FERMETURE — c'est l'état fermé qui
-     porte la base — contre 240 ms sur `[open]`, la durée d'ouverture.
-     La courbe décélère fortement (`.22, .82, .26, 1`) : un panneau lourd qui arrive en butée. */
-  transition: translate .16s cubic-bezier(.22, .82, .26, 1),
-              overlay .16s allow-discrete, display .16s allow-discrete;
+  animation-duration: .24s !important;
+  animation-timing-function: cubic-bezier(.22, .82, .26, 1) !important;
 }
-dialog.drawer[open] {
-  translate: 0 0;
-  transition-duration: .24s;
+[data-slot="sheet-content"].drawer[data-state="closed"] {
+  animation-duration: .16s !important;
 }
-@starting-style { dialog.drawer[open] { translate: -100% 0; } }
-dialog.drawer::backdrop {
-  /* `--gravure` est la marque la plus sombre de CHAQUE finition : un voile qui suit le boîtier au
-     lieu d'un noir écrit en dur, qui posait une nuit sur l'aluminium clair. */
+/* `--gravure` est la marque la plus sombre de CHAQUE finition : un voile qui suit le boîtier au
+   lieu d'un noir écrit en dur, qui posait une nuit sur l'aluminium clair. */
+[data-slot="sheet-overlay"] {
   background: color-mix(in srgb, var(--gravure) 72%, transparent);
-  opacity: 0;
-  transition: opacity .16s, overlay .16s allow-discrete, display .16s allow-discrete;
 }
-dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
-@starting-style { dialog.drawer[open]::backdrop { opacity: 0; } }
 
 /* ── Boutons à icône ─────────────────────────────────────────────────────────────────────────
    Le libellé se replie quand la CARTE est étroite, pas quand la fenêtre l'est : à 1 400 px de
@@ -1427,61 +1431,29 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
 /* En dessous, les colonnes cessent de se comprimer et le défilement prend le relais. */
 .tableWrap > table { min-width: 34rem; }
 
-/* ── Curseur ──────────────────────────────────────────────────────────────────────────────────
-   Le curseur natif est la commande la plus utilisée de l'éditeur de recette et la seule qui
-   n'appartenait pas au thème : piste bleu système, poignée de 14 px. 14 px, c'est sous le
-   plancher de 24 px des cibles, sur l'appareil tactile qui sert à piloter. */
-/* **C'est ici que la façade devient propre à ce produit.** La piste n'est pas une gouttière :
-   c'est un CREUX fraisé dans le boîtier, et la graduation y est sérigraphiée. Les crans ne sont
-   pas décoratifs — leur nombre vient de `--crans`, posé par l'éditeur de recette à partir des
-   bornes que la MACHINE publie pour ce paramètre (voir `RecipeEditor`).
+/* ── Curseur : ce qu'aucun utilitaire n'exprime ───────────────────────────────────────────────
 
-   **Sans `--crans`, aucune graduation n'est imprimée.** Une piste vide dit « je ne connais pas
-   les bornes de ce réglage » ; une piste graduée au hasard dirait « voici ce que la machine
-   autorise », et ce serait faux. C'est la même règle que partout ailleurs dans ce produit : ne
-   jamais afficher comme lu ce qui ne l'a pas été.
+   Le dessin du curseur est passé au composant (`src/ui/slider.tsx`) : le creux fraisé, le patin
+   d'aluminium, le relief. Ne reste ici que **la graduation**, et pour une raison précise — elle est
+   conditionnée par la PRÉSENCE d'une variable, pas par sa valeur. `[style*="--crans"]` n'a pas
+   d'équivalent en utilitaire, et c'est exactement le critère qui décide ce qui reste dans cette
+   feuille.
 
-   La poignée n'est pas ronde. Une poignée de commande d'appareil est un patin usiné : rectangle
-   à arête haute claire, hauteur pleine, 22 px de large — au-dessus du plancher de 24 px de cible
-   une fois la piste comptée, sur l'appareil tactile qui sert à piloter. */
-input[type="range"] {
-  -webkit-appearance: none; appearance: none;
-  height: 28px; background: transparent; border: 0; padding: 0; margin: 0;
-  cursor: pointer;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 12px; border-radius: var(--r-creux);
-  background: var(--creux);
-  background-image: var(--graduation, none);
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 14px; height: 24px; margin-top: -6px; border-radius: var(--r-touche);
-  background: var(--aluminium); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-}
-input[type="range"]::-moz-range-track {
-  height: 12px; border-radius: var(--r-creux);
-  background: var(--creux);
-  background-image: var(--graduation, none);
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-input[type="range"]::-moz-range-thumb {
-  width: 14px; height: 24px; border-radius: var(--r-touche);
-  background: var(--aluminium); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-}
-/* La graduation elle-même. Elle n'existe que lorsque `--crans` a été posé — donc lorsque les
-   bornes ont réellement été lues sur l'appareil. */
-[style*="--crans"] input[type="range"] {
-  --graduation: repeating-linear-gradient(
+   Les crans ne sont pas décoratifs : leur nombre vient des bornes que la MACHINE publie pour ce
+   paramètre (voir `cransDe` dans `RecipeEditor`). **Sans `--crans`, aucune graduation n'est
+   imprimée** — une piste nue dit « je ne connais pas les bornes de ce réglage », une piste graduée
+   au hasard dirait « voici ce que la machine autorise », et ce serait faux.
+
+   Le sélecteur a suivi le nœud : `input[type="range"]` est devenu la piste de Radix. C'est la
+   seule chose qui change ici, et c'est ce que `verif-surfaces.mjs` vérifie — il cherche la
+   propriété, jamais le sélecteur qui la portait hier. */
+[style*="--crans"] [data-slot="slider-track"] {
+  background-image: repeating-linear-gradient(
     90deg,
     var(--gravure) 0 1px,
     transparent 1px calc(100% / var(--crans))
   );
 }
-input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 
 /* ── Pointeur grossier ───────────────────────────────────────────────────────────────────────
    `pointer: coarse` est la bonne question, pas la largeur : un portable à écran tactile de

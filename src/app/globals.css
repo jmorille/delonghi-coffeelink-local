@@ -727,6 +727,9 @@
   --color-rouge: var(--rouge);
   --color-rouge-encre: var(--rouge-encre);
   --color-rouge-verre: var(--rouge-verre);
+  /* Exporté depuis que le patin du curseur est un composant : la règle de ce bloc est qu'un rôle
+     de la façade n'est exposé que s'il sert, et celui-ci sert maintenant (`slider.tsx`). */
+  --color-aluminium: var(--aluminium);
 
   --radius-plaque: var(--r-plaque);
   --radius-touche: var(--r-touche);

@@ -1,6 +1,7 @@
 "use client";
 import { useTranslations } from "next-intl";
 import PhotoGrains from "./PhotoGrains";
+import { Slider } from "@/ui/slider";
 
 /**
  * Le formulaire d'une **configuration de grains** : nom, les trois réglages, la photo.
@@ -97,14 +98,13 @@ export default function ReglagesGrains({
           </span>
           <div className="ctl">
             <span className="sub num">{borne?.min ?? 0}</span>
-            <input
-              type="range"
+            <Slider
               min={borne?.min ?? 0}
               max={borne?.max ?? 1}
-              value={valeur[cle]}
+              value={[valeur[cle]]}
               disabled={disabled}
               aria-label={`${t(cle)} (${borne?.min ?? 0}–${borne?.max ?? 1})`}
-              onChange={(e) => onChange({ ...valeur, [cle]: Number(e.target.value) })}
+              onValueChange={([v]) => onChange({ ...valeur, [cle]: v })}
             />
             <span className="sub num">{borne?.max ?? 1}</span>
             <input

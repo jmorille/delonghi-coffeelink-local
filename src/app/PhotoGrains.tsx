@@ -5,6 +5,7 @@ import Cropper, { type Area } from "react-easy-crop";
 import "react-easy-crop/react-easy-crop.css";
 import Icone from "./icons";
 import { FORMAT_IMAGE, RAPPORT_IMAGE } from "../lib/image-grains.mjs";
+import { Slider } from "@/ui/slider";
 
 /**
  * La photo d'une configuration de grains : **choisir, cadrer, produire le format commun**.
@@ -160,13 +161,14 @@ export default function PhotoGrains({
           </div>
           <label className="photoZoom">
             <span className="sub">{t("photoZoom")}</span>
-            <input
-              type="range"
+            {/* Pas de `--crans` ici, et c'est juste : le zoom d'un recadrage est CONTINU, il ne
+                vient d'aucune borne publiée par la machine. Une graduation dirait le contraire. */}
+            <Slider
               min={1}
               max={4}
               step={0.01}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
+              value={[zoom]}
+              onValueChange={([v]) => setZoom(v)}
               aria-label={t("photoZoom")}
             />
           </label>

@@ -6,6 +6,7 @@ import { CROISES, INGREDIENTS, composable, croiseDe, groupeDe, presenceInitiale,
 import { beverageParams, defautModele, valeurDepart, type Beverage, type Param, type RecipeParam } from "./beverage";
 import Icone from "./icons";
 import Alerte from "./Alerte";
+import { Slider } from "@/ui/slider";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -403,13 +404,14 @@ export default function RecipeEditor({
         <span className="sub mono">
           {b.min}
         </span>
-        <input
-          type="range"
+        {/* La valeur est un tableau : Radix accepte plusieurs poignées, ce curseur n'en a qu'une.
+            `?? seedFor(b)` reste la même règle qu'avant — pas de valeur, on repart du défaut. */}
+        <Slider
           min={b.min}
           max={b.max}
-          value={vals[b.id] ?? seedFor(b)}
+          value={[vals[b.id] ?? seedFor(b)]}
           aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
-          onChange={(e) => set(b, Number(e.target.value))}
+          onValueChange={([v]) => set(b, v)}
         />
         <span className="sub mono">
           {b.max}

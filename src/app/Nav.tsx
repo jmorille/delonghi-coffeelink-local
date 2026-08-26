@@ -1,11 +1,13 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./machine";
 import Icone from "./icons";
 import { Button } from "@/ui/button";
 import { cn } from "@/ui/cn";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
+import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 
 /**
  * Barre de navigation. Le pilotage a deux prérequis — l'adresse de la machine et la clé LAN — et il
@@ -71,7 +73,6 @@ export default function Nav() {
   const [machines, setMachines] = useState<Entree[]>([]);
   const [courante, setCourante] = useState<string | null>(null);
   const [ouvert, setOuvert] = useState(false);
-  const panneau = useRef<HTMLDialogElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -115,39 +116,45 @@ export default function Nav() {
   };
 
   /**
-   * `showModal()` et non l'attribut `open` : c'est lui qui apporte le piège de focus, la touche
-   * Échap et l'inertie du fond. Avec `open` seul, la tabulation continue derrière le panneau et
-   * on peut déclencher une commande de la machine qu'on ne voit pas.
+   * ⚠️ **Le piège de focus ne vient plus de la plateforme.** C'était `showModal()` qui l'apportait,
+   * avec Échap et l'inertie du fond ; avec l'attribut `open` seul, la tabulation continuait derrière
+   * le panneau et on pouvait déclencher une commande de la machine qu'on ne voit pas. Depuis le
+   * passage à `Sheet` (Radix), les trois viennent du composant — donc du code, et
+   * `scripts/verif-surfaces.mjs` les mesure au lieu de les supposer.
+   *
+   * L'état d'ouverture n'a plus qu'une source. Il en avait deux — l'attribut du `<dialog>` et
+   * `ouvert` — tenues d'accord à la main par `ouvrir` / `fermer` ; `Sheet` étant contrôlé, la
+   * question ne se pose plus.
    */
-  const ouvrir = () => {
-    panneau.current?.showModal();
-    setOuvert(true);
-  };
-  const fermer = () => {
-    panneau.current?.close();
-  };
+  const fermer = () => setOuvert(false);
 
   /**
-   * Le sélecteur reste un `<select>` natif, et c'est délibéré. Sur les deux appareils prioritaires
-   * — téléphone et tablette — le natif ouvre le sélecteur du système, qui se manipule au pouce ;
-   * une liste déroulante réécrite en JavaScript ne fait que l'imiter moins bien. Ce qui change,
-   * c'est la matière : une plaque signalétique fraisée dans le rail, pas un champ de formulaire.
+   * ⚠️ **Ce sélecteur ÉTAIT un `<select>` natif, et le commentaire d'origine disait pourquoi :** sur
+   * téléphone et tablette, le natif ouvre le sélecteur du système, qui se manipule au pouce, là où
+   * une liste réécrite en JavaScript ne fait que l'imiter moins bien. C'est un recul réel, pris en
+   * connaissance de cause lors du passage à shadcn — l'alternative était de garder le natif sous
+   * `pointer: coarse`, donc DEUX listes à tenir d'accord pour un seul choix.
+   *
+   * Ce qui ne change pas est la matière : une plaque signalétique fraisée dans le rail, pas un
+   * champ de formulaire. C'est elle qui portait l'intérêt du bloc, et elle survit au composant.
    */
   const selecteurMachine = (
-    <select
-      value={courante ?? ""}
-      onChange={(e) => change(e.target.value)}
-      aria-label={t("machines")}
-      className="creuset serigraphie min-h-9 tactile:min-h-11 max-w-40 truncate text-encre appearance-none
-                 bg-creux px-2 py-1 pr-6 outline-none
-                 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ambre"
-    >
-      {machines.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.label}
-        </option>
-      ))}
-    </select>
+    <Select value={courante ?? ""} onValueChange={change}>
+      <SelectTrigger
+        aria-label={t("machines")}
+        className="creuset serigraphie h-auto min-h-9 tactile:min-h-11 max-w-40 truncate border-0 bg-creux px-2 py-1 text-encre
+                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ambre focus-visible:ring-0"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {machines.map((m) => (
+          <SelectItem key={m.id} value={m.id}>
+            {m.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 
   /**
@@ -222,38 +229,29 @@ export default function Nav() {
           size="commande"
           aria-label={t("openMenu")}
           aria-expanded={ouvert}
-          onClick={ouvrir}
+          onClick={() => setOuvert(true)}
         >
           <Icone nom="menu" taille={20} />
         </Button>
       </div>
 
       {/*
-        Le `<dialog>` natif est conservé plutôt que remplacé par un panneau shadcn : `showModal()`
-        apporte le piège de focus, la touche Échap et l'inertie du fond sans une ligne de code, et
-        cette page-ci est justement celle qu'on ouvre quand une machine ne répond plus. Ce qui
-        change est la matière — un panneau de boîtier en creux, avec sa grille, et non une feuille
-        blanche qui glisse.
+        **Le panneau est une TRANCHE de l'appareil qu'on ouvre**, pas une feuille blanche qui glisse :
+        il porte le boîtier et la même grille perforée que le fond. C'est cette matière qui faisait
+        l'intérêt du bloc, et elle survit intégralement au changement de composant.
 
-        Le `::backdrop` — noir opaque par défaut, une des surfaces que personne ne dessine et qui
-        trahit immédiatement une interface assemblée — est habillé dans `surfaces.css`, avec le
-        reste du panneau : il se fond, et sa teinte suit la finition.
+        Ce qui change : `Sheet` remplace le `<dialog>`. Le mouvement authored — arrivée posée en
+        240 ms, sortie en 160, courbe qui décélère fortement comme un panneau lourd qui vient en
+        butée — est donc réécrit sur les états de Radix (`data-state`) plutôt que sur `[open]` et
+        `@starting-style`. Il reste dans `surfaces.css` : c'est le seul mouvement que ce produit
+        s'autorise, et il ne se dit pas en utilitaires.
+
+        Le voile suit `--gravure`, la marque la plus sombre de CHAQUE finition, et non un noir écrit
+        en dur qui posait une nuit sur l'aluminium clair.
       */}
-      <dialog
-        ref={panneau}
-        aria-label={t("menuLabel")}
-        onClose={() => setOuvert(false)}
-        /* `drawer` porte la géométrie, le voile et le MOUVEMENT — voir surfaces.css. Ils étaient
-           réécrits ici en utilitaires, et la réécriture avait perdu la transition : le panneau se
-           téléportait. La composition reste au composant, la matière retourne à la feuille ;
-           `grille` est la seule matière posée ici, parce que c'est un choix de ce panneau-là. */
-        className="drawer grille"
-        /* Clic sur le fond : la cible est le `<dialog>` lui-même, jamais un de ses enfants — c'est
-           ce qui distingue « à côté du panneau » de « dans le panneau ». */
-        onClick={(e) => {
-          if (e.target === panneau.current) fermer();
-        }}
-      >
+      <Sheet open={ouvert} onOpenChange={setOuvert}>
+        <SheetContent side="left" className="drawer grille" aria-label={t("menuLabel")} showCloseButton={false}>
+          <SheetTitle className="sr-only">{t("menuLabel")}</SheetTitle>
         <div className="flex h-full flex-col">
           <div className="brosse flex items-center gap-2 border-b border-gravure bg-releve px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
             <Icone nom="machine" taille={18} />
@@ -282,7 +280,8 @@ export default function Nav() {
             </div>
           )}
         </div>
-      </dialog>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

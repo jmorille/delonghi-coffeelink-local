@@ -392,16 +392,36 @@ try {
 
   console.log("\nLe choix d'un profil");
 
+  /**
+   * **Le choix se compte une fois la liste OUVERTE, et c'est la migration qui l'impose.**
+   *
+   * Un `<select>` natif porte ses `<option>` dans le document en permanence ; une liste déclarative
+   * ne les monte qu'à l'ouverture, dans un portail. Compter sans ouvrir aurait donc rendu zéro et
+   * on aurait cru la liste vide. Ouvrir est aussi ce que fait un utilisateur — l'assertion décrit
+   * maintenant le geste plutôt que la structure.
+   */
   await test("les cinq profils sont proposés, et atteignables", async () => {
     const page = await navigateur.newPage();
     await page.goto(BASE + "/", { waitUntil: "networkidle2", timeout: 30000 });
-    const n = await page.evaluate(() => {
-      const natif = document.querySelector("select");
-      if (natif) return natif.options.length;
-      const decl = document.querySelector('[role=combobox]');
-      return decl ? Number(decl.getAttribute("data-options") ?? 0) : 0;
-    });
-    vrai(n >= 5, `${n} profil(s) proposé(s) au lieu de 5`);
+    const natif = await page.$("#profil-actif");
+    vrai(natif, "le choix du profil actif est introuvable");
+    const n = await page.evaluate(() => document.querySelector("select")?.options.length ?? 0);
+    if (n) { vrai(n >= 5, `${n} profil(s) proposé(s) au lieu de 5`); await page.close(); return; }
+    await natif.click();
+    await page.waitForSelector("[role=option]", { timeout: 5000 });
+    const ouverts = await page.$$eval("[role=option]", (e) => e.length);
+    vrai(ouverts >= 5, `${ouverts} profil(s) proposé(s) au lieu de 5`);
+    await page.close();
+  });
+
+  await test("le choix du profil s'annonce comme une liste, au clavier comme au lecteur", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/", { waitUntil: "networkidle2", timeout: 30000 });
+    const role = await page.$eval("#profil-actif", (e) => e.tagName === "SELECT" ? "combobox" : e.getAttribute("role"));
+    eq(role, "combobox", "rôle du déclencheur");
+    // Une liste qu'on ne peut pas atteindre à la tabulation n'est pas une liste, c'est une image.
+    const focusable = await page.$eval("#profil-actif", (e) => e.tabIndex >= 0 || e.tagName === "SELECT");
+    vrai(focusable, "le choix du profil n'est pas atteignable au clavier");
     await page.close();
   });
 } finally {

@@ -18,6 +18,7 @@ import {
 import { mfetch } from "./machine";
 import { useMachinePush } from "./events";
 import Icone from "./icons";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import Alerte from "./Alerte";
 import { useConfirm } from "./confirm";
 import { cleAnnonce, echecAnnonce } from "./register";
@@ -1238,26 +1239,37 @@ function PowerCard({
             L'ordre part en differe (`DELAI_PROFIL`) : parcourir la liste aux fleches emet un
             `change` par valeur traversee, et sans report chacune serait une trame 0xA9 vers
             l'appareil. */}
-        <select
-          id="profil-actif"
-          value={profile}
+        {/* ⚠️ **Ce n'était pas un `<select>` par hasard, et ce n'en est plus un — régression assumée.**
+
+            Le `<select>` natif ouvre le sélecteur du SYSTÈME : sur téléphone, la molette sous le
+            pouce, en bas de l'écran. Radix ouvre une liste dans la page. C'est un recul mesurable
+            sur l'appareil le plus utilisé debout devant la machine, et il est pris en connaissance
+            de cause : garder `<select>` sous `pointer: coarse` aurait donné DEUX implémentations du
+            même choix, à tenir d'accord — le défaut que ce dépôt a déjà payé sur l'éditeur de
+            recette et la carte de boisson, deux fois de suite. Une seule liste, dite dans la doc. */}
+        <Select
+          value={String(profile)}
           disabled={busy}
-          onChange={(e) => onSelectProfile(Number(e.target.value))}
-          title={t("profileSelectHint")}
+          onValueChange={(v) => onSelectProfile(Number(v))}
         >
-          {/* Le profil en cours d'affichage peut ne pas figurer dans la liste : elle ne montre que
-              les profils renommes, et la machine peut tres bien etre sur un autre. L'omettre ferait
-              afficher au `select` une valeur qui n'est pas celle utilisee — on l'ajoute plutot que
-              de mentir sur le profil courant. */}
-          {(shownProfiles.some((p) => p.id === profile)
-            ? shownProfiles
-            : [{ id: profile, name: null, renamed: false }, ...shownProfiles]
-          ).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name ?? tc("profileNumbered", { id: p.id })}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id="profil-actif" className="w-full" title={t("profileSelectHint")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {/* Le profil en cours d'affichage peut ne pas figurer dans la liste : elle ne montre que
+                les profils renommes, et la machine peut tres bien etre sur un autre. L'omettre ferait
+                afficher a la liste une valeur qui n'est pas celle utilisee — on l'ajoute plutot que
+                de mentir sur le profil courant. */}
+            {(shownProfiles.some((p) => p.id === profile)
+              ? shownProfiles
+              : [{ id: profile, name: null, renamed: false }, ...shownProfiles]
+            ).map((p) => (
+              <SelectItem key={p.id} value={String(p.id)}>
+                {p.name ?? tc("profileNumbered", { id: p.id })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {fallbackReason && <p className="legende">{fallbackReason}</p>}
       </div>
 
