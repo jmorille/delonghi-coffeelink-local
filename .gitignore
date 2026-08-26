@@ -34,3 +34,11 @@ public/boissons-*/
 # peut rien montrer sans eux : committee, elle afficherait 58 cadres vides a tout le monde sauf a
 # qui a lance l'extraction. C'est un artefact de mesure, il suit ce qu'il mesure.
 public/comparaison-svg.html
+
+# Outillage d'assistants local, jamais du produit : serveurs MCP declares pour cette machine
+# (.mcp.json), configuration opencode, et le crochet du skill Impeccable. Ils decrivent le poste de
+# travail de qui developpe, pas le serveur qu'on livre — les versionner imposerait a tout clone une
+# liste de serveurs et de crochets qu'il n'a pas demandee. Les fichiers restent en place localement.
+.mcp.json
+opencode.json
+.github/hooks/
