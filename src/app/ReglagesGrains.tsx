@@ -1,6 +1,8 @@
 "use client";
 import { useTranslations } from "next-intl";
 import PhotoGrains from "./PhotoGrains";
+import { Slider } from "@/ui/slider";
+import { Input } from "@/ui/input";
 
 /**
  * Le formulaire d'une **configuration de grains** : nom, les trois réglages, la photo.
@@ -63,7 +65,7 @@ export default function ReglagesGrains({
       <div className="row">
         <div>
           <label htmlFor={`${prefixe}-nom`}>{t("name")}</label>
-          <input
+          <Input
             id={`${prefixe}-nom`}
             value={valeur.name}
             maxLength={20}
@@ -97,18 +99,17 @@ export default function ReglagesGrains({
           </span>
           <div className="ctl">
             <span className="sub num">{borne?.min ?? 0}</span>
-            <input
-              type="range"
+            <Slider
               min={borne?.min ?? 0}
               max={borne?.max ?? 1}
-              value={valeur[cle]}
+              value={[valeur[cle]]}
               disabled={disabled}
               aria-label={`${t(cle)} (${borne?.min ?? 0}–${borne?.max ?? 1})`}
-              onChange={(e) => onChange({ ...valeur, [cle]: Number(e.target.value) })}
+              onValueChange={([v]) => onChange({ ...valeur, [cle]: v })}
             />
             <span className="sub num">{borne?.max ?? 1}</span>
-            <input
-              className="numField"
+            <Input
+              className="w-[4.6rem] flex-none text-right"
               type="number"
               min={borne?.min ?? 0}
               max={borne?.max ?? 1}

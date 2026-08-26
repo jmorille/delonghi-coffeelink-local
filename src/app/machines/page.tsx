@@ -6,6 +6,11 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import Alerte from "../Alerte";
 import Icone from "../icons";
+import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Checkbox } from "@/ui/checkbox";
+import { Card } from "@/ui/card";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -509,7 +514,7 @@ export default function Machines() {
         // Le champ non touché reflète le libellé enregistré ; vidé, il rend son nom dérivé.
         const nom = renaming[m.id] ?? m.custom ?? "";
         return (
-          <div className="card" key={m.id}>
+          <Card key={m.id}>
             <div className="cardHead chapeau">
               <div className="row">
                 {/* L'accueil donne un `<h3>` à chacune de ses 28 cartes de boisson ; ici la carte
@@ -528,17 +533,17 @@ export default function Machines() {
                     navigateur regarde — donc de l'ambre, qui veut dire « choisi ou configuré », et
                     non du vert, qui est réservé à ce que l'appareil fait. Un témoin vert ici
                     diluait la seule couleur qui doit se lire d'un coup d'œil. */}
-                {m.id === courante && <span className="pill info">{t("current")}</span>}
-                {m.id === d.defaultId && <span className="pill">{t("isDefault")}</span>}
+                {m.id === courante && <Badge variant="choisi">{t("current")}</Badge>}
+                {m.id === d.defaultId && <Badge variant="plaque">{t("isDefault")}</Badge>}
                 {/* « pilotable » est une CAPACITÉ : ni une marche, ni un défaut. Elle n'allume donc
                     aucun témoin quand elle est acquise. Son absence, en revanche, bloque tout geste
                     sur l'appareil — c'est à ce titre qu'elle prend le rouge. */}
                 <span className={`pill ${m.ready ? "" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
-                {m.sessionActive && <span className="pill on">{t("session")}</span>}
+                {m.sessionActive && <Badge variant="marche">{t("session")}</Badge>}
                 {m.reading && (
-                  <span className="pill on">{t("readingNow", { remaining: m.reading.remaining })}</span>
+                  <Badge variant="marche">{t("readingNow", { remaining: m.reading.remaining })}</Badge>
                 )}
-                {m.running && <span className="pill on">{m.running}</span>}
+                {m.running && <Badge variant="marche">{m.running}</Badge>}
               </div>
               {/* **Boutons à icônes, comme le reste du site.** PRODUCT.md pose l'icône comme canal
                   principal de l'affordance ; cette page était la seule surface de configuration à
@@ -549,40 +554,41 @@ export default function Machines() {
                   pendant qu'une autre travaille libérerait le verrou de la première en avance. */}
               <div className="row">
                 {m.id !== courante && (
-                  <button className="iconBtn" onClick={() => select(m.id)} disabled={!!busy} aria-label={t("select")}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={() => select(m.id)} disabled={!!busy} aria-label={t("select")}>
                     <Icone nom="machine" />
                     <span className="lbl">{t("select")}</span>
-                  </button>
+                  </Button>
                 )}
-                <button
-                  className={"iconBtn" + (ouvert ? "" : " primary")}
+                <Button
+                  type="button"
+                  variant="neutre"
+                  size="commande"
+                  className="iconBtn"
                   onClick={() => setOpen({ ...open, [m.id]: !ouvert })}
                   aria-expanded={ouvert}
                   aria-label={ouvert ? t("configureHide") : t("configure")}
                 >
                   <Icone nom="chevron" />
                   <span className="lbl">{ouvert ? t("configureHide") : t("configure")}</span>
-                </button>
+                </Button>
                 {m.id !== d.defaultId && (
-                  <button
-                    className="mini iconBtn"
+                  <Button type="button" variant="neutre" size="coquille"
+                    className="iconBtn"
                     onClick={() => patch(m, { makeDefault: true }, (r) => t("defaultSet", { name: r.machine.label }))}
                     disabled={!!busy}
-                    aria-label={t("makeDefault")}
-                  >
+                    aria-label={t("makeDefault")}>
                     <Icone nom="etoile" taille={14} />
                     <span className="lbl">{t("makeDefault")}</span>
-                  </button>
+                  </Button>
                 )}
-                <button
-                  className="danger discret iconBtn"
+                <Button type="button" variant="discret-arret" size="commande"
+                  className="iconBtn"
                   onClick={() => remove(m)}
                   disabled={!!busy}
-                  aria-label={d.machines.length <= 1 ? t("reset") : t("delete")}
-                >
+                  aria-label={d.machines.length <= 1 ? t("reset") : t("delete")}>
                   <Icone nom="corbeille" />
                   <span className="lbl">{d.machines.length <= 1 ? t("reset") : t("delete")}</span>
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -613,7 +619,7 @@ export default function Machines() {
               <span>
                 {m.ip ? <span className="mono">{m.ip}</span> : t("noAddress")}
                 {provenance(!!m.ip, m.ipSource)}
-                {m.envForced.ip && <span className="pill"> {t("envForced")}</span>}
+                {m.envForced.ip && <Badge variant="plaque"> {t("envForced")}</Badge>}
               </span>
             </div>
             <div className="kv">
@@ -646,15 +652,14 @@ export default function Machines() {
                     configurée avant que ça n'existe, lecture qui a expiré, ou simple vérification.
                     C'est une LECTURE — rien n'est préparé ni écrit. */}
                 {m.ready && (
-                  <button
-                    className="mini iconBtn"
+                  <Button type="button" variant="neutre" size="coquille"
+                    className="iconBtn"
                     onClick={() => readModel(m)}
                     disabled={!!busy}
-                    aria-label={m.model.key ? t("modelReread") : t("modelRead")}
-                  >
+                    aria-label={m.model.key ? t("modelReread") : t("modelRead")}>
                     <Icone nom="lire" taille={14} />
                     <span className="lbl">{m.model.key ? t("modelReread") : t("modelRead")}</span>
-                  </button>
+                  </Button>
                 )}
               </span>
             </div>
@@ -684,7 +689,7 @@ export default function Machines() {
                     renommage « AC000W0XXXXXXXX, édition ». */}
                 <h3 className="titreBloc" id={`nom-t-${m.id}`}>{t("nameHeading")}</h3>
                 <div className="row">
-                  <input
+                  <Input
                     id={`nom-${m.id}`}
                     aria-labelledby={`nom-t-${m.id}`}
                     aria-describedby={`nom-n-${m.id}`}
@@ -696,25 +701,23 @@ export default function Machines() {
                     }}
                     className="champ"
                   />
-                  <button
-                    className="primary iconBtn"
+                  <Button type="button" variant="neutre" size="commande"
+                    className="iconBtn"
                     onClick={() => rename(m)}
                     disabled={!!busy || nom === (m.custom ?? "")}
-                    aria-label={t("rename")}
-                  >
+                    aria-label={t("rename")}>
                     <Icone nom="ecrire" />
                     <span className="lbl">{t("rename")}</span>
-                  </button>
+                  </Button>
                   {m.custom && (
-                    <button
-                      className="mini iconBtn"
+                    <Button type="button" variant="neutre" size="coquille"
+                      className="iconBtn"
                       onClick={() => setRenaming({ ...renaming, [m.id]: "" })}
                       disabled={!!busy}
-                      aria-label={t("nameClear")}
-                    >
+                      aria-label={t("nameClear")}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{t("nameClear")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {/* **La note sort de la rangee.** `.row` veut dire « ces commandes tiennent sur une
@@ -732,7 +735,7 @@ export default function Machines() {
                 <h3 className="titreBloc" id={`adr-t-${m.id}`}>{tm("heading")}</h3>
                 {m.envForced.ip && <p className="sub">{tm("envForced")}</p>}
                 <div className="row">
-                  <input
+                  <Input
                     id={`adr-${m.id}`}
                     aria-labelledby={`adr-t-${m.id}`}
                     aria-describedby={`adr-n-${m.id}`}
@@ -750,26 +753,24 @@ export default function Machines() {
                     }}
                     className="champ"
                   />
-                  <button
-                    className="primary iconBtn"
+                  <Button type="button" variant="neutre" size="commande"
+                    className="iconBtn"
                     onClick={() => saveIp(m)}
                     disabled={!!busy || !(ip[m.id] ?? "").trim()}
                     aria-busy={occupe || undefined}
-                    aria-label={occupe ? tm("testing") : tm("save")}
-                  >
+                    aria-label={occupe ? tm("testing") : tm("save")}>
                     <Icone nom="ecrire" />
                     <span className="lbl">{occupe ? tm("testing") : tm("save")}</span>
-                  </button>
+                  </Button>
                   {m.ipCachedAt && (
-                    <button
-                      className="mini iconBtn"
+                    <Button type="button" variant="neutre" size="coquille"
+                      className="iconBtn"
                       onClick={() => forgetIp(m)}
                       disabled={!!busy}
-                      aria-label={tm("forget")}
-                    >
+                      aria-label={tm("forget")}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{tm("forget")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <p className="legende" id={`adr-n-${m.id}`}>{tm("setNote")}</p>
@@ -798,7 +799,7 @@ export default function Machines() {
                     <div className="row">
                       <span className="champBloc">
                         <label htmlFor={"mail-" + m.id}>{tk("emailLabel")}</label>
-                        <input
+                        <Input
                           id={"mail-" + m.id}
                           type="email"
                           inputMode="email"
@@ -823,7 +824,7 @@ export default function Machines() {
                             autoCapitalize / autoCorrect / spellCheck, le clavier mobile met une
                             majuscule au premier caractère et le correcteur s'en mêle. */}
                         <span className="champMdp">
-                          <input
+                          <Input
                             id={"mdp-" + m.id}
                             type={showPassword[m.id] ? "text" : "password"}
                             autoComplete="off"
@@ -859,26 +860,24 @@ export default function Machines() {
                           </button>
                         </span>
                       </span>
-                      <button
-                        className="primary iconBtn"
+                      <Button type="button" variant="neutre" size="commande"
+                        className="iconBtn"
                         onClick={() => discover(m)}
                         disabled={!!busy || !c.email || !c.password || !m.dsn}
                         aria-busy={occupe || undefined}
-                        aria-label={occupe ? tk("working") : tk("fetch")}
-                      >
+                        aria-label={occupe ? tk("working") : tk("fetch")}>
                         <Icone nom="cle" />
                         <span className="lbl">{occupe ? tk("working") : tk("fetch")}</span>
-                      </button>
+                      </Button>
                       {m.lanKeyCachedAt && (
-                        <button
-                          className="mini iconBtn"
+                        <Button type="button" variant="neutre" size="coquille"
+                          className="iconBtn"
                           onClick={() => forgetKey(m)}
                           disabled={!!busy}
-                          aria-label={tk("forget")}
-                        >
+                          aria-label={tk("forget")}>
                           <Icone nom="corbeille" taille={14} />
                           <span className="lbl">{tk("forget")}</span>
-                        </button>
+                        </Button>
                       )}
                     </div>
                     <p className="legende">{tk("privacy")}</p>
@@ -887,34 +886,35 @@ export default function Machines() {
                         — pour une case qui écrit un jeton de compte sur le disque. Le libellé seul
                         nomme, la note décrit, et seul le libellé bascule au clic. */}
                     <div className="row note">
-                      <label className="caseLibelle" htmlFor={"mem-" + m.id}>
-                        <input
+                      {/* `aria-labelledby` et non `htmlFor` : la case de Radix est un bouton, qu'un
+                          `<label>` ne nomme pas. Le libellé visible reste la seule source du nom. */}
+                      <span className="caseLibelle">
+                        <Checkbox
                           id={"mem-" + m.id}
-                          type="checkbox"
                           checked={remember}
+                          aria-labelledby={"mem-l-" + m.id}
                           aria-describedby={"mem-n-" + m.id}
-                          onChange={(e) => setRemember(e.target.checked)}
+                          onCheckedChange={(v) => setRemember(v === true)}
                         />
-                        <span>{t("remember")}</span>
-                      </label>
+                        <span id={"mem-l-" + m.id}>{t("remember")}</span>
+                      </span>
                     </div>
                     <p className="legende" id={"mem-n-" + m.id}>{t("rememberNote")}</p>
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
                         récupération de clé obtient ouvre aussi la fiche OTA. */}
                     <div className="row note">
-                      <button
+                      <Button type="button" variant="neutre" size="commande"
                         className="iconBtn"
                         onClick={() => checkOta(m)}
                         disabled={!!busy || !m.dsn}
                         aria-busy={occupe || undefined}
-                        aria-label={t("otaCheck")}
-                      >
+                        aria-label={t("otaCheck")}>
                         {/* Le nuage ne sert qu'ici, dans tout le produit : c'est la seule action qui
                             quitte le réseau local. Le glyphe est autant un avertissement qu'une
                             étiquette. */}
                         <Icone nom="nuage" />
                         <span className="lbl">{t("otaCheck")}</span>
-                      </button>
+                      </Button>
                     </div>
                     <p className="legende">{t("otaNote")}</p>
                   </>
@@ -928,11 +928,11 @@ export default function Machines() {
             <p className={"status " + (note[m.id]?.kind === "err" ? "err" : "ok")} role="status">
               {note[m.id]?.text ?? ""}
             </p>
-          </div>
+          </Card>
         );
       })}
 
-      <div className="card">
+      <Card>
         <h2>{t("addTitle")}</h2>
         {/* **Les deux étiquettes existaient déjà — sans `for`, et sans envelopper leur champ.**
             Elles s'affichaient donc, ne nommaient rien, et cliquer dessus ne donnait pas le focus.
@@ -941,7 +941,7 @@ export default function Machines() {
         <div className="row">
           <span className="champBloc">
             <label htmlFor="ajout-nom">{t("nameOptional")}</label>
-            <input
+            <Input
               id="ajout-nom"
               className="champ"
               value={form.label}
@@ -954,7 +954,7 @@ export default function Machines() {
           </span>
           <span className="champBloc">
             <label htmlFor="ajout-adresse">{t("addressOptional")}</label>
-            <input
+            <Input
               id="ajout-adresse"
               className="champ"
               type="text"
@@ -971,16 +971,16 @@ export default function Machines() {
               placeholder={t("addressPlaceholder")}
             />
           </span>
-          <button className="primary iconBtn" onClick={add} disabled={!!busy} aria-label={t("add")}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={add} disabled={!!busy} aria-label={t("add")}>
             <Icone nom="ajouter" />
             <span className="lbl">{t("add")}</span>
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Ce qui limite le multi-machines, en trois lignes. Le détail — protocole, réseau,
           conteneur — vit dans doc/ et DOCKER.md, pas dans un écran de saisie. */}
-      <div className="card">
+      <Card>
         <div className="kv">
           <span className="k">{tm("ourServer")}</span>
           <span className={d?.server.problem ? "mono alerte" : "mono"}>
@@ -994,15 +994,14 @@ export default function Machines() {
             {cloud?.set ? (
               <>
                 <span>{t("cloudSessionSince", { date: new Date(cloud.at ?? 0).toLocaleString("fr-FR") })}</span>
-                <button
-                  className="mini iconBtn"
+                <Button type="button" variant="neutre" size="coquille"
+                  className="iconBtn"
                   onClick={forgetCloud}
                   disabled={!!busy}
-                  aria-label={t("cloudSessionForget")}
-                >
+                  aria-label={t("cloudSessionForget")}>
                   <Icone nom="corbeille" taille={14} />
                   <span className="lbl">{t("cloudSessionForget")}</span>
-                </button>
+                </Button>
               </>
             ) : (
               <span className="sub">{t("cloudSessionNone")}</span>
@@ -1020,7 +1019,7 @@ export default function Machines() {
             <li>{t("limitsRouting")}</li>
           </ul>
         </div>
-      </div>
+      </Card>
       {dialogue}
     </>
   );

@@ -5,6 +5,11 @@ import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
+import { Input } from "@/ui/input";
+import { Switch } from "@/ui/switch";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * Un réglage de la machine, tel que le serveur le publie (`vueReglages`).
@@ -118,15 +123,15 @@ export default function Reglages() {
 
       {/* **La mise en garde d'abord, parce qu'elle porte sur tout ce qui suit.** Ces écritures
           modifient la configuration de l'appareil, pas un cache : elles survivent à l'extinction. */}
-      <div className="card warn">
+      <Card className="warn">
         <div className="legende">{t("warning")}</div>
-      </div>
+      </Card>
 
       <div className="row barreActions">
-        <button className="iconBtn" disabled={busy} onClick={lire} title={t("readTitle")}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={lire} title={t("readTitle")}>
           <Icone nom="lire" />
           <span className="lbl">{t("read")}</span>
-        </button>
+        </Button>
         {d?.modelName && <span className="sub">{t("model", { name: d.modelName })}</span>}
       </div>
       {msg && <p className={"status " + (msg.kind === "err" ? "err" : "ok")} role="status">{msg.text}</p>}
@@ -137,7 +142,7 @@ export default function Reglages() {
         <>
           <div className="cards">
             {dispo.map((r) => (
-              <div className="card" key={r.addr}>
+              <Card key={r.addr}>
                 <div className="titreLigne">
                   <h3 className="cardTitle">{nom(r.cle)}</h3>
                   {/* L'adresse est du protocole : chasse fixe, comme partout ici. */}
@@ -153,26 +158,24 @@ export default function Reglages() {
                       <div className="kv" key={b.cle}>
                         <dt className="k">{nom(b.cle)}</dt>
                         <dd className="titreLigne">
-                          <label className="switch">
-                            <input
-                              type="checkbox"
-                              checked={b.value === true}
-                              disabled={busy || b.value == null}
-                              aria-label={nom(b.cle)}
-                              onChange={(e) => {
-                                const vise = e.target.checked;
-                                demander({
-                                  question: t("confirmToggle", { name: nom(b.cle), etat: vise ? t("on") : t("off") }),
-                                  detail: t("confirmDetail"),
-                                  onConfirm: () => void ecrire({ cle: b.cle, on: vise }, t("writeSent", { name: nom(b.cle) })),
-                                });
-                              }}
-                            />
-                            <span className="track" aria-hidden="true">
-                              <span className="knob" />
-                            </span>
-                          </label>
-                          {b.value == null && <span className="pill off">{t("notRead")}</span>}
+                          {/* `inconnu` plutôt que « décoché » quand la valeur n'a pas été lue : un
+                              réglage jamais lu n'est pas un réglage éteint, et l'afficher comme tel
+                              inviterait à l'allumer alors qu'il l'est peut-être déjà. */}
+                          <Switch
+                            size="sm"
+                            checked={b.value === true}
+                            inconnu={b.value == null}
+                            disabled={busy || b.value == null}
+                            aria-label={nom(b.cle)}
+                            onCheckedChange={(vise) => {
+                              demander({
+                                question: t("confirmToggle", { name: nom(b.cle), etat: vise ? t("on") : t("off") }),
+                                detail: t("confirmDetail"),
+                                onConfirm: () => void ecrire({ cle: b.cle, on: vise }, t("writeSent", { name: nom(b.cle) })),
+                              });
+                            }}
+                          />
+                          {b.value == null && <Badge variant="arret">{t("notRead")}</Badge>}
                         </dd>
                       </div>
                     ))}
@@ -182,12 +185,12 @@ export default function Reglages() {
                     <div className="titreLigne">
                       <span className="valeur">{r.value ?? tc("dash")}</span>
                       {echelle(r.cle, r.value) && <span className="sub">{echelle(r.cle, r.value)}</span>}
-                      {r.value == null && <span className="pill off">{t("notRead")}</span>}
+                      {r.value == null && <Badge variant="arret">{t("notRead")}</Badge>}
                     </div>
                     <div className="row">
                       <div className="champBloc">
                         <label htmlFor={`v-${r.addr}`}>{t("newValue", { min: r.min, max: r.max })}</label>
-                        <input
+                        <Input
                           id={`v-${r.addr}`}
                           className="champ"
                           type="number"
@@ -197,7 +200,7 @@ export default function Reglages() {
                           onChange={(e) => setBrouillon({ ...brouillon, [r.cle]: e.target.value })}
                         />
                       </div>
-                      <button
+                      <Button type="button" variant="neutre" size="commande"
                         className="iconBtn"
                         disabled={busy || !brouillon[r.cle]}
                         onClick={() =>
@@ -206,11 +209,10 @@ export default function Reglages() {
                             detail: t("confirmDetail"),
                             onConfirm: () => void ecrire({ cle: r.cle, value: Number(brouillon[r.cle]) }, t("writeSent", { name: nom(r.cle) })),
                           })
-                        }
-                      >
+                        }>
                         <Icone nom="ecrire" />
                         <span className="lbl">{t("write")}</span>
-                      </button>
+                      </Button>
                     </div>
                   </>
                 )}
@@ -222,14 +224,14 @@ export default function Reglages() {
                   {r.source ? t("source", { source: r.source }) : t("sourceNone")}
                   {r.prop ? ` · ${r.prop}` : ""}
                 </p>
-              </div>
+              </Card>
             ))}
           </div>
 
           {absents.length > 0 && (
             <>
               <h2>{t("unsupportedHeading")}</h2>
-              <div className="card">
+              <Card>
                 <p className="chapeau">{t("unsupportedNote")}</p>
                 <ul>
                   {absents.map((r) => (
@@ -238,7 +240,7 @@ export default function Reglages() {
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Card>
             </>
           )}
         </>

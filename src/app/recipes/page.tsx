@@ -15,6 +15,10 @@ import { QUANTITES } from "@/lib/transfert.mjs";
 // servira de support technique a une composition libre.
 import { INGREDIENTS } from "@/lib/ingredients.mjs";
 import { TWO, encodeRecipeBounds } from "@/lib/trame-bornes.mjs";
+import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * **La bibliothèque de recettes locales, avec la carte et l'éditeur des boissons — pas les siens.**
@@ -559,7 +563,7 @@ export default function Recipes() {
         <div className="row">
           <div>
             <label htmlFor="rname">{t("name")}</label>
-            <input
+            <Input
               id="rname"
               value={draft.name}
               onChange={(ev) => setDraft({ ...draft, name: ev.target.value })}
@@ -627,16 +631,16 @@ export default function Recipes() {
             /* Pas de « Préparer » ni d'« Écrire dans le profil » tant que la recette n'existe pas :
                ces deux gestes atteignent l'appareil, et rien ne les nomme encore. */
             editorActions={(params) => (
-              <button className="primary iconBtn" disabled={busy} onClick={() => void enregistrer(params, PROFIL_LIBRE)}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => void enregistrer(params, PROFIL_LIBRE)}>
                 <Icone nom="ecrire" />
                 <span className="lbl">{t("saveLocal")}</span>
-              </button>
+              </Button>
             )}
             /* Aucune action de tête : le pli « Masquer » est celui de la carte, et en ajouter un
                second donnait deux boutons identiques côte à côte. */
           />
         ) : (
-          <div className="card" role="listitem">
+          <Card role="listitem">
             <div className="cardHead">
               <div className="toucheBev">
                 <div className="titreLigne">
@@ -644,14 +648,14 @@ export default function Recipes() {
                 </div>
               </div>
               <div className="row actions">
-                <button className="primary iconBtn" onClick={ouvrirNouvelle} disabled={!bevLibre}>
+                <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={ouvrirNouvelle} disabled={!bevLibre}>
                   <Icone nom="ajouter" />
                   <span className="lbl">{tc("new")}</span>
-                </button>
+                </Button>
               </div>
             </div>
             <p className="sub">{beverages.length ? t("newCardHint") : tc("loading")}</p>
-          </div>
+          </Card>
         )}
 
         {data?.recipes.map((e) => {
@@ -662,23 +666,23 @@ export default function Recipes() {
                On ne fabrique pas une boisson de circonstance : la carte le dit, ce qui est vrai et
                utile, et la suppression reste offerte. */
             return (
-              <div className="card" role="listitem" key={e.recipe.id}>
+              <Card role="listitem" key={e.recipe.id}>
                 <div className="cardHead">
                   <div className="toucheBev">
                     <div className="titreLigne">
                       <h2 className="cardTitle">{e.recipe.name}</h2>
-                      <span className="pill off">{t("unknownBeverage", { id: e.recipe.beverageId })}</span>
+                      <Badge variant="arret">{t("unknownBeverage", { id: e.recipe.beverageId })}</Badge>
                     </div>
                   </div>
                   <div className="row actions">
-                    <button className="mini danger iconBtn" onClick={() => supprimer(e)}>
+                    <Button type="button" variant="arret" size="coquille" className="iconBtn" onClick={() => supprimer(e)}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{tc("delete")}</span>
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <p className="sub">{e.recipe.apercu?.label ?? String(e.recipe.beverageId)}</p>
-              </div>
+              </Card>
             );
           }
           const bev = e.beverage;
@@ -713,7 +717,7 @@ export default function Recipes() {
                  système de grains, qui est un état de l'appareil. Reste ce qui décrit la tasse.
                  Le désalignement des bornes n'est pas perdu : l'éditeur le dit lui-même
                  (`editor.boundsMisaligned`), juste au-dessus des curseurs qu'il rend douteux. */
-              pastilles={bev.milk ? <span className="pill">{tb("milk")}</span> : null}
+              pastilles={bev.milk ? <Badge variant="plaque">{tb("milk")}</Badge> : null}
               /* Le dessin choisi pour la recette, pas l'illustration d'usine de la boisson. Carte
                  ouverte, c'est celui du BROUILLON : sans ça, choisir un dessin dans la grille ne
                  changerait rien à l'écran jusqu'à l'enregistrement, et le sélecteur paraîtrait
@@ -751,16 +755,15 @@ export default function Recipes() {
                         })()}
                         <div className="row">
                           {e.transfert.emplacements.map((s) => (
-                            <button
+                            <Button type="button" variant="neutre" size="commande"
                               key={s.slot}
                               className="iconBtn"
                               disabled={busy}
                               onClick={() => transferer(e, s.slot)}
-                              title={t("transferWarning")}
-                            >
+                              title={t("transferWarning")}>
                               <Icone nom="machine" />
                               <span className="lbl">{t("transferTo", { slot: s.slot, current: s.name ?? t("slotUnnamed") })}</span>
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       </>
@@ -771,34 +774,33 @@ export default function Recipes() {
                         irréversible de la page, et le placer parmi les boutons d'une carte fermée
                         le mettait à un clic de distance de « Préparer ». */}
                     <div className="row note">
-                      <button className="danger iconBtn" disabled={busy} onClick={() => supprimer(e)}>
+                      <Button type="button" variant="arret" size="commande" className="iconBtn" disabled={busy} onClick={() => supprimer(e)}>
                         <Icone nom="corbeille" />
                         <span className="lbl">{tc("delete")}</span>
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : null
               }
               editorActions={(params) =>
                 draft?.id === e.recipe.id ? (
-                  <button className="primary iconBtn" disabled={busy} onClick={() => void enregistrer(params, e.recipe.profileId)}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => void enregistrer(params, e.recipe.profileId)}>
                     <Icone nom="ecrire" />
                     <span className="lbl">{t("saveLocal")}</span>
-                  </button>
+                  </Button>
                 ) : null
               }
               /* « Supprimer » n'est PAS ici : voir le panneau de détails. Une carte fermée n'offre
                  que ce qu'on vient y chercher — préparer — et l'irréversible se mérite l'ouverture. */
               actions={({ nom }) => (
-                <button
-                  className="good iconBtn"
+                <Button type="button" variant="marche" size="commande"
+                  className="iconBtn"
                   disabled={busy}
                   aria-label={tb("prepareFor", { beverage: e.recipe.name || nom })}
-                  onClick={() => preparer(e)}
-                >
+                  onClick={() => preparer(e)}>
                   <Icone nom="preparer" />
                   <span className="lbl">{tc("prepare")}</span>
-                </button>
+                </Button>
               )}
             />
           );

@@ -2,6 +2,8 @@
 import { useTranslations } from "next-intl";
 import { GESTES, useConfirmPrefs } from "./confirmPrefs";
 import Alerte from "./Alerte";
+import { Switch } from "@/ui/switch";
+import { Card } from "@/ui/card";
 
 /**
  * L'écran où l'on rend les confirmations, et où on les reprend.
@@ -25,31 +27,29 @@ export default function ConfirmSettings() {
   const desactive = GESTES.filter((g) => !prefs[g]);
 
   return (
-    <div className="card">
+    <Card>
       <p className="chapeau">{t("intro")}</p>
       {GESTES.map((g) => (
-        /* Le `<label>` enveloppe l'entrée ET le texte : c'est ce texte qui donne son nom
-           accessible à l'interrupteur. Pas d'`aria-label` recopié à côté d'un libellé visible —
-           les deux auraient divergé au premier changement de formulation. */
-        <label className="ligneReglage" key={g}>
-          <span className="switch">
-            <input
-              type="checkbox"
-              checked={prefs[g]}
-              onChange={(e) => changer(g, e.target.checked)}
-            />
-            <span className="track">
-              <span className="knob" />
-            </span>
-          </span>
+        /* **Une div, plus `aria-labelledby` — et pas un `<label>`.** L'interrupteur de Radix est un
+           `<button role="switch">`, et un `<label>` ne nomme pas un bouton : l'envelopper aurait
+           produit une commande sans nom, en silence, là où l'`<input type="checkbox">` d'avant en
+           recevait un. On pointe donc le libellé visible, ce qui garde la propriété qui comptait —
+           un seul texte, impossible à faire diverger d'un `aria-label` recopié à côté. */
+        <div className="ligneReglage" key={g}>
+          <Switch
+            size="sm"
+            checked={prefs[g]}
+            aria-labelledby={"conf-" + g}
+            onCheckedChange={(v) => changer(g, v === true)}
+          />
           <span className="texteReglage">
-            <strong>{t(g)}</strong>
+            <strong id={"conf-" + g}>{t(g)}</strong>
             {/* Ce que le réglage change concrètement, dans les deux sens : sans ça, un
                 interrupteur intitulé « Préparer une boisson » se lit comme s'il autorisait ou
                 interdisait de préparer, et non comme s'il posait une question avant. */}
             <span className="sub">{prefs[g] ? t(g + "On") : t(g + "Off")}</span>
           </span>
-        </label>
+        </div>
       ))}
       {/* Rien n'est affiché tant que tout est confirmé : un avertissement permanent sur l'état par
           défaut serait du bruit, et le bruit finit par se lire comme du décor.
@@ -66,6 +66,6 @@ export default function ConfirmSettings() {
         </Alerte>
       )}
       <p className="note">{t("scope")}</p>
-    </div>
+    </Card>
   );
 }

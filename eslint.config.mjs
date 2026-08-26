@@ -126,4 +126,20 @@ export default defineConfig([
       "no-unused-vars": ["warn", { args: "none", caughtErrors: "none" }],
     },
   },
+
+  {
+    /**
+     * **`verif-surfaces.mjs` est un fichier Node qui contient du code de NAVIGATEUR.**
+     *
+     * Les rappels passés à `page.evaluate()` ne s'exécutent pas ici : ils sont sérialisés et
+     * évalués dans l'onglet, où `document` et `getComputedStyle` existent. ESLint, lui, ne voit
+     * qu'un module Node et signale treize globales inconnues.
+     *
+     * Les globales du navigateur sont donc ajoutées **pour ce seul fichier** — pas pour tout
+     * `scripts/`, où un `document` serait une vraie faute : le script qui tourne côté Node n'en a
+     * aucun, et le laisser passer partout ferait disparaître l'erreur là où elle compte.
+     */
+    files: ["scripts/verif-surfaces.mjs"],
+    languageOptions: { globals: { ...globals.browser } },
+  },
 ]);

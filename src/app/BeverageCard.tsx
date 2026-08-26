@@ -10,6 +10,9 @@ import { beverageParams, isSet, type Beverage, type Param, type RecipeParam } fr
 // aurait donné une ligne « Trame » qui ressemble à ce qui part sans en être la preuve.
 import { MODE, actionPreparer, encodeDispense } from "@/lib/trame-boisson.mjs";
 import Icone from "./icons";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /**
  * **La carte d'une boisson — le composant que `/` et `/recettes` montent tous les deux.**
@@ -461,7 +464,14 @@ export default function BeverageCard({
     /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
        l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
        fait de la grille la cause d'un formulaire illisible. */
-    <div id={`b${bev.id}`} className={"card" + (open ? " open" : "")} role="listitem">
+    <Card
+      id={`b${bev.id}`}
+      /* Fermée, la carte de boisson EST une touche du clavier — voir `card.tsx`. Ouverte, elle
+         redevient la plaque ordinaire : c'est ce contraste qui dit lequel des 28 est le sujet. */
+      variant={open ? "plaque" : "touche"}
+      className={open ? "open" : undefined}
+      role="listitem"
+    >
       {compacte ? (
         /* **L'affiche — et c'est maintenant la forme de la carte fermée des DEUX pages.**
            L'image d'abord, en grand et centrée : c'est elle qu'on balaie du regard pour retrouver
@@ -478,14 +488,13 @@ export default function BeverageCard({
           <Titre className="cardTitle">{nom}</Titre>
           {apercuCompact ? <p className="sub">{apercuCompact}</p> : null}
           <div className="row actions">
-            <button
+            <Button type="button" variant="neutre" size="commande"
               className="iconBtn"
               onClick={basculer}
               aria-label={t("detailsFor", { beverage: nom })}
-              aria-expanded={false}
-            >
+              aria-expanded={false}>
               <Icone nom="chevron" />
-            </button>
+            </Button>
             {actions?.({ nom, busy, working })}
           </div>
         </div>
@@ -514,11 +523,11 @@ export default function BeverageCard({
             pastilles
           ) : (
             <>
-          {bev.milk && <span className="pill">{t("milk")}</span>}
-          {read && <span className="pill info">{t("readFromMachine")}</span>}
+          {bev.milk && <Badge variant="plaque">{t("milk")}</Badge>}
+          {read && <Badge variant="choisi">{t("readFromMachine")}</Badge>}
           {bev.beanSystem?.name && (
-            <span
-              className="pill info"
+            <Badge variant="choisi"
+             
               /* **Pas d'infobulle plutôt qu'une infobulle à zéros.** Le nom du grain et ses trois
                  réglages arrivent dans la même trame `0xBA`, donc en pratique ils vont ensemble —
                  mais l'index du grain, lui, peut venir de la lecture rapide seule, et le type le
@@ -536,12 +545,12 @@ export default function BeverageCard({
               }
             >
               {t("beanSystem", { name: bev.beanSystem.name })}
-            </span>
+            </Badge>
           )}
           {read && !read.exact && (
-            <span className="pill off" title={t("misalignedHint")}>
+            <Badge variant="arret" title={t("misalignedHint")}>
               {t("misaligned")}
-            </span>
+            </Badge>
           )}
             </>
           )}
@@ -582,14 +591,17 @@ export default function BeverageCard({
             contenu, et c'est lui qui nomme la boisson concernée (« Préparer un Espresso » plutôt
             que « Préparer », vingt-huit fois). Le libellé visible ne fait que doubler l'icône. */}
         <div className="row actions">
-          <button
+          <Button
+            type="button"
+            variant="neutre"
+            size="commande"
             className={"iconBtn" + (open ? " ouvert" : "")}
             onClick={basculer}
             aria-label={open ? t("hideFor", { beverage: nom }) : t("detailsFor", { beverage: nom })}
           >
             <Icone nom="chevron" />
             <span className="lbl">{open ? tc("hide") : tc("details")}</span>
-          </button>
+          </Button>
           {/* « Details » reste a la carte : c'est son propre pli. Tout le reste appartient a la
               page - `/` lit et prepare, `/recettes` prepare, transfere et supprime. */}
           {actions?.({ nom, busy, working })}
@@ -647,10 +659,10 @@ export default function BeverageCard({
             // ne s'en sert pas, « Enregistrer localement » de `/recettes` en a besoin.
             actions={(params) => (
               <>
-                <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
+                <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
                   <Icone nom="info" />
                   <span className="lbl">{tech ? t("hideTechnicalInfo") : t("technicalInfo")}</span>
-                </button>
+                </Button>
                 {editorActions?.(params)}
               </>
             )}
@@ -667,6 +679,6 @@ export default function BeverageCard({
           {dessous}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

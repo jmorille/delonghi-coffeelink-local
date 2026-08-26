@@ -13,14 +13,28 @@ web
 
 **Next 16 (App Router), React 19, TypeScript 7, next-intl.** `server.mjs` est le seul runtime.
 
-**Décision du 2026-08-25 : shadcn/ui + Tailwind sont adoptés.** Cela **lève** la contrainte
-précédemment enregistrée (« CSS vanilla, ni Tailwind ni librairie de composants ») : les surfaces
-futures se bâtissent sur shadcn. Ni Tailwind ni shadcn ne sont installés à ce jour, et
-`src/app/globals.css` porte encore 103 ko de CSS écrit à la main.
+**Tailwind 4 + shadcn/ui sont la cible, et la migration est faite.** Cela **lève** la contrainte
+précédemment enregistrée (« CSS vanilla, ni Tailwind ni librairie de composants ») : toute surface,
+existante ou nouvelle, se bâtit sur shadcn. Décidé le 2026-08-25, exécuté le 2026-08-26 sur les
+douze surfaces d'un coup — et pas « les nouvelles seulement », qui aurait fait cohabiter deux
+grammaires de bouton dans le même produit.
 
-**Ce qui reste ouvert** : l'ampleur et le calendrier de la migration de `globals.css` — nouvelles
-surfaces seulement, ou reprise des 9 surfaces existantes. À trancher avant la première surface
-shadcn, pas maintenant.
+**Ce qui a été tranché en même temps, et qui coûte de le savoir** : les trois éléments natifs que
+ce dépôt avait choisis à l'écrit — `<select>`, `<dialog>`, `<input type="range">` — passent eux
+aussi aux primitives Radix. Chacun rendait un service réel (le sélecteur du système sous le pouce,
+le piège de focus et Échap sans une ligne, l'échelle imprimée par `--crans`) ; le composant doit
+donc le rendre à son tour, et `scripts/verif-surfaces.mjs` le vérifie au navigateur à chaque
+exécution. C'est le prix explicite de l'uniformité.
+
+**La façade reste écrite à la main, et c'est le cœur du montage.** shadcn est écrit contre un
+vocabulaire fixe (`bg-background`, `border-input`, `ring-ring`) ; `src/app/globals.css` le rebranche
+sur les rôles du boîtier plutôt que de réécrire chaque composant. Deux remappages ne sont pas
+mécaniques et sont des règles de produit : `--primary` est la touche NEUTRE et non l'ambre (la
+couleur d'une commande dit sa fonction, pas son importance), et `--radius` vaut 2 px.
+
+**Ce qui reste ouvert** : `src/app/surfaces.css` (~1 700 lignes) doit continuer de fondre. Ce qui a
+vocation à y rester est ce qu'aucun utilitaire n'exprime — une graduation conditionnée par la
+PRÉSENCE d'une variable, les planchers de disposition, le clavier de boissons.
 
 ## Users
 
