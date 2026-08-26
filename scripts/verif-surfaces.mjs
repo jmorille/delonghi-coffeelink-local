@@ -312,6 +312,22 @@ try {
     await page.close();
   });
 
+  /**
+   * **La garantie qui compte vraiment sur une garde : Entrée ne valide pas.**
+   *
+   * Le `<dialog>` natif la tenait par un `autoFocus` sur le premier bouton du DOM. Radix, lui, pose
+   * le focus sur le premier élément focusable du CONTENU — ce qui dépendrait de la présence de la
+   * case « ne plus demander », donc du geste demandé. La promesse serait alors vraie un jour et
+   * fausse le lendemain, sans que rien ne change dans ce fichier-ci.
+   */
+  await test("le focus se pose sur « Annuler », jamais sur « Confirmer »", async () => {
+    const page = await navigateur.newPage();
+    await ouvrirConfirmation(page);
+    const actif = await page.evaluate(() => (document.activeElement?.textContent ?? "").trim());
+    eq(actif, "Annuler", "élément focalisé à l'ouverture");
+    await page.close();
+  });
+
   await test("Échap le ferme", async () => {
     const page = await navigateur.newPage();
     await ouvrirConfirmation(page);

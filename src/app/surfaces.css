@@ -331,8 +331,24 @@ h2 {
 /* **Tout bouton est une touche encastrée.** C'est la règle qui fait basculer les neuf surfaces
    d'un coup : le relief vient d'un biseau — arête haute claire, arête basse sombre, plus une ombre
    COURTE et décalée — et l'appui enfonce réellement la touche d'un pixel en inversant ce biseau.
-   Pas de bordure d'un pixel sur toute la boîte : un boîtier n'a pas de contour, il a des arêtes. */
-button {
+   Pas de bordure d'un pixel sur toute la boîte : un boîtier n'a pas de contour, il a des arêtes.
+
+   ⚠️ **`:not([data-slot])` écarte les composants shadcn, et ce n'est pas une précaution : c'est un
+   défaut constaté.** Radix rend beaucoup de choses en `<button>` qui n'en sont pas une au sens de
+   cette règle — une case à cocher, un déclencheur de liste, une poignée de curseur. La case « ne
+   plus me demander » du dialogue de confirmation mesurait 30 × 44 px au lieu de 18 × 18 : elle
+   héritait du rembourrage de 10/14 px et du plancher `--h-ctl` d'une COMMANDE. Rien n'était
+   « faux » — la règle faisait exactement ce qu'elle dit, sur un élément qu'elle n'avait jamais eu
+   à décrire.
+
+   `data-slot` est posé par tous les composants de `src/ui/`, et par eux seuls. Leur habillage vit
+   dans leurs variantes (voir `button.tsx`, qui porte ce même relief), donc l'exclusion ne leur
+   retire rien — elle empêche seulement une feuille de style écrite pour les surfaces de décider de
+   la taille d'une primitive.
+
+   Cette règle est **temporaire par construction** : quand les vingt surfaces seront passées à
+   `<Button>`, il n'y aura plus de `<button>` nu à habiller et le bloc entier disparaîtra. */
+button:not([data-slot]) {
   font: inherit; font-weight: 600; cursor: pointer; color: var(--text);
   background: var(--releve); border: 0;
   border-radius: var(--r-touche); padding: 10px 14px;
@@ -344,20 +360,20 @@ button {
     0 1px 2px -1px var(--arete-basse);
   transition: transform .075s, box-shadow .075s, background .075s;
 }
-button:active:not(:disabled) {
+button:not([data-slot]):active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
 }
 /* La puce de réglage est la seule commande volontairement plus courte que les autres — son
    encombrement visuel est minimal et sa cible tactile est portée par un pseudo-élément (plus bas). */
-button:not(.mini), input:not([type="range"]):not([type="radio"]):not([type="checkbox"]), select {
+button:not(.mini):not([data-slot]), input:not([type="range"]):not([type="radio"]):not([type="checkbox"]):not([data-slot]), select:not([data-slot]) {
   min-height: var(--h-ctl);
 }
 /* **Le survol est mis sous condition, partout.** Sur un écran tactile il n'existe pas, mais le
    navigateur le simule après le tap : le bouton reste « survolé » jusqu'au tap suivant, ce qui
    laisse un bouton éclairci qu'on croit sélectionné. `hover: hover` écarte ce faux état. */
 @media (hover: hover) {
-  button:hover:not(:disabled) { background: color-mix(in srgb, var(--releve) 86%, var(--arete-haute)); }
+  button:not([data-slot]):hover:not(:disabled) { background: color-mix(in srgb, var(--releve) 86%, var(--arete-haute)); }
   }
 /* Bouton en ligne dans une ligne de réglage (« défaut : 40 ») : même style, encombrement minimal. */
 /* La puce garde SA hauteur : `--lead-ctl` la ramenait à 21,8 px, un pixel de trop en moins par
@@ -685,55 +701,23 @@ button.mini::after {
   height: 44px; transform: translateY(-50%);
 }
 
-/* Confirmation d'une action physique ou persistante.
-   `window.confirm()` ne convenait pas : non stylable, il affichait les valeurs en texte brut sans
-   pouvoir mettre le rinçage en évidence, et il renvoie `false` dans une iframe en bac à sable —
-   donc tous les boutons devenaient silencieusement inertes dans une carte de tableau de bord.
-   `<dialog>` + `showModal()` apporte le piège de focus et la touche Échap sans code. */
-dialog.confirm {
-  max-width: min(30rem, calc(100vw - 32px));
-  padding: 0; border: 1px solid var(--edge); border-radius: var(--radius);
-  background: var(--raise); color: var(--text);
-  /* Un panneau de boîtier ne flotte pas dans un halo de 48 px : il est posé, avec une ombre
-     courte et franchement décalée, et son relief vient de ses arêtes. */
-  box-shadow:
-    inset 0 1px 0 0 var(--arete-haute),
-    inset 0 -1px 0 0 var(--arete-basse),
-    0 8px 20px -10px var(--arete-basse);
-}
-dialog.confirm::backdrop { background: rgba(6, 7, 9, .62); }
-dialog.confirm .body { padding: 18px 20px 16px; }
-dialog.confirm h2 { margin: 0 0 10px; font-size: var(--t-section); line-height: var(--lead-section); }
-/* La provenance des valeurs : une ligne, sous la liste, sans fond. Elle répond à « lesquelles ? »
-   quand `detail` répond à « quoi ? », et elle ne doit pas peser autant que la mise en garde. */
-dialog.confirm .source {
-  margin: var(--s-2) 0 0; font-size: var(--t-petit); line-height: var(--lead-corps);
-  color: var(--encre-douce);
-}
-dialog.confirm .detail {
-  margin: 0; padding: 10px 12px; border-radius: var(--r-touche);
-  background: var(--panel-2); color: var(--encre-douce);
-  font-size: var(--t-petit); overflow-wrap: anywhere;
-}
-dialog.confirm .warn { margin: 12px 0 0; font-size: var(--t-petit); }
-/* Renoncer à la question, depuis la question elle-même. Séparée par un filet et non par une simple
-   marge : elle ne décrit pas l'action en cours — c'est un réglage durable posé dans un dialogue qui,
-   lui, ne concerne qu'un geste. Sans la coupure, elle se lisait comme une quatrième ligne de détail.
-   La cible tient 44 px de haut au doigt : la case seule en fait 16, et c'est le libellé entier qui
-   est cliquable puisque le `<label>` enveloppe les deux. */
-dialog.confirm .renoncer {
-  display: flex; align-items: flex-start; gap: var(--s-3);
-  margin: var(--s-4) 0 0; padding: var(--s-3) 0 0; border-top: 1px solid var(--rule);
-  font-size: var(--t-petit); line-height: var(--lead-corps); cursor: pointer;
-  min-height: 44px;
-}
-dialog.confirm .renoncer input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-text); }
-dialog.confirm .renoncer > span { display: grid; gap: var(--s-hair); min-width: 0; }
-dialog.confirm .renoncer .sub { font-size: var(--t-petit); }
-dialog.confirm .actions {
-  display: flex; justify-content: flex-end; gap: 10px;
-  padding: 14px 20px; border-top: 1px solid var(--rule); background: var(--panel-2);
-}
+/* **La confirmation d'une action physique n'a plus de CSS ici — elle est passée aux utilitaires.**
+
+   Ce n'est pas un rangement, c'est une contrainte de CASCADE. Le contenu du dialogue est un
+   composant shadcn, donc ses classes de base (`bg-background`, `p-6`, `rounded-lg`) vivent dans la
+   couche `utilities`, qui bat `surfaces` — l'ordre est figé en haut de `globals.css`. Un
+   `.confirm { background: … }` écrit ici perdait donc en silence contre `bg-background`, et le
+   panneau de boîtier serait revenu à la feuille blanche de shadcn sans qu'aucune règle ne soit
+   « fausse ».
+
+   La matière est donc posée sur le composant lui-même (`confirm.tsx`), où `tailwind-merge` la fait
+   gagner contre les classes de base au lieu de lutter contre une couche. C'est le motif de toute
+   la migration : ce qu'un composant shadcn habille se peint en utilitaires, ce qu'aucun utilitaire
+   n'exprime reste dans cette feuille.
+
+   Le voile, lui, reste ici : c'est un nœud sans composant à habiller, et il n'appartient à aucune
+   surface en particulier. */
+[data-slot="dialog-overlay"] { background: rgba(6, 7, 9, .62); }
 
 /* ── Sélecteur de thème ────────────────────────────────────────────────────────────────────────
    Trois radios natives déguisées en segments. L'entrée reste dans le flux (masquée par
