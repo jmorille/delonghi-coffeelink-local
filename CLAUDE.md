@@ -49,11 +49,19 @@ node scripts/verif-transfert.mjs   # writing a local recipe into a machine slot
 node scripts/verif-messages.mjs    # literal next-intl keys exist in messages/fr.json
 node scripts/verif-contraste.mjs   # WCAG + ΔL* of both finishes, read back out of globals.css
 node scripts/verif-images.mjs      # the beverage-artwork fingerprint chain (extractor → table → URL → cache rule)
+node scripts/verif-surfaces.mjs    # the 12 surfaces in a REAL headless Chrome (see § Styling)
 ```
 
 These exist because the modules they cover are **pure**, and the errors they catch are the silent
 ones: a one-byte offset or a swapped key direction raises nothing — it produces plausible, wrong
 values. Keeping those modules pure is what keeps this possible.
+
+`verif-surfaces.mjs` is the one exception and it is deliberate: it seeds a throwaway SQLite
+database, boots `server.mjs` on port 3127 and drives a real Chrome (`puppeteer-core` — plain
+`puppeteer` is refused, third-party install scripts are blocked by `pnpm-workspace.yaml`; point
+`CHROME_PATH` at a binary if it is not in the usual place). It covers what only a browser can
+answer — a focus trap, an Escape key, an inert background, a `box-shadow` that a layer silently
+overrode. **Nothing in `src/ui` or `surfaces.css` ships without it green.**
 
 Live diagnostics and loopback rigs, when a real behaviour is in question:
 
@@ -170,8 +178,40 @@ with dense "why did this end up like this" headers — match that register.
   returns `false` in a sandboxed iframe, which makes every button on the page silently inert.
 - Anything the machine can change arrives over SSE (`/api/events`, hook in `src/app/events.ts`),
   never by polling — a property read is not synchronous; the machine pushes 2–4 s later.
-- One hand-written stylesheet, `src/app/globals.css`: tokens on `:root` with a
-  `[data-theme="light"]` override, so **dark is the default**. No Tailwind, no component library.
+
+### Styling: Tailwind 4 + shadcn/ui, and one law about the cascade
+
+**shadcn is the target for every surface**, existing ones included — migrated 2026-08-26. `src/ui`
+holds the mounted primitives; `cn()` is `clsx` + `tailwind-merge`; the CLI is configured by
+`components.json` (style `new-york`, alias `@/ui`). A `shadcn add` lands in the right world.
+
+Three files, three jobs:
+
+| | |
+|---|---|
+| `src/app/globals.css` | tokens on `:root` with a `[data-theme="light"]` override, so **dark is the default** — plus the **token bridge** (`@theme inline`) that remaps shadcn's fixed vocabulary onto the boîtier's roles, and the `tactile:` / `court:` / `dark:` variants |
+| `src/ui/*.tsx` | the components, each carrying the product's own matter in utilities |
+| `src/app/surfaces.css` | what is left: page layout, and the rules no utility can express |
+
+⚠️ **`utilities` beats `surfaces` in the layer cascade — specificity does not enter into it.** This
+is the single fact the whole migration turns on. A rule in `surfaces.css` that repaints a component
+loses **silently**: it type-checks, it lints, the page renders, and the wrong colour ships. The fix
+is always the same — **move the matter onto the component**, as a class or a variant. Every
+component in `src/ui` that departs from the CLI's version says in its header what it took over and
+why. Paid for once by `.confirm` (57 dead lines) and once by three card modifiers.
+
+⚠️ **Two remaps are product law, not taste.** `--primary` is the **neutral** key, *not* amber: a
+command's colour states its FUNCTION (`marche` starts something on the appliance, `arret` stops or
+destroys, amber means *chosen*), never its importance. And `--radius` is 2 px, the boîtier's value.
+
+⚠️ **A Radix `Switch` / `Checkbox` / `RadioGroupItem` is a `<button>`, and a `<label>` does not name
+a button.** Wrapping one produces an unnamed control, in silence, where the native input got a name
+for free. Use `aria-labelledby` pointing at the visible text.
+
+Three native elements were deliberately reversed in that migration — `<select>`, `<dialog>`,
+`<input type="range">`. Each was rendering a real service the component now owes:
+`scripts/verif-surfaces.mjs` checks all three in a real browser (focus trap, Escape, background
+inertness, the `--crans` graduation, the profile listbox). Do not weaken those assertions.
 - `verif-messages.mjs` only sees **literal** keys written on the spot. A key requested inside a
   helper that receives a translator (`fmtAge(sec, t)`) is invisible to it — that is the very bug
   that motivated it.

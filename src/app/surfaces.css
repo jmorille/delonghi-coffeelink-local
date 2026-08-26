@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════════════════════
-   LES SURFACES — la structure des neuf pages, rendue dans la façade
+   LES SURFACES — la structure des douze pages, rendue dans la façade
    ═══════════════════════════════════════════════════════════════════════════════════════════
 
    **Ce fichier a changé de nature, pas de contenu.** Il portait autrefois un monde visuel complet —
@@ -29,6 +29,17 @@
    de Tailwind, donc de rang le plus bas. Conséquence voulue : la base de la façade (corps, titres,
    focus, sélection) et ses matières l'emportent toujours, sans avoir à surenchérir en spécificité,
    et un utilitaire Tailwind l'emporte sur les deux. Une page migrée n'a rien à défaire ici.
+
+   ⚠️ **Et c'est aussi le piège de ce fichier.** `utilities` bat `surfaces` PAR LA COUCHE : aucune
+   spécificité, ici, ne reprend un `bg-*`, un `p-*` ou un `shadow-*` posé sur un composant de
+   `src/ui`. Un sélecteur qui essaie ne casse rien de visible — il ne s'applique simplement pas, et
+   la mauvaise couleur part en production. Payé une fois par `.confirm` (57 lignes mortes), une
+   fois par trois modificateurs de carte, une fois par une `@media` de rembourrage.
+
+   **La règle qui en découle : la MATIÈRE d'un composant s'écrit sur le composant.** Ce qui a le
+   droit de rester ici est ce qu'aucun utilitaire n'exprime — une graduation conditionnée par la
+   PRÉSENCE d'une variable (`[style*="--crans"]`), la disposition d'une grille, un seuil de repli,
+   une règle qui dépend d'un ancêtre que le composant ne connaît pas.
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
 :root {

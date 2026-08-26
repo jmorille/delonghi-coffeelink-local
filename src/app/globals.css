@@ -646,17 +646,22 @@
    bonne : elle fait qu'un composant ajouté par la CLI arrive déjà dans le monde, et qu'il suit le
    changement de finition sans une ligne de plus.
 
-   ⚠️ **Aucun composant shadcn n'est monté aujourd'hui, et il faut le dire.** Neuf primitives ont
-   été installées par la CLI puis retirées : à chaque fois, l'élément natif gagnait pour une raison
-   écrite — le `<select>` natif ouvre le sélecteur du système sous le pouce, le `<dialog>` natif
-   donne le piège de focus, Échap et l'inertie du fond sans une ligne, l'`<input type="range">`
-   natif porte l'échelle imprimée par `--crans`. Les garder « au cas où » aurait laissé neuf
-   composants que personne ne monte et trois paquets qui ne servaient qu'à eux.
+   **Seize composants sont montés** (`src/ui`) : `alert`, `badge`, `button`, `card`, `checkbox`,
+   `dialog`, `input`, `label`, `progress`, `radio-group`, `select`, `sheet`, `slider`, `switch`,
+   `table`, `tooltip`. Les douze surfaces sont passées dessus le 2026-08-26.
 
-   Ce qui reste est la FONDATION, et elle est réelle : Tailwind 4, `components.json`, `cn()`, et
-   ce pont. Un `shadcn add` demain produit un composant déjà dans le monde. Ce contrat-ci n'a donc
-   pas été élagué de ses tokens inemployés — il est le vocabulaire que la CLI attend, pas une liste
-   de ce qu'on utilise ; les rôles de la façade, eux, ne sont exportés que s'ils servent.
+   ⚠️ **Trois décisions écrites ont été REPRISES ce jour-là, et il faut garder leur trace.** Ces
+   mêmes primitives avaient été installées puis retirées, parce qu'à chaque fois l'élément natif
+   gagnait pour une raison réelle : le `<select>` natif ouvre le sélecteur du système sous le
+   pouce, le `<dialog>` natif donne le piège de focus, Échap et l'inertie du fond sans une ligne,
+   l'`<input type="range">` natif porte l'échelle imprimée par `--crans`. Ces raisons n'ont pas
+   cessé d'être vraies — elles sont devenues une DETTE que le composant doit rembourrer, et
+   `scripts/verif-surfaces.mjs` va vérifier les cinq au navigateur à chaque exécution. C'est
+   l'uniformité payée comptant, pas une raison annulée.
+
+   Ce contrat-ci n'a pas été élagué de ses tokens inemployés — il est le vocabulaire que la CLI
+   attend, pas une liste de ce qu'on utilise, et un `shadcn add` demain doit arriver dans un monde
+   complet. Les rôles de la façade, eux, ne sont exportés que s'ils servent.
 
    Deux remappages méritent leur justification, parce qu'ils ne sont pas mécaniques :
 
