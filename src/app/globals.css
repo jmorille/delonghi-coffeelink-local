@@ -43,6 +43,28 @@
    rail, c'est-à-dire exactement là où il n'y a que des doigts.
    La variante répond à la même question, dans la même couche que ce qu'elle corrige. */
 @custom-variant tactile (@media (pointer: coarse));
+
+/* **`dark:` doit vouloir dire « le graphite », et le graphite est le DÉFAUT ici.**
+
+   Les composants shadcn arrivent avec des classes `dark:` — anneaux de validation, opacités. Sans
+   cette déclaration, Tailwind 4 les résout sur `prefers-color-scheme: dark` tout seul, ce qui est
+   FAUX pour ce produit : la finition ne se lit pas dans la préférence du système mais dans
+   `data-theme`, et le système ne sert que de défaut. Une personne ayant choisi le boîtier clair sur
+   un système sombre aurait reçu les deux à la fois — la palette claire par les tokens, les anneaux
+   sombres par les utilitaires. Le défaut est silencieux et ne casse rien de visible tant qu'on ne
+   regarde pas le bon écran dans la bonne configuration.
+
+   La variante recopie donc exactement les deux blocs de la finition plus bas — attribut explicite,
+   puis préférence système corrigée par l'attribut inverse. Deux `@slot` parce que CSS ne permet pas
+   de réunir une media query et un sélecteur d'attribut dans une même règle, la raison même pour
+   laquelle le bloc de la finition est écrit deux fois. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) { @slot; }
+  }
+}
+
 @import "./surfaces.css" layer(surfaces);
 @import "tailwindcss";
 

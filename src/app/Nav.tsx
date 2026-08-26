@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./machine";
 import Icone from "./icons";
-import { Touche } from "@/ui/facade";
+import { Button } from "@/ui/button";
 import { cn } from "@/ui/cn";
 
 /**
@@ -216,13 +216,16 @@ export default function Nav() {
           il porte l'état d'ouverture, donc il doit rester visible et au même endroit une fois
           ouvert. */}
       <div className="ml-auto flex items-center rail:hidden">
-        <Touche
-          compacte
+        <Button
+          type="button"
+          variant="neutre"
+          size="commande"
           aria-label={t("openMenu")}
           aria-expanded={ouvert}
           onClick={ouvrir}
-          icone={<Icone nom="menu" taille={20} />}
-        />
+        >
+          <Icone nom="menu" taille={20} />
+        </Button>
       </div>
 
       {/*
@@ -255,13 +258,15 @@ export default function Nav() {
           <div className="brosse flex items-center gap-2 border-b border-gravure bg-releve px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
             <Icone nom="machine" taille={18} />
             <span className="serigraphie flex-1 text-encre">{tApp("brand")}</span>
-            <Touche
-              compacte
-              taille="sm"
+            <Button
+              type="button"
+              variant="neutre"
+              size="coquille"
               aria-label={t("closeMenu")}
               onClick={fermer}
-              icone={<Icone nom="fermer" taille={18} />}
-            />
+            >
+              <Icone nom="fermer" taille={18} />
+            </Button>
           </div>
 
           <nav aria-label={t("menuLabel")} className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
