@@ -6,6 +6,7 @@ import { useMachineEvents } from "../events";
 import { useConfirm } from "../confirm";
 import Alerte from "../Alerte";
 import Icone from "../icons";
+import { Input } from "@/ui/input";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -684,7 +685,7 @@ export default function Machines() {
                     renommage « AC000W0XXXXXXXX, édition ». */}
                 <h3 className="titreBloc" id={`nom-t-${m.id}`}>{t("nameHeading")}</h3>
                 <div className="row">
-                  <input
+                  <Input
                     id={`nom-${m.id}`}
                     aria-labelledby={`nom-t-${m.id}`}
                     aria-describedby={`nom-n-${m.id}`}
@@ -732,7 +733,7 @@ export default function Machines() {
                 <h3 className="titreBloc" id={`adr-t-${m.id}`}>{tm("heading")}</h3>
                 {m.envForced.ip && <p className="sub">{tm("envForced")}</p>}
                 <div className="row">
-                  <input
+                  <Input
                     id={`adr-${m.id}`}
                     aria-labelledby={`adr-t-${m.id}`}
                     aria-describedby={`adr-n-${m.id}`}
@@ -798,7 +799,7 @@ export default function Machines() {
                     <div className="row">
                       <span className="champBloc">
                         <label htmlFor={"mail-" + m.id}>{tk("emailLabel")}</label>
-                        <input
+                        <Input
                           id={"mail-" + m.id}
                           type="email"
                           inputMode="email"
@@ -823,7 +824,7 @@ export default function Machines() {
                             autoCapitalize / autoCorrect / spellCheck, le clavier mobile met une
                             majuscule au premier caractère et le correcteur s'en mêle. */}
                         <span className="champMdp">
-                          <input
+                          <Input
                             id={"mdp-" + m.id}
                             type={showPassword[m.id] ? "text" : "password"}
                             autoComplete="off"
@@ -941,7 +942,7 @@ export default function Machines() {
         <div className="row">
           <span className="champBloc">
             <label htmlFor="ajout-nom">{t("nameOptional")}</label>
-            <input
+            <Input
               id="ajout-nom"
               className="champ"
               value={form.label}
@@ -954,7 +955,7 @@ export default function Machines() {
           </span>
           <span className="champBloc">
             <label htmlFor="ajout-adresse">{t("addressOptional")}</label>
-            <input
+            <Input
               id="ajout-adresse"
               className="champ"
               type="text"

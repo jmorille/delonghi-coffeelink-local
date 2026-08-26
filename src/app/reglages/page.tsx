@@ -5,6 +5,8 @@ import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
+import { Input } from "@/ui/input";
+import { Switch } from "@/ui/switch";
 
 /**
  * Un réglage de la machine, tel que le serveur le publie (`vueReglages`).
@@ -153,25 +155,23 @@ export default function Reglages() {
                       <div className="kv" key={b.cle}>
                         <dt className="k">{nom(b.cle)}</dt>
                         <dd className="titreLigne">
-                          <label className="switch">
-                            <input
-                              type="checkbox"
-                              checked={b.value === true}
-                              disabled={busy || b.value == null}
-                              aria-label={nom(b.cle)}
-                              onChange={(e) => {
-                                const vise = e.target.checked;
-                                demander({
-                                  question: t("confirmToggle", { name: nom(b.cle), etat: vise ? t("on") : t("off") }),
-                                  detail: t("confirmDetail"),
-                                  onConfirm: () => void ecrire({ cle: b.cle, on: vise }, t("writeSent", { name: nom(b.cle) })),
-                                });
-                              }}
-                            />
-                            <span className="track" aria-hidden="true">
-                              <span className="knob" />
-                            </span>
-                          </label>
+                          {/* `inconnu` plutôt que « décoché » quand la valeur n'a pas été lue : un
+                              réglage jamais lu n'est pas un réglage éteint, et l'afficher comme tel
+                              inviterait à l'allumer alors qu'il l'est peut-être déjà. */}
+                          <Switch
+                            size="sm"
+                            checked={b.value === true}
+                            inconnu={b.value == null}
+                            disabled={busy || b.value == null}
+                            aria-label={nom(b.cle)}
+                            onCheckedChange={(vise) => {
+                              demander({
+                                question: t("confirmToggle", { name: nom(b.cle), etat: vise ? t("on") : t("off") }),
+                                detail: t("confirmDetail"),
+                                onConfirm: () => void ecrire({ cle: b.cle, on: vise }, t("writeSent", { name: nom(b.cle) })),
+                              });
+                            }}
+                          />
                           {b.value == null && <span className="pill off">{t("notRead")}</span>}
                         </dd>
                       </div>
@@ -187,7 +187,7 @@ export default function Reglages() {
                     <div className="row">
                       <div className="champBloc">
                         <label htmlFor={`v-${r.addr}`}>{t("newValue", { min: r.min, max: r.max })}</label>
-                        <input
+                        <Input
                           id={`v-${r.addr}`}
                           className="champ"
                           type="number"

@@ -7,6 +7,8 @@ import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import { useBeverageLabel } from "../../i18n/labels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { Input } from "@/ui/input";
 
 interface OrderEntry {
   id: number;
@@ -75,7 +77,7 @@ function Editeur({
       <div className="row">
         <div className="champBloc">
           <label htmlFor={`nom-${edition.kind}-${edition.index}`}>{t("renameLabel")}</label>
-          <input
+          <Input
             id={`nom-${edition.kind}-${edition.index}`}
             className="champ"
             value={edition.name}
@@ -88,7 +90,7 @@ function Editeur({
             que nous saurions dessiner : on montre le nombre, et on dit d'où il vient. */}
         <div className="champBloc">
           <label htmlFor={`icone-${edition.kind}-${edition.index}`}>{t("iconLabel")}</label>
-          <input
+          <Input
             id={`icone-${edition.kind}-${edition.index}`}
             className="champ"
             type="number"
@@ -322,22 +324,22 @@ export default function Profils() {
         </p>
         {showProps && data && (
           <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("propAyla")}</th>
-                <th>{t("propRole")}</th>
-                <th>{t("propStride")}</th>
-                <th>{t("propState")}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("propAyla")}</TableHead>
+                <TableHead>{t("propRole")}</TableHead>
+                <TableHead>{t("propStride")}</TableHead>
+                <TableHead>{t("propState")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {data.props.map((p) => (
-                <tr key={p.prop}>
-                  <td className="mono">{p.prop}</td>
-                  <td>{p.kind === "profileNames" ? t("roleProfileNames") : p.kind === "customNames" ? t("roleCustomNames") : p.kind === "priority" ? t("rolePriority") : p.kind}</td>
-                  <td className="num">{p.stride ?? "—"}</td>
-                  <td>
+                <TableRow key={p.prop}>
+                  <TableCell className="mono">{p.prop}</TableCell>
+                  <TableCell>{p.kind === "profileNames" ? t("roleProfileNames") : p.kind === "customNames" ? t("roleCustomNames") : p.kind === "priority" ? t("rolePriority") : p.kind}</TableCell>
+                  <TableCell className="num">{p.stride ?? "—"}</TableCell>
+                  <TableCell>
                     {p.state === "read" ? (
                       t("stateRead")
                     ) : p.state === "absent" ? (
@@ -347,11 +349,11 @@ export default function Profils() {
                     ) : (
                       tc("dash")
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           </div>
         )}
       </div>
@@ -503,24 +505,24 @@ export default function Profils() {
           <h2>{t("customsHeading", { count: data.model.nCustomRecipes })}</h2>
           <div className="card">
             <div className="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("slot")}</th>
-                  <th>{t("machineName")}</th>
-                  <th>{t("iconColumn")}</th>
-                  <th>{t("beverageId")}</th>
-                  <th><span className="sr-only">{t("rename")}</span></th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("slot")}</TableHead>
+                  <TableHead>{t("machineName")}</TableHead>
+                  <TableHead>{t("iconColumn")}</TableHead>
+                  <TableHead>{t("beverageId")}</TableHead>
+                  <TableHead><span className="sr-only">{t("rename")}</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.customs.map((c) => (
-                  <tr key={c.slot}>
-                    <td>{t("customSlot", { n: c.slot })}</td>
-                    <td>{c.name ?? <span className="sub">{t("unnamed")}</span>}</td>
-                    <td className="num">{c.icon ?? tc("dash")}</td>
-                    <td className="num">{c.beverageId}</td>
-                    <td className="titreLigne">
+                  <TableRow key={c.slot}>
+                    <TableCell>{t("customSlot", { n: c.slot })}</TableCell>
+                    <TableCell>{c.name ?? <span className="sub">{t("unnamed")}</span>}</TableCell>
+                    <TableCell className="num">{c.icon ?? tc("dash")}</TableCell>
+                    <TableCell className="num">{c.beverageId}</TableCell>
+                    <TableCell className="titreLigne">
                       <button
                         className="discret iconBtn iconSeul"
                         disabled={busy}
@@ -547,11 +549,11 @@ export default function Profils() {
                       >
                         <Icone nom="reglages" />
                       </a>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             </div>
             {edition?.kind === "custom" && (
               <Editeur

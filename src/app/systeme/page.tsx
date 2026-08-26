@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import Alerte, { TitreAlerte } from "../Alerte";
 import Icone from "../icons";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 
 interface Finding {
   level: "warn" | "info";
@@ -259,26 +260,26 @@ export default function Systeme() {
             </p>
             {d.ota.lanRequests.length > 0 && (
               <div className="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("otaWhen")}</th>
-                    <th>{t("otaRequest")}</th>
-                    <th>{t("otaFrom")}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("otaWhen")}</TableHead>
+                    <TableHead>{t("otaRequest")}</TableHead>
+                    <TableHead>{t("otaFrom")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {d.ota.lanRequests.map((r, i) => (
-                    <tr key={i}>
-                      <td className="num">{new Date(r.at).toLocaleString("fr-FR")}</td>
-                      <td className="mono">
+                    <TableRow key={i}>
+                      <TableCell className="num">{new Date(r.at).toLocaleString("fr-FR")}</TableCell>
+                      <TableCell className="mono">
                         {r.method} {r.url}
-                      </td>
-                      <td className="mono">{r.from}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="mono">{r.from}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               </div>
             )}
     {/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se

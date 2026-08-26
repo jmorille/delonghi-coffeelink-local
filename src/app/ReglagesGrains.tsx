@@ -2,6 +2,7 @@
 import { useTranslations } from "next-intl";
 import PhotoGrains from "./PhotoGrains";
 import { Slider } from "@/ui/slider";
+import { Input } from "@/ui/input";
 
 /**
  * Le formulaire d'une **configuration de grains** : nom, les trois réglages, la photo.
@@ -64,7 +65,7 @@ export default function ReglagesGrains({
       <div className="row">
         <div>
           <label htmlFor={`${prefixe}-nom`}>{t("name")}</label>
-          <input
+          <Input
             id={`${prefixe}-nom`}
             value={valeur.name}
             maxLength={20}
@@ -107,7 +108,7 @@ export default function ReglagesGrains({
               onValueChange={([v]) => onChange({ ...valeur, [cle]: v })}
             />
             <span className="sub num">{borne?.max ?? 1}</span>
-            <input
+            <Input
               className="numField"
               type="number"
               min={borne?.min ?? 0}

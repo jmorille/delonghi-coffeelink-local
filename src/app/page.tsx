@@ -24,6 +24,7 @@ import { useConfirm } from "./confirm";
 import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
+import { Switch } from "@/ui/switch";
 
 // Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
@@ -1038,9 +1039,9 @@ function PowerCard({
                 : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
           }
         >
-          <input
-            type="checkbox"
+          <Switch
             checked={alimentationConnue && isOn}
+            inconnu={!alimentationConnue}
             disabled={busy || running || !alimentationConnue}
             aria-label={
               alimentationConnue
@@ -1051,11 +1052,8 @@ function PowerCard({
                   ? t("powerUnknown")
                   : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
             }
-            onChange={(e) => onToggle(e.target.checked)}
+            onCheckedChange={onToggle}
           />
-          <span className="track">
-            <span className="knob" />
-          </span>
         </label>
         <div className="machineIdent">
           {/* La machine est NOMMÉE. Le sélecteur de la barre de navigation est masqué en

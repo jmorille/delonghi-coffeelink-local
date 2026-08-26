@@ -535,15 +535,23 @@ h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
 a.pill { text-decoration: none; }
 a.pill:hover { text-decoration: underline; text-underline-offset: 2px; }
 a.pill:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
-input, select {
-  font: inherit; color: var(--text); background: var(--panel-2);
-  border: 1px solid var(--arete-ctl); border-radius: var(--r-touche); padding: 8px 10px;
-  line-height: var(--lead-ctl);
+/* **Le champ de saisie est passé au composant** (`src/ui/input.tsx`), qui porte le creux, l'arête
+   de commande et la hauteur `--h-ctl`. Il ne restait ici qu'une règle de balise, et elle perdait
+   de toute façon : les classes de base d'un composant shadcn vivent dans `utilities`, qui bat
+   `surfaces`. Le déclencheur d'une liste déclarative suit la même règle et se peint sur place. */
+[data-slot="select-trigger"] {
+  background: var(--panel-2);
+  border-color: var(--arete-ctl);
+  border-radius: var(--r-touche);
 }
-input::placeholder { color: var(--encre-douce); opacity: 1; }
 label { display: block; font-size: var(--t-petit); color: var(--encre-douce); margin-bottom: 4px; }
-table { width: 100%; border-collapse: collapse; font-size: var(--t-petit); line-height: var(--lead-dense); }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+/* **Les tableaux sont passés au composant** (`src/ui/table.tsx`), qui apporte aussi le conteneur à
+   défilement horizontal que `.tableWrap` fabriquait à la main. Ne reste ici que le rythme du
+   produit — corps réduit, interligne dense, filets de la finition — posé sur les emplacements du
+   composant plutôt que sur les balises : un `<table>` nu n'existe plus dans les surfaces. */
+[data-slot="table"] { font-size: var(--t-petit); line-height: var(--lead-dense); }
+[data-slot="table-head"], [data-slot="table-cell"] { padding: 6px 8px; text-align: left; }
+[data-slot="table-row"] { border-bottom: 1px solid var(--rule); }
 .log { font-family: var(--pile-mono); font-size: var(--t-mini); line-height: var(--lead-dense); max-height: 260px; overflow: auto; }
 /* Les lignes du journal portent maintenant la trame ECAM : sans repli, une trame de 52 octets
    obligerait a faire defiler horizontalement pour lire une seule ligne. */
@@ -603,48 +611,11 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
 .alerte > svg { flex: none; margin-top: .18em; color: var(--accent-text); }
 .alerte > * { min-width: 0; }
 
-/* Interrupteur (marche/arrêt machine) */
-.switch { position: relative; display: inline-block; width: 52px; height: 28px; flex: none; }
-.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.switch .track {
-  position: absolute; inset: 0; border-radius: var(--r-touche);
-  background: var(--creux); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-  transition: background .18s;
-}
-.switch .knob {
-  position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
-  border-radius: var(--r-touche);
-  background: var(--aluminium);
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-  transition: transform .18s, background .18s;
-}
-.switch input:checked + .track { background: var(--vert-verre); }
-.switch input:checked + .track .knob { transform: translateX(24px); background: var(--vert); }
-/* **La position inconnue.** Ni allumé ni éteint : la poignée quitte ses deux extrémités, se
-   centre, et la piste prend la hachure d'attente — la matière que ce monde emploie partout pour
-   « la machine n'a rien dit ». C'est un état à part entière, pas un état désactivé qu'on aurait
-   grisé : le `opacity: .45` du désactivé dirait « cette commande ne vous est pas offerte », alors
-   que ce qu'il faut dire est « nous ne savons pas ce qu'elle vaut ». */
-.switch.inconnu .track {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    color-mix(in srgb, var(--encre-douce) 22%, transparent) 0 1px,
-    transparent 1px 6px
-  );
-}
-.switch.inconnu .knob {
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--encre-douce);
-}
-/* La règle de la poignée allumée porte une transformation : sans ce rappel, une machine dont
-   l'état devient inconnu PENDANT qu'elle est allumée garderait sa poignée à droite. */
-.switch.inconnu input:checked + .track .knob { transform: translateX(-50%); }
-.switch.inconnu input:disabled + .track { opacity: 1; }
-.switch input:disabled { cursor: not-allowed; }
-.switch input:disabled + .track { opacity: .45; }
-.switch input:focus-visible + .track { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+/* **L'interrupteur est passé au composant** (`src/ui/switch.tsx`), y compris sa TROISIÈME position
+   — ni allumé ni éteint, quand la machine n'a rien poussé. C'était le seul endroit du produit où
+   un état « inconnu » avait un dessin à lui, et il l'a gardé : poignée centrée, piste hachurée,
+   opacité pleine. La reconstruire ici en CSS aurait laissé la règle et le composant à tenir
+   d'accord, alors que le composant sait déjà tout ce qu'il faut pour la dessiner. */
 
 /* Ligne de réglage : un interrupteur et ce qu'il fait. Volontairement PAS un `.kv` — sa première
    colonne fait 13 rem, ce qui aurait laissé 150 px de vide entre un interrupteur de 52 px et son
@@ -657,7 +628,7 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
   cursor: pointer;
 }
 .ligneReglage:last-of-type { border-bottom: none; }
-.ligneReglage > .switch { margin-top: 2px; }
+.ligneReglage > [data-slot="switch"] { margin-top: 2px; }
 .texteReglage { display: grid; gap: var(--s-hair); min-width: 0; }
 
 /* Compte rendu d'une action, rendu DANS la carte qui l'a déclenchée.
@@ -1417,7 +1388,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* `.ctl` vit aussi hors d'une `.paramRow` — /recipes le pose dans une cellule de tableau. */
 .ctl { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
 .paramRow > .ctl { flex: 1 1 15rem; }
-.ctl input[type="range"] { flex: 1 1 5rem; min-width: 0; }
+.ctl [data-slot="slider"] { flex: 1 1 5rem; min-width: 0; }
 /* Champ numérique : assez large pour trois chiffres, jamais plus, et il ne s'étire pas. */
 .numField { width: 4.6rem; flex: none; text-align: right; }
 
@@ -1427,9 +1398,11 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    356 px donnaient des en-têtes sur quatre lignes et des chiffres illisibles : le tableau tenait,
    mais on ne pouvait plus le lire. `/recipes` est une page de bureau selon PRODUCT.md, et c'est
    justement pourquoi elle a besoin de ça : elle reste consultable ailleurs sans être refondue. */
-.tableWrap { overflow-x: auto; }
-/* En dessous, les colonnes cessent de se comprimer et le défilement prend le relais. */
-.tableWrap > table { min-width: 34rem; }
+/* Le conteneur à défilement vient maintenant du composant ; ne reste que le plancher de largeur,
+   qui est le vrai réglage — c'est lui qui décide QUAND les colonnes cessent de se comprimer et où
+   le défilement prend le relais. `.tableWrap` reste le nom posé par les surfaces sur le bloc. */
+.tableWrap [data-slot="table-container"] { overflow-x: auto; }
+.tableWrap [data-slot="table"] { min-width: 34rem; }
 
 /* ── Curseur : ce qu'aucun utilitaire n'exprime ───────────────────────────────────────────────
 
@@ -1482,21 +1455,18 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
      cherchera, et c'est là-bas que ça vit. */
 
   /* La poignée grossit, la piste aussi : viser 6 px de haut au doigt ne marche pas. */
-  input[type="range"] { height: 44px; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 8px; }
-  /* Piste 8 + 2 de bordure = 10 ; poignée 30 + 2 = 32 ; (10 − 32) / 2 = −11. */
-  input[type="range"]::-webkit-slider-thumb { width: 30px; height: 30px; margin-top: -11px; }
-  input[type="range"]::-moz-range-track { height: 8px; }
-  input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; }
-  /* L'interrupteur de la machine est la commande la plus conséquente de l'interface — elle
-     déclenche un rinçage à l'eau chaude — et c'était la plus petite : 52 × 28. */
-  .switch { width: 64px; height: 36px; }
-  .switch .knob { width: 28px; height: 28px; }
-  .switch input:checked + .track .knob { transform: translateX(28px); }
-  /* 36 px de dessin, 44 px de cible : la case débordera la piste de 4 px en haut et en bas. Grossir
-     le dessin jusqu'à 44 aurait donné un interrupteur de tableau de bord d'automobile ; c'est la
-     zone de contact qu'il faut, pas le trait. */
-  .switch input { top: -4px; bottom: -4px; height: auto; }
+  /* Le curseur et l'interrupteur sont des composants : la cible se règle sur leurs emplacements,
+     pas sur les pseudo-éléments du natif — qui n'existent plus. */
+  [data-slot="slider"] { height: 44px; }
+  [data-slot="slider-track"] { height: 8px; }
+  [data-slot="slider-thumb"] { width: 30px; height: 30px; }
+  /* L'interrupteur d'un RÉGLAGE grossit au doigt. Celui de l'alimentation, lui, porte déjà sa
+     taille de commande principale (76 × 42) et n'a rien à gagner. */
+  [data-slot="switch"][data-size="sm"] { width: 64px; height: 36px; }
+  [data-slot="switch"][data-size="sm"] > [data-slot="switch-thumb"] { width: 28px; height: 28px; }
+  [data-slot="switch"][data-size="sm"][data-state="checked"] > [data-slot="switch-thumb"] {
+    transform: translateX(28px);
+  }
   /* Deux commandes voisines à 10 px l'une de l'autre se touchent par erreur au pouce. */
   .row { gap: var(--s-3); }
 }
@@ -1529,7 +1499,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 
    Ce que ce bloc rétablit, dans l'ordre :
 
-   1. **l'interrupteur est la commande principale**, donc il en a la taille (`.switch.grand`) ;
+   1. **l'interrupteur est la commande principale**, donc il en a la taille (`size="default"`) ;
    2. **les pastilles d'état rejoignent l'état**, collées sous le nom qu'elles qualifient — c'est
       de la proximité, pas un conteneur de plus, et le vide de 413 px disparaît sans être « rempli » ;
    3. **l'arrêt ne prend son poids que quand il peut agir.** Une préparation tourne : le rouge plein
@@ -1559,7 +1529,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
     display: grid; grid-template-columns: auto minmax(0, 1fr);
     column-gap: var(--s-4); row-gap: var(--s-3); align-items: center;
   }
-  .machineHead > .switch { grid-area: 1 / 1; }
+  .machineHead > [data-slot="switch"] { grid-area: 1 / 1; }
   .machineHead > .machineIdent { grid-area: 1 / 2; }
   /* La rangée entière, pas la colonne du titre : le libellé complet demande 225 px, et la colonne
      du titre n'en offre que « largeur de fenêtre − 163 » — soit 227 px à 390 px et 109 à 320. Deux
@@ -1612,9 +1582,6 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* Interrupteur principal. 76 × 42 au lieu de 52 × 28, soit 3 192 px² : il cesse d'être la plus
    petite chose de la carte la plus importante. La géométrie est recalculée, pas mise à l'échelle —
    4 px de jeu, une poignée de 34, un déplacement de 34, et le compte tombe juste. */
-.switch.grand { width: 76px; height: 42px; }
-.switch.grand .knob { top: 4px; left: 4px; width: 34px; height: 34px; }
-.switch.grand input:checked + .track .knob { transform: translateX(34px); }
 
 /* Bouton en contour : la couleur du rôle, sans le poids du remplissage. Sert à une action qui
    existe mais n'est pas ce qu'on vient faire — et **une action destructrice n'est jamais l'objet le
@@ -1798,4 +1765,4 @@ button.danger.discret { color: var(--danger-text); }
   opacity: 0; pointer-events: none;
 }
 .photoZoom { display: flex; align-items: center; gap: var(--s-3); }
-.photoZoom > input[type="range"] { flex: 1 1 8rem; }
+.photoZoom > [data-slot="slider"] { flex: 1 1 8rem; }

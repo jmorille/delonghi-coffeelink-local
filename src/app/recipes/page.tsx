@@ -15,6 +15,7 @@ import { QUANTITES } from "@/lib/transfert.mjs";
 // servira de support technique a une composition libre.
 import { INGREDIENTS } from "@/lib/ingredients.mjs";
 import { TWO, encodeRecipeBounds } from "@/lib/trame-bornes.mjs";
+import { Input } from "@/ui/input";
 
 /**
  * **La bibliothèque de recettes locales, avec la carte et l'éditeur des boissons — pas les siens.**
@@ -559,7 +560,7 @@ export default function Recipes() {
         <div className="row">
           <div>
             <label htmlFor="rname">{t("name")}</label>
-            <input
+            <Input
               id="rname"
               value={draft.name}
               onChange={(ev) => setDraft({ ...draft, name: ev.target.value })}

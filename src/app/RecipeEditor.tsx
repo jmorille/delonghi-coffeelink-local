@@ -7,6 +7,7 @@ import { beverageParams, defautModele, valeurDepart, type Beverage, type Param, 
 import Icone from "./icons";
 import Alerte from "./Alerte";
 import { Slider } from "@/ui/slider";
+import { Input } from "@/ui/input";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -416,7 +417,7 @@ export default function RecipeEditor({
         <span className="sub mono">
           {b.max}
         </span>
-        <input
+        <Input
           className="numField"
           type="number"
           min={b.min}

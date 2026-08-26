@@ -8,6 +8,8 @@ import { useConfirm } from "../confirm";
 import ReglagesGrains, { type Bound, type Brouillon } from "../ReglagesGrains";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import { Slider } from "@/ui/slider";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { Input } from "@/ui/input";
 
 interface Bean {
   index: number;
@@ -664,7 +666,7 @@ export default function Beans() {
             <div className="row">
               <div>
                 <label htmlFor="ft">{t("flowTime")}</label>
-                <input id="ft" className="numField" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
+                <Input id="ft" className="numField" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
               </div>
               <div>
                 <label htmlFor="crema">{t("crema")}</label>
@@ -707,36 +709,36 @@ export default function Beans() {
             {sim && (
               <div className="blocSuite">
                 <div className="tableWrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("setting")}</th>
-                      <th>{t("current")}</th>
-                      <th>{t("delta")}</th>
-                      <th>{t("proposed")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>{t("grinder")}</td>
-                      <td className="num">{draft.grinder}</td>
-                      <td className="num">{fmtDelta(sim.deltas.grinder)}</td>
-                      <td className="num">{sim.grinder}</td>
-                    </tr>
-                    <tr>
-                      <td>{t("temperature")}</td>
-                      <td className="num">{draft.temperature}</td>
-                      <td className="num">{fmtDelta(sim.deltas.temperature)}</td>
-                      <td className="num">{sim.temperature}</td>
-                    </tr>
-                    <tr>
-                      <td>{t("aroma")}</td>
-                      <td className="num">{draft.aroma}</td>
-                      <td className="num">{fmtDelta(sim.deltas.aroma)}</td>
-                      <td className="num">{sim.aroma}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("setting")}</TableHead>
+                      <TableHead>{t("current")}</TableHead>
+                      <TableHead>{t("delta")}</TableHead>
+                      <TableHead>{t("proposed")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>{t("grinder")}</TableCell>
+                      <TableCell className="num">{draft.grinder}</TableCell>
+                      <TableCell className="num">{fmtDelta(sim.deltas.grinder)}</TableCell>
+                      <TableCell className="num">{sim.grinder}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>{t("temperature")}</TableCell>
+                      <TableCell className="num">{draft.temperature}</TableCell>
+                      <TableCell className="num">{fmtDelta(sim.deltas.temperature)}</TableCell>
+                      <TableCell className="num">{sim.temperature}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>{t("aroma")}</TableCell>
+                      <TableCell className="num">{draft.aroma}</TableCell>
+                      <TableCell className="num">{fmtDelta(sim.deltas.aroma)}</TableCell>
+                      <TableCell className="num">{sim.aroma}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
                 </div>
                 {sim.notes.map((n) => (
                   <p className="legende" key={n}>
@@ -760,7 +762,7 @@ export default function Beans() {
             <div className="row">
               <div>
                 <label htmlFor="bname">{t("name")}</label>
-                <input id="bname" value={draft.name} maxLength={20} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                <Input id="bname" value={draft.name} maxLength={20} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </div>
             </div>
             <p className="legende">
@@ -798,7 +800,7 @@ export default function Beans() {
                   <span className="sub num">
                     {bound.max}
                   </span>
-                  <input
+                  <Input
                     className="numField"
                     type="number"
                     min={bound.min}
