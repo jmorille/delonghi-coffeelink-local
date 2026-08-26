@@ -26,11 +26,15 @@ import { decoderDataUrl, TAILLE_MAX as IMAGE_TAILLE_MAX } from "./src/lib/image-
 // (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
 // commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
 import {
-  TWO, argumentsTrame as argsEcam, cleFusion, constanteConnue, describeFrame, hexCmd,
+  argumentsTrame as argsEcam, cleFusion, constanteConnue, describeFrame, hexCmd,
   natureTrame, opReponse, opTrame, profilVise,
 } from "./src/lib/ecam-args.mjs";
+// Le constructeur de la trame 0x83 vit dans un module PUR et sans `Buffer` : la carte d'une
+// boisson en montre le résultat à chaque cran de curseur, et une seconde implémentation côté
+// navigateur aurait dérivé en silence. Voir l'en-tête de `trame-boisson.mjs`.
+import { encodeDispense, MODE, ACT, actionPreparer } from "./src/lib/trame-boisson.mjs";
 import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
-import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
+import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, decodeBeanSync, BEAN_SYNC_PROP, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
 import { makeLanSession, token } from "./src/lib/lansession.mjs";
 // Multiplexeur : lan-server joue la machine auprès de N applications. Voir doc/spec-proxy-multi-app.md.
@@ -681,17 +685,16 @@ function frameBeanSystemSave(id, name, grinder, temperature, aroma, visible = tr
   bytes[49] = visible ? 1 : 0;
   return seal(bytes);
 }
-// `TWO` vit maintenant dans `ecam-args.mjs` : le constructeur ci-dessous et le décodeur DOIVENT
-// lire la même table, un décalage d'un octet entre eux ne lèverait aucune erreur.
+/**
+ * **L'assemblage a déménagé dans `src/lib/trame-boisson.mjs`, et il n'en reste ici que l'emballage.**
+ *
+ * Ce n'est pas un rangement : la carte d'une boisson affiche cette trame en direct pendant qu'on
+ * bouge les curseurs, donc le navigateur doit pouvoir la construire — et le seul moyen que la ligne
+ * affichée soit bien celle qui partira est qu'il n'y ait qu'UNE fonction. Le module est pur et sans
+ * `Buffer` pour cette raison ; le `seal` n'a plus rien à sceller, le CRC est déjà posé.
+ */
 function frameDispense(bev, prof, mode, action, params, check = false) {
-  const body = [];
-  for (const p of params) { body.push(p.id & 0xff); if (TWO.has(p.id)) body.push((p.value >> 8) & 0xff, p.value & 0xff); else body.push(p.value & 0xff); }
-  const total = body.length + 9; const bytes = new Array(total).fill(0);
-  bytes[0] = 0x0d; bytes[1] = total - 1; bytes[2] = 0x83; bytes[3] = 0xf0; bytes[4] = bev & 0xff;
-  bytes[5] = check ? (mode | 0x80) & 0xff : mode & 0xff;
-  for (let i = 0; i < body.length; i++) bytes[6 + i] = body[i];
-  bytes[6 + body.length] = ((prof << 2) | action) & 0xff;
-  return seal(bytes);
+  return Buffer.from(encodeDispense(bev, prof, mode, action, params, check).bytes);
 }
 function datapointValue(frame) { const t = Buffer.alloc(4); t.writeUInt32BE(Math.floor(Date.now() / 1000) >>> 0, 0); return Buffer.concat([frame, t]).toString("base64"); }
 /**
@@ -2271,6 +2274,26 @@ function handleProperty(m, name, value) {
     return;
   }
 
+  // Routage par NOM lui aussi, et pour la même raison que le numéro de série : sa trame porte la
+  // commande `0xA1`, qui n'a pas de décodeur d'aiguillage — sans cette branche elle se journalisait
+  // « commande 0xa1 NON IDENTIFIÉE » et repartait brute, ce qu'elle a fait jusqu'au 2026-08-26.
+  // Nom EXACT, jamais un motif : c'est le routage par motif (`_beansystem`) qui avait déjà produit
+  // un désalignement silencieux ici même.
+  if (name === BEAN_SYNC_PROP) {
+    try {
+      const sy = decodeBeanSync(value);
+      m.store.putProp(name, { at: Date.now(), kind: "beanSync", selected: sy.selected, mots: sy.mots, hex: sy.hex });
+      L("in", `${name}: grain sélectionné ${sy.selected} · mots ${sy.mots.join(", ")}`, m);
+    } catch (e) {
+      // La machine a répondu : le pas est FAIT, pas manqué — le redemander rendrait les mêmes
+      // octets. On garde la trame brute, seule chose qui permettra de comprendre l'échec.
+      m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: 0xa1, hex: Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim() });
+      L("in", `${name}: décodage impossible (${e.message})`, m);
+    }
+    apparier(m.file, { prop: name }, Date.now());
+    return;
+  }
+
   // ⚠️ **Tester que c'est une trame AVANT d'en lire l'octet de commande.**
   // `Buffer.from(x, "base64")` ne lève jamais : il ignore silencieusement ce qui n'en est pas et
   // rend des octets qui ont l'air de quelque chose. Deux conséquences, l'une visible et l'autre
@@ -2323,6 +2346,28 @@ function handleProperty(m, name, value) {
         const bs = decodeBeanSystem(value);
         m.store.putProp(name, { at: Date.now(), kind: "beanSystem", index: bs.index, hex: bs.hex });
         m.store.putBeanSystem(bs);
+        /**
+         * **La réponse à `0xBA` n'est pas un `data_response`.** Elle arrive ici, en poussée de la
+         * propriété `d(250+n)_beansystem_n`. Or le pas qui l'attend est un pas de TRAME, donc de
+         * type `reponse`, et `done()` n'apparie que sur un nom de PROPRIÉTÉ : ça ne colle jamais.
+         *
+         * Mesuré le 2026-08-26 : le balayage des grains recevait ses quatre trames, les rangeait
+         * en base (`d250`…`d253`, noms et réglages corrects), et échouait quand même en « 6 sans
+         * réponse » ; « Bean System 1 » de même, sa trame arrivée à 07:11:02 dans une fenêtre
+         * ouverte de 07:10:41 à 07:11:15. Le pire des résultats : la donnée est là, la tâche est
+         * déclarée morte, et rien ne dit laquelle des deux croire.
+         *
+         * C'est exactement le défaut du monitor `0x75`, et le même remède — apparier sur la
+         * COMMANDE. Étroitement, pour la même raison que là-bas : la machine pousse aussi ces
+         * propriétés d'elle-même après une écriture `0xBB`, et un appariement large validerait
+         * alors le pas d'une tâche qui attendait tout autre chose.
+         *
+         * L'appariement par nom de `done()` est conservé et ne fait pas doublon : `reponse()`
+         * n'avance qu'UN pas par appel, et seulement du type demandé. Si un jour une lecture
+         * `startImport(['d251_beansystem_1'])` attend cette propriété, elle a bel et bien reçu sa
+         * réponse elle aussi.
+         */
+        apparier(m.file, { reponse: true, cmd: 0xba }, Date.now());
         return done(`bean system ${bs.index} « ${bs.name ?? "sans nom"} » mouture=${bs.grinder} temp=${bs.temperature} arôme=${bs.aroma}${bs.active ? " · ACTIF" : ""}${bs.visible ? "" : " · masqué"}`);
       }
       case 0xa2: {
@@ -2458,12 +2503,42 @@ function machineBeverageNames(store) {
  * C'est elle qui détermine la tasse pour la boisson Bean System, donc on l'expose comme attribut.
  */
 function activeBeanSystem(store) {
+  // **Source rapide** : le mot 4 de `d260_beansystem_sync_par`, une seule lecture de propriété.
+  const sync = store.props?.[BEAN_SYNC_PROP];
+  const rapide = Number.isInteger(sync?.selected) && sync.selected >= 1 ? sync.selected : null;
+
+  // **Source lente** : le drapeau de l'octet 50 de `0xBA`, qui n'existe qu'après avoir balayé tous
+  // les index — six trames, une cinquantaine de secondes avec les reprises. Elle reste la SEULE
+  // source du nom et des réglages du grain, donc on la lit dans tous les cas.
+  let drapeau = null;
   for (const [index, bs] of Object.entries(store.beanSystems ?? {})) {
-    if (bs?.active && Number(index) >= 1) {
-      return { index: Number(index), name: bs.name, grinder: bs.grinder, temperature: bs.temperature, aroma: bs.aroma };
-    }
+    if (bs?.active && Number(index) >= 1) { drapeau = Number(index); break; }
   }
-  return null;
+
+  const index = rapide ?? drapeau;
+  if (index === null) return null;
+  const bs = store.beanSystems?.[index] ?? {};
+  return {
+    index,
+    // `null` et non un libellé de repli : le nom vient du balayage `0xBA`, qui peut très bien ne pas
+    // avoir encore eu lieu pour cet index. La carte de boisson ne s'affiche que si le nom existe.
+    name: bs.name ?? null,
+    grinder: bs.grinder ?? null,
+    temperature: bs.temperature ?? null,
+    aroma: bs.aroma ?? null,
+    source: rapide !== null ? "sync" : "flag",
+    /**
+     * **Un désaccord entre les deux sources est SIGNALÉ, jamais corrigé.** Les deux se lisent
+     * indépendamment et à des instants différents : le balayage est cher donc rare, la propriété de
+     * synchronisation est bon marché donc fraîche. Trancher silencieusement afficherait le grain
+     * d'avant comme si c'était celui d'après — une valeur plausible et fausse, exactement ce que ce
+     * fichier passe son temps à éviter. Les deux horodatages voyagent avec, pour qu'on puisse voir
+     * laquelle des deux lectures est en retard.
+     */
+    disagree: rapide !== null && drapeau !== null && rapide !== drapeau
+      ? { sync: rapide, syncAt: sync?.at ?? null, flag: drapeau, flagAt: store.beanSystems?.[drapeau]?.at ?? null }
+      : null,
+  };
 }
 
 /** Familles dont la somme de contrôle a bougé entre deux relevés. */
@@ -3511,10 +3586,23 @@ function restoreActiveProfile(m) {
  * quelle autre demande arrivant entre-temps écrasait le programme en cours et décapitait le
  * balayage. En une tâche, les pas s'enchaînent **à la réponse de la machine**, le rythme est le
  * sien, et une commande qui s'intercale suspend le balayage au lieu de le tuer.
+ *
+ * ⚠️ **La machine laisse tomber une partie des `0xBA`, et la reprise en fin de tâche est ce qui
+ * rattrape le balayage — ne pas la retirer.** Mesuré le 2026-08-26 sur deux balayages consécutifs :
+ * deux trames muettes sur six à chaque fois, mais jamais les mêmes (index 1 et 5, puis 0 et 4), et
+ * toutes rendues à la reprise. Ce n'est donc ni un index en particulier — trois lectures isolées
+ * ont répondu en 3,7 à 4 s — ni la valeur, une propriété inchangée étant bel et bien repoussée, ni
+ * la cadence : le PREMIER pas du second balayage est resté muet, alors qu'aucune réponse ne le
+ * précédait. Un silence intermittent, côté machine, dont la cause n'est pas établie.
  */
 function scanBeans(m, from, to) {
   const pas = [];
-  for (let i = from; i <= to; i++) pas.push(pasTrame(`Bean System ${i}`, datapointValue(frameBeanSystem(i)), { attente: "reponse", sustain: "monitor" }));
+  // `pasPourTrame` et non `pasTrame` : c'est lui qui attache la COMMANDE ECAM au pas, et sans elle
+  // l'appariement étroit de la réponse 0xBA (voir `handleProperty`, cas 0xBA) n'a rien à quoi se
+  // raccrocher. Les pas étaient bâtis ici à la main, avec la nature « reponse » recopiée et `cmd`
+  // laissé à null : une deuxième écriture de la règle d'ordonnancement, donc une divergence — et
+  // elle ne levait rien, elle faisait simplement échouer le balayage en « 6 sans réponse ».
+  for (let i = from; i <= to; i++) pas.push(pasPourTrame(`Bean System ${i}`, datapointValue(frameBeanSystem(i)), DELAIS.reponse, "monitor"));
   return enfilerTache(m, tache({
     label: `Balayage des grains ${from}–${to}`,
     i18n: { k: "beanScan", p: { from, to } },
@@ -3527,7 +3615,11 @@ function scanBeans(m, from, to) {
 
 /** Lecture des statistiques : une tâche, un pas `0xA2` par requête. Même raison qu'au-dessus. */
 function scanStats(m, requetes) {
-  const pas = requetes.map((r) => pasTrame(`Paramètres ${r.id}${r.qty > 1 ? `+${r.qty - 1}` : ""}`, datapointValue(frameParamRead(r.id, r.qty)), { attente: "reponse", sustain: "monitor" }));
+  // Même remarque que pour `scanBeans` : `pasPourTrame` est le seul endroit qui sache déduire la
+  // nature d'une trame ET y joindre sa commande. Ici le trou était latent — 0xA2 répond bien en
+  // `data_response`, qui apparie sans qualifier la commande — mais un pas sans `cmd` reste un pas
+  // qu'aucun appariement étroit ne pourra jamais satisfaire.
+  const pas = requetes.map((r) => pasPourTrame(`Paramètres ${r.id}${r.qty > 1 ? `+${r.qty - 1}` : ""}`, datapointValue(frameParamRead(r.id, r.qty)), DELAIS.reponse, "monitor"));
   return enfilerTache(m, tache({
     label: requetes.length > 1 ? `Statistiques (${requetes.length} requêtes)` : `Statistiques ${requetes[0].id}`,
     // Fond de file : voir `RANG.LECTURE_BASSE`. Les compteurs ne périment pas, tout le reste est
@@ -4197,13 +4289,8 @@ async function handleApi(req, res) {
     // du client), la clé le double pour l'affichage. Les deux se posent dans la même branche, ce
     // qui est la seule façon qu'ils ne divergent pas.
     let frame, label, dur = 75000, refreshOrderFor = null, sustain = "monitor", checksumBefore, cleLibelle = null;
-    // DONTCARE (0) est le mode utilisé pour enregistrer/supprimer une recette (voir
-    // DeLonghiWifiConnectService:2959) ; START pour préparer.
-    const MODE = { DONTCARE: 0, START: 1, STOPV2: 2 };
-    const ACT = { SAVE: 1, PREPARE: 2, PREPARE_INVERSION: 6 };
-    // `RecipeData.T()` : l'app choisit l'action « inversion » quand le paramètre INVERSION (12)
-    // vaut 1 — c'est le cas du flat white, du cappuccino inversé, du cortado, du long black.
-    const inverted = (params) => (params ?? []).some((x) => Number(x.id) === 12 && Number(x.value) === 1);
+    // `MODE`, `ACT` et `inverted` sont importés de `trame-boisson.mjs` : ils décrivent la TRAME,
+    // pas ce gestionnaire, et la page qui affiche cette trame a besoin des mêmes constantes.
 
     /**
      * **Transférer une recette locale dans un emplacement perso — DEUX écritures persistantes,
@@ -4351,7 +4438,7 @@ async function handleApi(req, res) {
         m.activeProfile = Number(prof) || 1;
         m.activeProfileConfirmed = true;
         rememberActiveProfile(m);
-        const act = inverted(params) ? ACT.PREPARE_INVERSION : ACT.PREPARE;
+        const act = actionPreparer(params);
         frame = frameDispense(bev, prof, MODE.START, act, params);
         label = `Préparer ${bevLabel(m, bev)}${act === ACT.PREPARE_INVERSION ? " (lait d'abord)" : ""}`;
         const r = bevRef(m, bev);
@@ -4442,6 +4529,8 @@ async function handleApi(req, res) {
       const vp = m.catalog.profileProp(x, p);
       if (vp) bev.push(vp);
     }
+    // Même raison qu'à `/api/beverages/import` : attribut de la boisson 200, lu avec les boissons.
+    bev.push(BEAN_SYNC_PROP);
     if (bev.length) ajouter(startImport(m, bev, 0, { label: `Boissons · profil ${p}`, i18n: { k: "beverages", p: { profil: p } } }));
 
     ajouter(scanBeans(m, 0, 5));
@@ -4471,6 +4560,10 @@ async function handleApi(req, res) {
     // 0xBA. Si la lecture concerne la boisson 200, on l'enchaîne : programme court d'abord, puis
     // la file de lecture s'écoule.
     const beanIndex = ids.includes(200) ? 1 : null;
+    // Le grain sélectionné est un ATTRIBUT de la boisson 200 (voir `activeBeanSystem`), donc il se
+    // lit avec elle et sous son étiquette — pas dans une tâche à part, qui aurait exigé une clé de
+    // traduction pour un seul mot et une deuxième ligne dans « Activité ».
+    if (beanIndex !== null) queue.push(BEAN_SYNC_PROP);
     const t = startImport(m, queue, 0, { label: `Boissons · profil ${profileId}`, i18n: { k: "beverages", p: { profil: profileId } } });
     // Même `cle` que la lecture de Bean System de `/api/beanadapt` : c'est LA MÊME demande, la
     // même trame 0xBA sur le même index. Sans elle, ouvrir `/` pendant une lecture de grains en

@@ -5,11 +5,12 @@ import { useBeverageLabel, useCategoryLabel, useParamLabel, useUnitLabel } from 
 // La carte d'une boisson et le selecteur d'image vivent dans `./BeverageCard` : `/recettes` monte
 // exactement la meme carte, et deux presentations d'un meme objet divergent des la premiere
 // correction. Meme deplacement, meme raison, que `RecipeEditor` avant eux.
-import BeverageCard, { type Report } from "./BeverageCard";
+import BeverageCard, { resumeContenance, type Report } from "./BeverageCard";
 import {
   beverageParams,
   resumeReglages,
   valeurSure,
+  type BeanSystem,
   type Beverage,
   type Param,
   type RecipeParam,
@@ -669,6 +670,14 @@ export default function Boissons() {
       <PowerCard
         status={status}
         busy={busy}
+        /* **Le grain sélectionné est un fait d'ÉTAT MACHINE, pas une propriété d'une carte.**
+           Il ne s'affichait que sur la carte « Espresso Bean Adapt » — une pastille sur vingt-huit
+           cartes, donc invisible tant qu'on n'avait pas défilé jusqu'à elle, alors que c'est le
+           réglage qui détermine le goût de cette tasse. Il monte donc dans la plaque du haut, à
+           côté de la session et des capteurs, et il y reste visible sans rien chercher.
+           Passé en prop plutôt que relu ici : `PowerCard` ne reçoit pas le catalogue, et lui
+           ouvrir un second chemin vers les boissons en ferait une deuxième source de vérité. */
+        bean={data?.beverages.find((b) => b.id === 200)?.beanSystem ?? null}
         working={pending === "power"}
         onToggle={togglePower}
         onStop={stopDispense}
@@ -706,6 +715,17 @@ export default function Boissons() {
         )
       ) : (
       <>
+      {/* **La lampe verte des affiches se lit UNE fois, ici.** Vingt-trois cartes portaient
+          « LU SUR LA MACHINE » en toutes lettres : une pastille vraie partout ne departage rien,
+          et elle poussait la touche sur deux hauteurs. Reduite a un point, elle a besoin d'etre
+          nommee — mais la nommer sur chaque carte reviendrait a la phrase qu'on vient de retirer,
+          et un `title` seul ne se voit ni sur telephone ni sur tablette, les deux appareils que
+          PRODUCT.md met au premier rang. Une legende de page, donc : le meme motif qu'un panneau
+          de commande qui imprime la signification de ses temoins une fois, a cote d'eux. */}
+      <p className="legendeMarques">
+        <span className="lampeLue" aria-hidden="true" />
+        {t("readFromMachineLegend")}
+      </p>
       {sections.map((sec) => (
         <section key={sec.key}>
           <h2>
@@ -719,7 +739,7 @@ export default function Boissons() {
               `.cards` : grille en `auto-fill`. En une colonne, choisir un café demandait 3 300 px
               de défilement — y compris sur la tablette 11" en paysage, où trois colonnes tiennent
               et où 295 px de largeur restaient vides. */}
-          <div role="list" className="cards">
+          <div role="list" className="cards clavier">
             {sec.list.map((b) => (
               <BeverageCard
                 key={b.id}
@@ -736,31 +756,86 @@ export default function Boissons() {
                 /* Les deux gestes de CETTE page : relire la boisson sur la machine, et la
                    preparer. `/recettes` en a d'autres, d'ou le fait qu'ils soient fournis ici
                    plutot que cables dans la carte. */
+                /* **Une seule commande en tete, et c'est la seule qui serve debout devant la
+                   machine : preparer.** « Lire » est descendu dans la carte depliee, ou il rejoint
+                   « Infos techniques ».
+
+                   ⚠️ Il n'a PAS ete supprime : `startImport("all", [b.id])` etait l'unique point
+                   d'entree de la relecture d'une boisson sur cette page, un seul site d'appel dans
+                   tout le fichier. Le retirer aurait retire la capacite du produit. Il vit
+                   maintenant la ou vivent deja les gestes qui se meritent l'ouverture — et la
+                   rangee de l'affiche n'a plus qu'un voisin a 8 px de l'action physique. */
                 actions={({ nom }) => (
-                  <>
-                    <button
-                      className="iconBtn"
-                      disabled={busy}
-                      aria-busy={pending === bevScope(b.id) || undefined}
-                      aria-label={t("readFor", { beverage: nom })}
-                      onClick={() => startImport("all", [b.id])}
-                      title={t("readTitle")}
-                    >
-                      <Icone nom="lire" />
-                      <span className="lbl">{tc("read")}</span>
-                    </button>
-                    <button
-                      className="good iconBtn"
-                      disabled={busy}
-                      aria-busy={pending === bevScope(b.id) || undefined}
-                      aria-label={t("prepareFor", { beverage: nom })}
-                      onClick={() => dispense(b)}
-                    >
-                      <Icone nom="preparer" />
-                      <span className="lbl">{tc("prepare")}</span>
-                    </button>
-                  </>
+                  <button
+                    className="good iconBtn"
+                    disabled={busy}
+                    aria-busy={pending === bevScope(b.id) || undefined}
+                    aria-label={t("prepareFor", { beverage: nom })}
+                    onClick={() => dispense(b)}
+                  >
+                    <Icone nom="preparer" />
+                    <span className="lbl">{tc("prepare")}</span>
+                  </button>
                 )}
+                /* La barre d'actions de l'EDITEUR, apres « Infos techniques ». La charge utile ne
+                   sert pas ici : relire interroge la machine, elle n'envoie pas de reglages. */
+                editorActions={() => (
+                  <button
+                    className="iconBtn"
+                    disabled={busy}
+                    aria-busy={pending === bevScope(b.id) || undefined}
+                    aria-label={t("readFor", { beverage: bevLabel(b) })}
+                    onClick={() => startImport("all", [b.id])}
+                    title={t("readTitle")}
+                  >
+                    <Icone nom="lire" />
+                    <span className="lbl">{tc("read")}</span>
+                  </button>
+                )}
+                /* **La ligne de l'affiche : la contenance, deux valeurs au plus.** Voir
+                   `resumeContenance`. La legende complete — nom d'usine, nombre de parametres,
+                   compteur de categorie — reste celle de la carte OUVERTE : on la lit apres avoir
+                   reconnu la boisson, jamais avant. */
+                apercuCompact={resumeContenance(
+                  beverageParams(b).filter((p) => p.kind === "user"),
+                  paramLabel,
+                  unitLabel,
+                )}
+                /* **Le bandeau de marques : ce qui departage, et rien d'autre.**
+
+                   « lait » departage la moitie du catalogue. L'anomalie « desaligne » est rare,
+                   donc informative. « lu sur la machine » est vraie sur les vingt-trois cartes :
+                   en toutes lettres elle n'apprenait rien et occupait une ligne, elle se reduit
+                   donc a une lampe — verte, parce que le vert de ce produit est reserve a ce que
+                   la MACHINE rapporte, et parce que l'ambre doit rester le « choisi » de la touche
+                   ouverte. Le point n'a pas de nom accessible a lui : il porte un texte hors vue,
+                   et sa signification est enoncee UNE fois par page (voir `.legendeMarques`
+                   ci-dessus) plutot que vingt-trois fois. Un `title` seul ne se voit ni sur
+                   telephone ni sur tablette.
+
+                   Le systeme de grains descend dans la carte ouverte : « Bean Adapt : Grain A »
+                   est un attribut a lire quand on regle, pas quand on choisit. */
+                marques={
+                  <>
+                    {b.milk && <span className="pill">{t("milk")}</span>}
+                    {(() => {
+                      const lu = b.bounds ?? b.values;
+                      if (!lu) return null;
+                      if (!lu.exact) {
+                        return (
+                          <span className="pill off aDroite" title={t("misalignedHint")}>
+                            {t("misaligned")}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="lampeLue aDroite">
+                          <span className="horsVue">{t("readFromMachine")}</span>
+                        </span>
+                      );
+                    })()}
+                  </>
+                }
                 /* **La vignette de tete de la carte ouvre la grille des dessins**, et c'est tout ce
                    que la carte fait : l'EFFET reste un geste de cette page-ci, puisqu'ici il ECRIT
                    dans la machine (`0xAB`). Le selecteur qui vivait dans `dessus` a disparu — il
@@ -820,6 +895,7 @@ function PowerCard({
   onSelectProfile,
   importState,
   report,
+  bean,
 }: {
   status: Status | null;
   /** Une commande part vers la machine : toutes les autres attendent, elle n'a qu'une file. */
@@ -836,6 +912,8 @@ function PowerCard({
   onSelectProfile: (id: number) => void;
   importState: Payload["import"];
   report: Report | null;
+  /** La configuration de grains sélectionnée, ou `null` si le catalogue n'est pas encore chargé. */
+  bean: BeanSystem | null;
 }) {
   const t = useTranslations("power");
   /** Libelles de capteurs : espace de noms dedie, avec repli sur celui du serveur. */
@@ -880,6 +958,26 @@ function PowerCard({
   }, [mon]);
   const ageSec = mon ? Math.round((Date.now() - mon.at) / 1000) : null;
   const stale = ageSec != null && ageSec > AGE_PERIME;
+  /**
+   * **Et la question d'avant : est-ce qu'on SAIT ?**
+   *
+   * `isOn` est un booléen, donc il répond « éteinte » à deux questions différentes — « la machine
+   * est éteinte » et « nous n'avons aucune idée ». Le premier principe du produit est de dire
+   * l'état réel, **y compris l'ignorance**, et la ligne d'état juste en dessous le fait déjà avec
+   * soin : « État inconnu — aucun monitor reçu », « En veille il y a 4 min — peut avoir changé
+   * depuis ». L'interrupteur, six fois plus visible, affirmait ÉTEINT dans les deux cas.
+   *
+   * Deux situations, et elles ne se valent pas :
+   * - `mon == null` — rien n'est jamais arrivé. On ne sait pas, point.
+   * - `stale` — on a su, il y a plus de 90 s, et la machine ne parle que pendant une session
+   *   LAN : la valeur affichée peut être fausse depuis longtemps.
+   *
+   * Dans les deux cas la position de la poignée est retirée (voir `.switch.inconnu`) et la
+   * commande est désarmée : basculer un interrupteur dont on ne connaît pas la position, c'est
+   * envoyer « Allumer » à une machine peut-être allumée. Le chemin reste ouvert — lancer une
+   * lecture depuis /pilotage rétablit la session, et l'état avec.
+   */
+  const alimentationConnue = mon != null && !stale;
   const capteurs = splitSensors(mon?.switches ?? []);
   /**
    * **Une préparation est en cours, et on le tient de la machine.** Pas du drapeau de la file :
@@ -924,12 +1022,34 @@ function PowerCard({
           dépend tout le reste. Les pastilles décrivent l'état : elles vivent maintenant sous la
           ligne d'état, pas à l'autre bout de la carte. */}
       <div className="machineHead">
-        <label className="switch grand" title={isOn ? t("turnOff") : t("turnOn")}>
+        {/* Le nom accessible dit l'ÉTAT quand il est inconnu, et l'ACTION quand il est connu :
+            « Éteindre » sur un interrupteur dont on ignore la position est un mensonge, et c'est
+            le seul texte qu'un lecteur d'écran reçoit de cette commande. */}
+        <label
+          className={"switch grand" + (alimentationConnue ? "" : " inconnu")}
+          title={
+            alimentationConnue
+              ? isOn
+                ? t("turnOff")
+                : t("turnOn")
+              : mon == null
+                ? t("powerUnknown")
+                : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
+          }
+        >
           <input
             type="checkbox"
-            checked={isOn}
-            disabled={busy || running}
-            aria-label={isOn ? t("turnOff") : t("turnOn")}
+            checked={alimentationConnue && isOn}
+            disabled={busy || running || !alimentationConnue}
+            aria-label={
+              alimentationConnue
+                ? isOn
+                  ? t("turnOff")
+                  : t("turnOn")
+                : mon == null
+                  ? t("powerUnknown")
+                  : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
+            }
             onChange={(e) => onToggle(e.target.checked)}
           />
           <span className="track">
@@ -945,7 +1065,20 @@ function PowerCard({
           {/* Les pastilles qualifient l'état : leur place est contre lui. Serrées entre elles, elles
               se lisent comme un seul objet au lieu de cinq. */}
           <div className="row etats">
-            {running && <span className="pill on">{t("programBadge", { counter: status?.program?.counter ?? 0 })}</span>}
+            {/* **Un témoin vert n'a le droit de s'allumer que sur ce qu'on OBSERVE.** Hors session,
+                un programme signalé plus tôt n'est plus observé : il devient une valeur en attente,
+                et c'est la hachure d'attente qui le porte — pas la lampe de marche. Sans cette
+                distinction, la plaque allumait simultanément un témoin vert « programme en cours »
+                et un témoin rouge « hors session », deux sens opposés au même instant, sans qu'on
+                puisse savoir lequel primait. */}
+            {running && (
+              <span
+                className={status?.session?.active ? "pill on" : "pill attente"}
+                title={status?.session?.active ? undefined : t("staleBadgeHint")}
+              >
+                {t("programBadge", { counter: status?.program?.counter ?? 0 })}
+              </span>
+            )}
             {stale && !running && (
               <span className="pill off" title={t("staleBadgeHint")}>
                 {t("staleBadge")}
@@ -972,15 +1105,60 @@ function PowerCard({
                 {t("alarms")}
               </a>
             ) : null}
+            {/* **Le grain sélectionné.** Un lien, pas une pastille inerte, et pour la même raison
+                que les alarmes juste au-dessus : la seule route vers « lequel, et pourquoi
+                celui-là » était un attribut `title`, donc rien sur le téléphone ni la tablette —
+                les deux appareils que PRODUCT.md met au premier rang. Il mène à `/beans`, où le
+                grain se change et se relit.
+
+                Deux formes, parce que deux choses distinctes peuvent être vraies : on sait
+                TOUJOURS quel index est sélectionné (une lecture de propriété suffit), mais on ne
+                sait le NOMMER qu'après un balayage `0xBA`. Afficher « Grain n° 2 » est alors
+                exact ; inventer un nom, ou masquer la pastille, le serait moins. */}
+            {bean && (
+              <a
+                className="pill"
+                href="/beans"
+                title={
+                  bean.name
+                    ? t("beanHint", { grinder: bean.grinder ?? 0, temperature: bean.temperature ?? 0, aroma: bean.aroma ?? 0 })
+                    : t("beanHintNoName", { index: bean.index })
+                }
+              >
+                {bean.name ? t("bean", { name: bean.name }) : t("beanIndex", { index: bean.index })}
+              </a>
+            )}
+            {/* **Un désaccord est DIT, jamais arbitré.** Le serveur rend les deux index parce qu'il
+                refuse de trancher (voir `activeBeanSystem`) ; s'il le disait et que l'interface le
+                taisait, ce refus ne servirait à rien — l'écran montrerait l'un des deux comme s'il
+                n'y avait jamais eu de doute. */}
+            {bean?.disagree && (
+              <a
+                className="pill off"
+                href="/beans"
+                title={t("beanDisagreeHint", { sync: bean.disagree.sync, flag: bean.disagree.flag })}
+              >
+                {t("beanDisagree")}
+              </a>
+            )}
             <span className={status?.session?.active ? "pill on" : "pill off"}>
               {status?.session?.active ? t("lanSession") : t("noSession")}
             </span>
           </div>
         </div>
-        {/* `actions` : le libellé se replie à l'icône sur une carte étroite, comme les actions des
-            cartes de boisson. `discret` tant qu'aucune préparation ne tourne — un rouge plein pour
-            une action indisponible dominait la carte sans rien pouvoir faire. */}
-        <div className="row actions">
+        {/*
+          **La garde.** L'arrêt d'une préparation en cours est le seul geste de cette plaque qui
+          interrompe l'appareil, et il vivait au coude à coude avec les commandes de lecture. La
+          discipline retenue de la direction « console » veut qu'une action destructrice ou
+          irréversible soit séparée dans l'ESPACE, pas seulement protégée par un dialogue : elle
+          est donc posée dans son propre creux, cerné d'un filet rouge, à l'écart de tout ce qui
+          ne fait que lire. Le capot au-dessus de l'interrupteur qu'on ne bascule pas par mégarde.
+
+          Le libellé se replie à l'icône sur une carte étroite, comme les actions des cartes de
+          boisson. `discret` tant qu'aucune préparation ne tourne — un rouge plein pour une action
+          indisponible dominait la carte sans rien pouvoir faire.
+        */}
+        <div className="garde actions">
           <button
             className={"danger iconBtn" + (running ? "" : " discret")}
             disabled={busy || !stopAvailable}
@@ -1036,7 +1214,14 @@ function PowerCard({
             >
               {/* `pourcent` peut rester à 0 pendant toute la mouture : la barre est alors vide, ce
                   qui est exact — c'est l'étape, au-dessus, qui dit que ça avance. */}
-              <span className="jaugeBarre" style={{ width: `${prepa.pourcent ?? 0}%` }} />
+              {/* **Une échelle, pas une largeur.** Animer `width` fait recalculer la mise en page à
+                  chaque image, et c'est le seul moment où cette page bouge toutes les secondes —
+                  pendant une préparation, donc exactement quand on la regarde. `scaleX` sur une
+                  barre pleine largeur donne le même dessin sans toucher au flux. */}
+              <span
+                className="jaugeBarre"
+                style={{ transform: `scaleX(${(prepa.pourcent ?? 0) / 100})` }}
+              />
             </div>
           </>
         )}

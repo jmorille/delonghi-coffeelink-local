@@ -514,7 +514,10 @@ export default function Systeme() {
             </div>
             <div className="kv">
               <span className="k">{t("storageFile")}</span>
-              <span className="mono" style={{ wordBreak: "break-all" }}>
+              {/* Pas de coupure en ligne : `.kv > *` porte déjà `overflow-wrap: anywhere`, et
+                  c'est le bon des deux réglages — `break-all` scindait aussi le « (48 ko) » de
+                  la fin, qui avait pourtant où se replier. */}
+              <span className="mono">
                 {d.storage.file} ({Math.round(d.storage.sizeBytes / 1024)} ko)
               </span>
             </div>

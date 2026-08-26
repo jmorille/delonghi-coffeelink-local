@@ -34,9 +34,54 @@
  *    lire que le second en perd une partie, silencieusement.
  * 3. `p258z7.z.B(int, Resources)` — numéro de `case` → `R.drawable.<nom>`.
  *
- * La jointure se valide elle-même : les seuls identifiants sans image sont les six emplacements
+ * La jointure se valide elle-même : les seuls identifiants sans `case` sont les six emplacements
  * Bean System (200-205) et les dix recettes personnalisées (230-239) — précisément ceux dont
  * l'icône ne vient pas de là.
+ *
+ * ## ⚠️ Le `switch` a un `default`, et il donne une image lui aussi
+ *
+ * Une version précédente de ce script s'arrêtait au `switch` et rangeait ces seize identifiants
+ * dans « sans image ». C'était faux, et faux d'une manière que rien ne signalait : l'application
+ * officielle, elle, affiche bel et bien quelque chose pour eux.
+ *
+ * ```java
+ * public static int B(int i9, Resources resources) {
+ *     switch (a.f35759a[p127m6.a.b(i9).ordinal()]) {
+ *         case 1: return R.drawable.regular;
+ *         …                                          // 58 cas
+ *         default: return J(i9, resources);          // ← la branche oubliée
+ *     }
+ * }
+ *
+ * public static int J(int i9, Resources resources) {
+ *     identifier = resources.getIdentifier(
+ *         g.h().o() ? "beverage_icn_" + i9 : "beverage_icn_" + i9 + "_v1", "drawable", …);
+ *     return identifier != 0 ? identifier : R.drawable.espresso;   // ← le repli
+ * }
+ * ```
+ *
+ * Donc un identifiant sans `case` est résolu **par nom de ressource** (`beverage_icn_<id>`), et à
+ * défaut par `R.drawable.espresso`. Dans cet APK il n'existe **aucun** `beverage_icn_*`, toutes
+ * densités confondues : le repli est donc toujours atteint. Ce script reproduit les deux étapes,
+ * `repliParNom()` puis la constante, plutôt que d'inscrire « espresso » en dur — le jour où une
+ * version de l'application livre un `beverage_icn_200`, l'extraction le prendra.
+ *
+ * ## Mais seulement pour les Bean System, et c'est le nom de la constante qui tranche
+ *
+ * Les deux familles sans `case` ne se comportent PAS pareil dans l'application :
+ *
+ * - `BEAN_01`…`BEAN_06` (200-205) n'ont aucune autre voie. Le décodeur `0xBA` de l'app
+ *   (`p097j6.d.G0`) construit un `BeanSystem` dont le champ `image` reçoit `""` et dont
+ *   `optimalId` vaut `z.K(bArr[4])` — une fonction qui ignore son argument et rend toujours
+ *   `BEAN_01.c()`, soit 200. Ces identifiants tombent donc sur `B()`, donc sur le repli.
+ * - `CUSTOM_01_V2`…`CUSTOM_10_V2` (230-239) ont la leur : `U6/j.java` choisit
+ *   `recipeData.P() ? z.z(recipeData.q(), res) : z.B(recipeData.p(), res)` — une recette perso
+ *   passe par `z.z()` avec son INDEX d'icône, et n'atteint jamais le repli. Leur donner
+ *   « espresso » ici afficherait six tasses d'espresso à la place des icônes choisies sur la
+ *   machine : une régression, pas une fidélité.
+ *
+ * D'où le tri sur le préfixe de la constante (`BEAN_`) et non sur une plage d'identifiants : c'est
+ * la distinction que fait l'application, pas un intervalle qu'on aurait deviné.
  *
  * ## La liste de l'écran de création
  *
@@ -68,6 +113,7 @@
  *   node scripts/extract-images.mjs --res <chemin>     # arbre res/ décompilé
  */
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -135,6 +181,22 @@ function tableEnumImage(z) {
   return { enumCase, caseImg };
 }
 
+/**
+ * **`J(int, Resources)` reproduit** : la résolution par NOM de ressource, tentée quand le `switch`
+ * de `B()` n'a pas de `case`. Les deux orthographes que l'application essaie selon `g.h().o()`,
+ * dans cet ordre, puis `null` si aucune n'existe — c'est alors l'appelant qui applique la
+ * constante de repli, comme le fait `J()` avec `R.drawable.espresso`.
+ */
+function repliParNom(id, dossier) {
+  for (const nom of [`beverage_icn_${id}`, `beverage_icn_${id}_v1`]) {
+    if (existsSync(join(dossier, `${nom}.webp`))) return nom;
+  }
+  return null;
+}
+
+/** La constante de repli de `J()`. Nommée, parce qu'elle est un fait de l'APK et pas un choix. */
+const REPLI_J = "espresso";
+
 // ─── 4. la liste de l'écran de création ─────────────────────────────────────
 function listeChoix(vm) {
   const m = vm.match(/int\[\] iArr = \{((?:\s*R\.drawable\.\w+,?)+)\};/);
@@ -151,15 +213,7 @@ const idEnum = tableIdEnum(en);
 const { enumCase, caseImg } = tableEnumImage(z);
 const choix = listeChoix(vm);
 
-const parId = {};
-const sansImage = [];
-for (const [id, nom] of Object.entries(idEnum)) {
-  const img = caseImg[enumCase[nom]];
-  if (img) parId[id] = img; else sansImage.push(Number(id));
-}
-
-// Les images à copier : celles citées, et elles seules.
-const voulues = new Set([...Object.values(parId), ...choix]);
+// Le dossier de densité est résolu AVANT la jointure : `repliParNom()` a besoin d'y chercher.
 const dossier = join(RES, `drawable-${DENSITE}`);
 if (!existsSync(dossier)) {
   console.error(`Densité inconnue : ${dossier}`);
@@ -167,31 +221,81 @@ if (!existsSync(dossier)) {
   process.exit(5);
 }
 
+const parId = {};
+const sansImage = [];
+/** Les identifiants servis par le `default` de `B()`, à distinguer d'un dessin dédié. */
+const replis = [];
+for (const [id, nom] of Object.entries(idEnum)) {
+  const img = caseImg[enumCase[nom]];
+  if (img) { parId[id] = img; continue; }
+  // Pas de `case` : c'est le `default` de `B()`. Voir l'en-tête, § « Le switch a un default ».
+  if (nom.startsWith("BEAN_")) {
+    parId[id] = repliParNom(Number(id), dossier) ?? REPLI_J;
+    replis.push(Number(id));
+    continue;
+  }
+  sansImage.push(Number(id));
+}
+
+// Les images à copier : celles citées, et elles seules.
+const voulues = new Set([...Object.values(parId), ...choix]);
+
 mkdirSync(SORTIE_IMG, { recursive: true });
 let copiees = 0;
 const absentes = [];
+/* **L'empreinte du jeu d'images, et pourquoi elle est ici.**
+   Ces fichiers ne changent jamais entre deux extractions — mais leurs NOMS non plus. Servis sous
+   une URL stable, ils ne peuvent donc pas être mis en cache pour de bon : une image redessinée
+   dans une version suivante de l'application garderait son nom et resterait invisible. D'où
+   `?v=<empreinte>` : l'URL change quand le CONTENU change, et rien d'autre ne la fait changer.
+   C'est ce qui autorise `immutable` côté serveur (voir `next.config.mjs`), et sans lui les 21
+   vignettes de l'accueil repartaient en requêtes conditionnelles à chaque navigation.
+
+   Une empreinte pour le JEU ENTIER, pas une par fichier : le répertoire est régénéré d'un bloc
+   par ce script, jamais fichier par fichier. Cinquante-huit empreintes auraient décrit une
+   granularité qui n'existe pas, et le seul coût de celle-ci est de retélécharger 1,2 Mio après
+   une ré-extraction — un geste de développeur, pas un chemin d'utilisateur. */
+const empreinteJeu = createHash("sha256");
 for (const nom of [...voulues].sort()) {
   const src = join(dossier, `${nom}.webp`);
   if (!existsSync(src)) { absentes.push(nom); continue; }
+  const octets = readFileSync(src);
   copyFileSync(src, join(SORTIE_IMG, `${nom}.webp`));
+  empreinteJeu.update(nom).update("\0").update(octets).update("\0");
   copiees++;
 }
+/* Huit hexadécimaux : l'empreinte ne défend rien, elle distingue. */
+const version = empreinteJeu.digest("hex").slice(0, 8);
 
 writeFileSync(SORTIE_MAP, JSON.stringify({
   _: "Généré par scripts/extract-images.mjs — ne pas éditer à la main.",
   densite: DENSITE,
   chemin: "/boissons",
+  // empreinte du jeu de fichiers copiés : sert de `?v=` et rend le cache immuable honnête
+  version,
   // identifiant de boisson → nom de fichier, sans extension
   parId,
+  /* Les identifiants dont l'image vient du `default` de `B()` et non d'un `case` : une image de
+     REPLI, pas un dessin dédié. Sans cette liste, rien ne distinguerait « 200 → espresso » de
+     « 1 → espresso » dans la table, et la prochaine relecture conclurait à nouveau que la boisson
+     200 a son propre visuel. C'est aussi ce qui permet à l'interface de le dire. */
+  repliParDefaut: replis,
   // index 0-19 → nom de fichier : la liste de l'écran de création, DANS L'ORDRE
   choixRecettePerso: choix,
 }, null, 1) + "\n");
 
 console.log(`densité ${DENSITE}`);
 console.log(`  ${Object.keys(parId).length} identifiants avec image, ${copiees} fichiers copiés dans public/boissons/`);
+console.log(`  empreinte du jeu : ${version}`);
 console.log(`  ${choix.length} icônes proposées pour une recette perso`);
+if (replis.length) {
+  // Dire « repli » et non « avec image » : ces identifiants n'ont pas de dessin à eux, ils
+  // héritent de celui d'`espresso` par le `default` de `B()`. Le taire les ferait passer pour
+  // des visuels dédiés dans le compte de la ligne précédente.
+  console.log(`  ${replis.length} par le repli de B() → ${replis.map((id) => `${id}:${parId[id]}`).join(", ")}`);
+}
 if (sansImage.length) {
-  // Attendu : Bean System (200-205) et recettes perso (230-239) tirent leur icône d'ailleurs.
-  console.log(`  sans image (normal pour les grains et les recettes perso) : ${sansImage.join(", ")}`);
+  // Attendu : les recettes perso (230-239) tirent leur icône de leur index, pas de cette table.
+  console.log(`  sans image (normal pour les recettes perso) : ${sansImage.join(", ")}`);
 }
 if (absentes.length) console.log(`  ⚠ citées mais absentes de cette densité : ${absentes.join(", ")}`);

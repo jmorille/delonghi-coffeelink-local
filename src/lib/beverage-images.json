@@ -2,6 +2,7 @@
  "_": "Généré par scripts/extract-images.mjs — ne pas éditer à la main.",
  "densite": "xhdpi",
  "chemin": "/boissons",
+ "version": "39283a8d",
  "parId": {
   "1": "espresso",
   "2": "regular",
@@ -60,8 +61,22 @@
   "124": "cold_brew_cappuccino",
   "140": "cold_brew_to_go",
   "141": "cold_brew_mug_latte",
-  "142": "cold_brew_mug_cappuccino"
+  "142": "cold_brew_mug_cappuccino",
+  "200": "espresso",
+  "201": "espresso",
+  "202": "espresso",
+  "203": "espresso",
+  "204": "espresso",
+  "205": "espresso"
  },
+ "repliParDefaut": [
+  200,
+  201,
+  202,
+  203,
+  204,
+  205
+ ],
  "choixRecettePerso": [
   "cappuccino",
   "espresso",

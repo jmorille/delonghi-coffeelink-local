@@ -219,7 +219,7 @@ export default function Statistiques() {
             <div className="card">
               <div className="kv">
                 <span className="k">{t("totalBeverages")}</span>
-                <span className="chiffre">
+                <span className="valeur">
                   {fmt(derived.total)}
                 </span>
               </div>

@@ -99,6 +99,14 @@ jobs:
       - name: Vérifier le décodage des arguments de trames
         run: node scripts/verif-args.mjs
 
+      # L'assemblage de la trame 0x83, l'autre moitié de la précédente. Elle est construite par un
+      # module PUR que le navigateur appelle aussi — la carte d'une boisson affiche en direct ce
+      # que « Préparer avec ces valeurs » enverrait — et `server.mjs` ne fait plus qu'emballer le
+      # résultat. Une seule fonction, donc, et ce script prouve qu'elle reste alignée sur le
+      # décodeur : une largeur mal choisie ne lève rien, elle sert un autre café.
+      - name: Vérifier l'assemblage de la trame de boisson
+        run: node scripts/verif-trame-boisson.mjs
+
       # Le report d'une recette dans un emplacement perso est une écriture PERSISTANTE : un
       # ingrédient omis au lieu d'être écrit absent laisse en place celui de la recette précédente,
       # et un `VISIBLE` mis à zéro fait disparaître de la machine l'emplacement qu'on vient de
@@ -130,6 +138,30 @@ jobs:
       # regarde la console — c'est arrivé.
       - name: Vérifier les clés de traduction
         run: node scripts/verif-messages.mjs
+
+      # Les contrastes sont calculés depuis toujours, et ils étaient écrits dans un commentaire
+      # d'en-tête : une table à la main ne suit pas une rampe qui bouge, et sa version précédente
+      # ne mesurait chaque encre que contre le fond de PAGE — alors que presque aucun texte n'y
+      # vit. Trois couples tombaient sous le seuil, un par finition, donc invisibles à qui ne
+      # regarde que la sienne. Ce script relit les valeurs livrées et refait les 72 calculs.
+      - name: Vérifier les contrastes des deux finitions
+        run: node scripts/verif-contraste.mjs
+
+      # L'empreinte des visuels lie quatre pièces — l'extracteur qui l'écrit, la table qui la
+      # porte, la vignette qui la pose sur son URL, la configuration qui accorde `immutable` à
+      # cette valeur et à elle seule. Chacune de ces ruptures est muette : le produit s'affiche à
+      # l'identique, et seul le cache s'éteint. Sans images (elles sont gitignorées), le script
+      # contrôle les quatre accords de code et annonce le cinquième comme sauté.
+      - name: Vérifier la chaîne de l'empreinte des visuels
+        run: node scripts/verif-images.mjs
+
+      # Le grain sélectionné se lit à deux endroits : le drapeau de l'octet 50 d'une trame `0xBA`
+      # par index (six trames), et le mot 4 de `d260_beansystem_sync_par` (une lecture). Le second
+      # a été établi par contraste sur la machine, en changeant le grain à la main. `verif-beansync`
+      # rejoue les trames des deux côtés de ce changement : un décalage d'un mot ne lèverait rien,
+      # il rendrait un index de grain plausible et faux.
+      - name: Vérifier le décodage du grain sélectionné
+        run: node scripts/verif-beansync.mjs
 
       - name: Build
         run: pnpm build

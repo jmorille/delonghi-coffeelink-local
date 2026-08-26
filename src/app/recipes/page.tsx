@@ -581,11 +581,13 @@ export default function Recipes() {
       <h1>{t("heading")}</h1>
       <p className="sub">{t("intro")}</p>
 
-      <div role="list" className="cards">
+      <div role="list" className="cards clavier">
         {/* La carte de création est dans la grille et s'ouvre comme les autres : un seul objet
             visuel sur la page, un seul geste pour créer comme pour modifier. */}
         {open === NOUVELLE && draft && bevLibre ? (
           <BeverageCard
+            /* Pas de section sur cette page : la carte est le premier niveau sous le titre. */
+            niveauTitre={2}
             key="nouvelle"
             /* La déclaration CALCULÉE, pas celle d'une boisson lue : voir `bevLibre`. */
             bev={bevLibre}
@@ -636,8 +638,10 @@ export default function Recipes() {
         ) : (
           <div className="card" role="listitem">
             <div className="cardHead">
-              <div className="titreLigne">
-                <h3 className="cardTitle">{t("create")}</h3>
+              <div className="toucheBev">
+                <div className="titreLigne">
+                  <h2 className="cardTitle">{t("create")}</h2>
+                </div>
               </div>
               <div className="row actions">
                 <button className="primary iconBtn" onClick={ouvrirNouvelle} disabled={!bevLibre}>
@@ -660,9 +664,11 @@ export default function Recipes() {
             return (
               <div className="card" role="listitem" key={e.recipe.id}>
                 <div className="cardHead">
-                  <div className="titreLigne">
-                    <h3 className="cardTitle">{e.recipe.name}</h3>
-                    <span className="pill off">{t("unknownBeverage", { id: e.recipe.beverageId })}</span>
+                  <div className="toucheBev">
+                    <div className="titreLigne">
+                      <h2 className="cardTitle">{e.recipe.name}</h2>
+                      <span className="pill off">{t("unknownBeverage", { id: e.recipe.beverageId })}</span>
+                    </div>
                   </div>
                   <div className="row actions">
                     <button className="mini danger iconBtn" onClick={() => supprimer(e)}>
@@ -682,6 +688,8 @@ export default function Recipes() {
           const decl = declarationLibre(bev);
           return (
             <BeverageCard
+            /* Pas de section sur cette page : la carte est le premier niveau sous le titre. */
+            niveauTitre={2}
               key={e.recipe.id}
               bev={decl}
               profile={e.recipe.profileId}
@@ -726,7 +734,9 @@ export default function Recipes() {
               dessous={
                 ouverte ? (
                   <div className="blocSuite">
-                    <h4>{t("transferHeading")}</h4>
+                    {/* Un sous-bloc DANS une carte : la carte est un `h2` sur cette page (voir
+                    `niveauTitre`), donc ce qu'elle contient est un `h3`. */}
+                <h3>{t("transferHeading")}</h3>
                     {e.transfert.possible ? (
                       <>
                         <p className="chapeau">{t("transferNote")}</p>

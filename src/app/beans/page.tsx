@@ -521,7 +521,12 @@ export default function Beans() {
                     disparaît du titre — la photo est alors montrée en grand dans le formulaire, et
                     c'est là qu'on la remplace. */}
                 <h3 className="cardTitle titreLigne">
-                  {!enEdition && p.imageAt !== null && <img src={urlPhoto(p)} alt="" className="bevVignette" />}
+                  {/* `loading`/`decoding` : contrairement aux dessins de boissons, ces photos
+                      sortent de la base par l'API, une par profil, dans une liste qui descend
+                      sous le pli — c'est le cas où le report change quelque chose. */}
+                  {!enEdition && p.imageAt !== null && (
+                    <img src={urlPhoto(p)} alt="" className="bevVignette" loading="lazy" decoding="async" />
+                  )}
                   <span>{enEdition ? edition.b.name || p.name || t("unnamed") : p.name || t("unnamed")}</span>
                 </h3>
                 <span className="sub num">
