@@ -109,7 +109,7 @@ export default function ReglagesGrains({
             />
             <span className="sub num">{borne?.max ?? 1}</span>
             <Input
-              className="numField"
+              className="w-[4.6rem] flex-none text-right"
               type="number"
               min={borne?.min ?? 0}
               max={borne?.max ?? 1}

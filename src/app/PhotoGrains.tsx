@@ -6,6 +6,7 @@ import "react-easy-crop/react-easy-crop.css";
 import Icone from "./icons";
 import { FORMAT_IMAGE, RAPPORT_IMAGE } from "../lib/image-grains.mjs";
 import { Slider } from "@/ui/slider";
+import { Button } from "@/ui/button";
 
 /**
  * La photo d'une configuration de grains : **choisir, cadrer, produire le format commun**.
@@ -173,11 +174,11 @@ export default function PhotoGrains({
             />
           </label>
           <div className="row">
-            <button className="mini iconBtn" onClick={() => void valider()} disabled={!zone}>
+            <Button type="button" variant="neutre" size="coquille" className="iconBtn" onClick={() => void valider()} disabled={!zone}>
               <Icone nom="choisir" taille={14} />
               <span className="lbl">{t("photoApply")}</span>
-            </button>
-            <button className="mini" onClick={fermer}>{t("photoCancel")}</button>
+            </Button>
+            <Button type="button" variant="neutre" size="coquille"  onClick={fermer}>{t("photoCancel")}</Button>
           </div>
         </div>
       ) : (
@@ -216,9 +217,9 @@ export default function PhotoGrains({
             )}
           </button>
           {visible && (
-            <button className="mini danger photoRetirer" disabled={disabled} onClick={() => onChange(null)}>
+            <Button type="button" variant="arret" size="coquille" className="photoRetirer" disabled={disabled} onClick={() => onChange(null)}>
               {t("photoRemove")}
-            </button>
+            </Button>
           )}
           {/* Pas de `capture` : voir l'en-tête. L'attribut IMPOSE l'appareil photo sur mobile et
               retire l'accès aux fichiers, alors qu'on veut les deux. Sans lui, le sélecteur natif

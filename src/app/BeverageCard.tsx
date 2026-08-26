@@ -11,6 +11,7 @@ import { beverageParams, isSet, type Beverage, type Param, type RecipeParam } fr
 import { MODE, actionPreparer, encodeDispense } from "@/lib/trame-boisson.mjs";
 import Icone from "./icons";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /**
  * **La carte d'une boisson — le composant que `/` et `/recettes` montent tous les deux.**
@@ -479,14 +480,13 @@ export default function BeverageCard({
           <Titre className="cardTitle">{nom}</Titre>
           {apercuCompact ? <p className="sub">{apercuCompact}</p> : null}
           <div className="row actions">
-            <button
+            <Button type="button" variant="neutre" size="commande"
               className="iconBtn"
               onClick={basculer}
               aria-label={t("detailsFor", { beverage: nom })}
-              aria-expanded={false}
-            >
+              aria-expanded={false}>
               <Icone nom="chevron" />
-            </button>
+            </Button>
             {actions?.({ nom, busy, working })}
           </div>
         </div>
@@ -583,14 +583,17 @@ export default function BeverageCard({
             contenu, et c'est lui qui nomme la boisson concernée (« Préparer un Espresso » plutôt
             que « Préparer », vingt-huit fois). Le libellé visible ne fait que doubler l'icône. */}
         <div className="row actions">
-          <button
+          <Button
+            type="button"
+            variant="neutre"
+            size="commande"
             className={"iconBtn" + (open ? " ouvert" : "")}
             onClick={basculer}
             aria-label={open ? t("hideFor", { beverage: nom }) : t("detailsFor", { beverage: nom })}
           >
             <Icone nom="chevron" />
             <span className="lbl">{open ? tc("hide") : tc("details")}</span>
-          </button>
+          </Button>
           {/* « Details » reste a la carte : c'est son propre pli. Tout le reste appartient a la
               page - `/` lit et prepare, `/recettes` prepare, transfere et supprime. */}
           {actions?.({ nom, busy, working })}
@@ -648,10 +651,10 @@ export default function BeverageCard({
             // ne s'en sert pas, « Enregistrer localement » de `/recettes` en a besoin.
             actions={(params) => (
               <>
-                <button className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
+                <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={() => setTech(!tech)} aria-expanded={tech} title={t("technicalInfoTitle")}>
                   <Icone nom="info" />
                   <span className="lbl">{tech ? t("hideTechnicalInfo") : t("technicalInfo")}</span>
-                </button>
+                </Button>
                 {editorActions?.(params)}
               </>
             )}

@@ -20,11 +20,23 @@ import { cn } from "@/ui/cn"
  * d'une commande dit sa **fonction**, et c'est une règle de produit, pas de goût :
  *
  * - `neutre` — la touche ordinaire : lire, ouvrir, enregistrer localement ;
- * - `marche` — VERTE. Elle démarre quelque chose sur l'APPAREIL. Il ne doit y en avoir qu'**une**
- *   visible à la fois sur un panneau ; c'est cette rareté qui la rend lisible d'un coup d'œil ;
+ * - `marche` — elle démarre quelque chose sur l'APPAREIL ;
  * - `arret` — ROUGE. Elle arrête, ou elle détruit. Elle vit sous une garde ;
  * - `choisi` — AMBRE. Elle n'agit pas : elle dit que cette touche-ci est celle qui est
- *   actuellement sélectionnée (profil actif, page courante).
+ *   actuellement sélectionnée (profil actif, page courante) ;
+ * - `discret` — un contour, pas une plaque. Une action secondaire qui ne mérite pas le relief.
+ *
+ * ⚠️ **`marche` n'est PAS une touche verte, et c'est une correction payée une fois.** Elle l'a été,
+ * et c'était un mensonge répété vingt-huit fois : un bouton « Préparer » au repos ne marche pas, il
+ * attend qu'on appuie. Vingt-huit touches vertes sur l'écran d'accueil, c'est la couleur de la
+ * MARCHE dépensée sur une intention — et le jour où la machine coule vraiment un café, plus rien ne
+ * se distingue. Le vert garde sa seule place légitime : les plaquettes d'état que la machine pousse.
+ *
+ * La touche est donc neutre au repos, et sa fonction se lit à son icône et à son nom. Elle dit
+ * quand même « je démarre quelque chose sur l'appareil », mais par un **liseré vert d'un pixel
+ * sous la touche** — l'arête d'une touche de démarrage, pas son verre allumé. Contraste mesuré
+ * contre la plaque : `--vert` #4fae66 sur `--releve` #37393b → 4,19:1 en graphite, #1f5c31 sur
+ * #d2d2cd → 5,26:1 en aluminium ; le seuil d'un élément non textuel est 3:1 (WCAG 1.4.11).
  *
  * ⚠️ **L'ambre ne doit jamais habiller le bouton principal.** C'est la raison pour laquelle le pont
  * de tokens fait de `--primary` la touche neutre (`globals.css`) : peindre en ambre tout `variant`
@@ -68,11 +80,39 @@ const buttonVariants = cva(
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
 
-        /* Les quatre fonctions du produit. Le verre éteint sert de fond : la touche EST la lampe. */
         neutre: `${RELIEF} bg-releve text-encre disabled:opacity-45`,
-        marche: `${RELIEF} bg-vert-verre text-vert disabled:opacity-45`,
+        /**
+         * La plaque neutre, **plus une arête verte de deux pixels sous la touche**. L'appui inverse
+         * le biseau du haut sans toucher à l'arête : c'est le liseré qui dit la fonction, et il ne
+         * doit pas disparaître au moment précis où l'on appuie dessus.
+         */
+        marche: [
+          "select-none rounded-touche transition-[transform,box-shadow] duration-75 active:translate-y-px",
+          "bg-releve text-encre disabled:opacity-45",
+          "shadow-[inset_0_var(--trait)_0_0_var(--color-arete-haute),inset_0_calc(-2*var(--trait))_0_0_var(--color-vert),0_1px_2px_-1px_var(--color-arete-basse)]",
+          "active:shadow-[inset_0_var(--trait)_0_0_var(--color-arete-basse),inset_0_calc(-2*var(--trait))_0_0_var(--color-vert)]",
+        ].join(" "),
+        /* L'arrêt et la destruction, seules à porter le verre allumé : elles n'annoncent pas une
+           intention, elles sont la conséquence. */
         arret: `${RELIEF} bg-rouge-verre text-rouge-encre disabled:opacity-45`,
         choisi: `${RELIEF} bg-ambre-verre text-ambre disabled:opacity-45`,
+        /**
+         * Un contour, pas une plaque : le fond reste celui de la carte. Enfoncée, une touche en
+         * contour ne peut pas inverser un biseau qu'elle n'a pas — elle **épaissit son trait**.
+         * C'est le même geste que le relief, dans la matière qui est la sienne.
+         */
+        discret: [
+          "select-none rounded-touche bg-transparent text-encre transition-[box-shadow] duration-75",
+          "shadow-[inset_0_0_0_var(--trait)_currentColor] active:shadow-[inset_0_0_0_var(--trait-fort)_currentColor]",
+          "disabled:opacity-45",
+        ].join(" "),
+        /* La même, en rouge : supprimer, oublier une machine. Le contour porte la teinte du texte,
+           qui doit passer 4,5:1 — c'est cette valeur-là qui décide, pas le seuil d'un contour. */
+        "discret-arret": [
+          "select-none rounded-touche bg-transparent text-rouge-encre transition-[box-shadow] duration-75",
+          "shadow-[inset_0_0_0_var(--trait)_currentColor] active:shadow-[inset_0_0_0_var(--trait-fort)_currentColor]",
+          "disabled:opacity-45",
+        ].join(" "),
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

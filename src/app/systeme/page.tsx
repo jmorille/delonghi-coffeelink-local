@@ -6,6 +6,7 @@ import Alerte, { TitreAlerte } from "../Alerte";
 import Icone from "../icons";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 interface Finding {
   level: "warn" | "info";
@@ -199,10 +200,10 @@ export default function Systeme() {
             machine et relit l'etat local. La fleche circulaire aurait ete le reflexe, mais c'est le
             dessin de « revenir aux valeurs enregistrees » dans l'editeur — deux sens pour un
             glyphe. Ici la valeur descend de l'appareil, comme partout ailleurs. */}
-        <button className="primary iconBtn" disabled={busy} onClick={load}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={load}>
           <Icone nom="lire" />
           <span className="lbl">{busy ? t("refreshing") : tc("refresh")}</span>
-        </button>
+        </Button>
       </div>
 
       {/* **Neuf sujets independants, et ils etaient neuf bandes de 1 140 px.** Mesure a
@@ -413,10 +414,10 @@ export default function Systeme() {
               </p>
             )}
             <div className="blocSuite">
-              <button className="iconBtn" onClick={readModel} disabled={busy}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={readModel} disabled={busy}>
                 <Icone nom="lire" />
                 <span className="lbl">{d.identification.key ? t("idReread") : t("idRead")}</span>
-              </button>
+              </Button>
               {idMsg && (
                 <span className="sub">
                   {idMsg}
@@ -465,14 +466,14 @@ export default function Systeme() {
             <h3 className="titreBloc">{t("probesHeading")}</h3>
             <p className="legende">{t("probesNote")}</p>
             <div className="row">
-              <button className="iconBtn" disabled={busy} onClick={() => sonder(0)} title={t("probeTitle", { cmd: "0x60" })}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => sonder(0)} title={t("probeTitle", { cmd: "0x60" })}>
                 <Icone nom="oeil" />
                 <span className="lbl">{t("probe", { cmd: "0x60" })}</span>
-              </button>
-              <button className="iconBtn" disabled={busy} onClick={() => sonder(1)} title={t("probeTitle", { cmd: "0x70" })}>
+              </Button>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => sonder(1)} title={t("probeTitle", { cmd: "0x70" })}>
                 <Icone nom="oeil" />
                 <span className="lbl">{t("probe", { cmd: "0x70" })}</span>
-              </button>
+              </Button>
             </div>
             {sondeMsg && <p className="status ok" role="status">{sondeMsg}</p>}
             {d.machineState.checksums && (

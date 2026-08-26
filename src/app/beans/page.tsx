@@ -11,6 +11,7 @@ import { Slider } from "@/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 interface Bean {
   index: number;
@@ -410,10 +411,10 @@ export default function Beans() {
           barre d'actions, elle vit sous le titre de section sans conteneur à elle. */}
       <div className="cardHead barreActions">
         <span className="sub">{t("scanNote")}</span>
-        <button className="primary iconBtn" disabled={busy || !!data?.scan} onClick={scan}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || !!data?.scan} onClick={scan}>
           <Icone nom="lire" />
           <span className="lbl">{data?.scan ? t("scanning") : t("scan")}</span>
-        </button>
+        </Button>
       </div>
       {!data ? (
         <p className="sub">{tc("loading")}</p>
@@ -424,10 +425,10 @@ export default function Beans() {
           </p>
           <div className="row note">
             {[0, 1, 2, 3].map((i) => (
-              <button key={i} className="iconBtn" disabled={busy} onClick={() => read(i)}>
+              <Button type="button" variant="neutre" size="commande" key={i} className="iconBtn" disabled={busy} onClick={() => read(i)}>
                 <Icone nom="lire" />
                 <span className="lbl">{t("readIndex", { index: i })}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -479,28 +480,28 @@ export default function Beans() {
                 </div>
               )}
               <div className="row">
-                <button className="iconBtn" disabled={busy} onClick={() => read(bs.index)}>
+                <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => read(bs.index)}>
                   <Icone nom="lire" />
                   <span className="lbl">{tc("read")}</span>
-                </button>
+                </Button>
                 {!bs.isToggle && (
                   <>
                     {/* La coche, comme « Activer » sur /profils : le grain retenu par la machine.
                         C'est le meme geste sur un autre objet, donc le meme dessin. */}
-                    <button className="iconBtn" disabled={busy || bs.active === true} onClick={() => activate(bs.index)} title={t("activateTitle")}>
+                    <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || bs.active === true} onClick={() => activate(bs.index)} title={t("activateTitle")}>
                       <Icone nom="choisir" />
                       <span className="lbl">{bs.active ? t("alreadyActive") : t("activate")}</span>
-                    </button>
+                    </Button>
                     {/* Le crayon : « Configurer » ouvre l'editeur du bas sur ce grain, il ne
                         configure rien tout seul. */}
-                    <button className="primary iconBtn" disabled={busy} onClick={() => pick(bs)}>
+                    <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => pick(bs)}>
                       <Icone nom="modifier" />
                       <span className="lbl">{selected === bs.index ? t("editing") : t("configure")}</span>
-                    </button>
-                    <button className="mini iconBtn" disabled={busy} onClick={() => memorise(bs)} title={t("presetSaveTitle")}>
+                    </Button>
+                    <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy} onClick={() => memorise(bs)} title={t("presetSaveTitle")}>
                       <Icone nom="ecrire" taille={14} />
                       <span className="lbl">{t("presetSave")}</span>
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -551,11 +552,11 @@ export default function Beans() {
                   />
                   <div className="row note">
                     {/* Rien ne part vers la machine : on enregistre une fiche locale. */}
-                    <button className="primary iconBtn" disabled={busy} onClick={() => void memorise(edition.b, p.id, edition.b.image)}>
+                    <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => void memorise(edition.b, p.id, edition.b.image)}>
                       <Icone nom="ecrire" taille={14} />
                       <span className="lbl">{t("presetApply")}</span>
-                    </button>
-                    <button className="mini" disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</button>
+                    </Button>
+                    <Button type="button" variant="neutre" size="coquille"  disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</Button>
                   </div>
                 </>
               ) : (
@@ -587,20 +588,20 @@ export default function Beans() {
                   <div className="row">
                     <span className="sub">{t("presetWriteTo")}</span>
                     {(data?.beans.filter((x) => !x.isToggle) ?? []).map((x) => (
-                      <button key={x.index} className="mini" disabled={busy} onClick={() => ecrire(p, x.index)} title={t("presetWriteTitle", { index: x.index, current: x.name || t("unnamed") })}>
+                      <Button type="button" variant="neutre" size="coquille" key={x.index}  disabled={busy} onClick={() => ecrire(p, x.index)} title={t("presetWriteTitle", { index: x.index, current: x.name || t("unnamed") })}>
                         #{x.index}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                   <div className="row note">
-                    <button className="mini iconBtn" disabled={busy} onClick={() => editer(p)}>
+                    <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy} onClick={() => editer(p)}>
                       <Icone nom="modifier" taille={14} />
                       <span className="lbl">{tc("edit")}</span>
-                    </button>
-                    <button className="mini danger iconBtn" disabled={busy} onClick={() => oublie(p)}>
+                    </Button>
+                    <Button type="button" variant="arret" size="coquille" className="iconBtn" disabled={busy} onClick={() => oublie(p)}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{t("presetForget")}</span>
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}
@@ -620,10 +621,10 @@ export default function Beans() {
                   <h3 className="cardTitle">{t("presetNew")}</h3>
                 </div>
                 <div className="row actions">
-                  <button className="primary iconBtn" disabled={busy} onClick={() => setNouveau(vide())}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => setNouveau(vide())}>
                     <Icone nom="ajouter" />
                     <span className="lbl">{tc("new")}</span>
-                  </button>
+                  </Button>
                 </div>
               </div>
               <p className="sub">{t("presetNewHint")}</p>
@@ -645,11 +646,11 @@ export default function Beans() {
               <div className="row note">
                 {/* Rien ne part vers la machine : c'est la bibliothèque locale qu'on enrichit.
                     L'écriture dans un emplacement reste la puce « #n » de la carte créée. */}
-                <button className="primary iconBtn" disabled={busy} onClick={() => void memorise(nouveau, undefined, nouveau.image)}>
+                <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => void memorise(nouveau, undefined, nouveau.image)}>
                   <Icone nom="ecrire" taille={14} />
                   <span className="lbl">{t("presetCreate")}</span>
-                </button>
-                <button className="mini" disabled={busy} onClick={() => setNouveau(null)}>{tc("cancel")}</button>
+                </Button>
+                <Button type="button" variant="neutre" size="coquille"  disabled={busy} onClick={() => setNouveau(null)}>{tc("cancel")}</Button>
               </div>
             </>
           )}
@@ -667,7 +668,7 @@ export default function Beans() {
             <div className="row">
               <div>
                 <label htmlFor="ft">{t("flowTime")}</label>
-                <Input id="ft" className="numField" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
+                <Input id="ft" className="w-[4.6rem] flex-none text-right" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
               </div>
               <div>
                 <label htmlFor="crema">{t("crema")}</label>
@@ -691,10 +692,10 @@ export default function Beans() {
                   </SelectContent>
                 </Select>
               </div>
-              <button className="primary iconBtn" disabled={busy} onClick={simulate}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={simulate}>
                 <Icone nom="reglages" />
                 <span className="lbl">{t("simulate")}</span>
-              </button>
+              </Button>
             </div>
 
             {flowTime >= 10 && flowTime < 20 ? (
@@ -749,10 +750,10 @@ export default function Beans() {
                 <div className="row note">
                   {/* La coche, encore : retenir ce que la regle propose. Rien ne part vers la
                       machine ici — les valeurs descendent dans l'editeur juste en dessous. */}
-                  <button className="good iconBtn" disabled={!sim.changed} onClick={applySim}>
+                  <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={!sim.changed} onClick={applySim}>
                     <Icone nom="choisir" />
                     <span className="lbl">{sim.changed ? t("applyToDraft") : t("nothingToChange")}</span>
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -802,7 +803,7 @@ export default function Beans() {
                     {bound.max}
                   </span>
                   <Input
-                    className="numField"
+                    className="w-[4.6rem] flex-none text-right"
                     type="number"
                     min={bound.min}
                     max={bound.max}
@@ -820,24 +821,24 @@ export default function Beans() {
                   deux boutons sont voisins dans cette rangee — « ecrire sur la machine » et
                   « memoriser sans ecrire » — donc c'est exactement l'endroit ou la confusion
                   coute quelque chose : l'un est definitif sur l'appareil, l'autre non. */}
-              <button className="primary iconBtn" disabled={busy} onClick={() => save(true)}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => save(true)}>
                 <Icone nom="machine" />
                 <span className="lbl">{t("writeToMachine")}</span>
-              </button>
+              </Button>
               {/* Mémoriser le brouillon sans rien écrire sur la machine : c'est ce qui permet
                   d'essayer un réglage, de le garder, et de revenir à l'ancien. */}
-              <button className="iconBtn" disabled={busy} onClick={() => memorise(draft)} title={t("presetSaveTitle")}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => memorise(draft)} title={t("presetSaveTitle")}>
                 <Icone nom="ecrire" />
                 <span className="lbl">{t("presetSaveDraft")}</span>
-              </button>
-              <button className="iconBtn" disabled={busy} onClick={() => pick(bean)}>
+              </Button>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => pick(bean)}>
                 <Icone nom="reinitialiser" />
                 <span className="lbl">{tc("reset")}</span>
-              </button>
-              <button className="danger discret iconBtn" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
+              </Button>
+              <Button type="button" variant="discret-arret" size="commande" className="iconBtn" disabled={busy} onClick={() => save(false)} title={t("deleteTitle")}>
                 <Icone nom="corbeille" />
                 <span className="lbl">{t("delete")}</span>
-              </button>
+              </Button>
             </div>
           </div>
         </>

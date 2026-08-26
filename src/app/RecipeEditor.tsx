@@ -9,6 +9,7 @@ import Alerte from "./Alerte";
 import { Slider } from "@/ui/slider";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -352,14 +353,13 @@ export default function RecipeEditor({
             </span>
           </label>
           {defOf(b) !== null ? (
-            <button
-              className="mini"
+            <Button type="button" variant="neutre" size="coquille"
+              
               disabled={v === defOf(b)}
               onClick={() => set(b, defOf(b) as number)}
-              title={t("paramDefaultHint")}
-            >
+              title={t("paramDefaultHint")}>
               {t("paramDefaultBool", { on: defOf(b) === 1 ? 1 : 0 })}
-            </button>
+            </Button>
           ) : (
             <span className="sub" title={t("noParamDefaultHint")}>
               {t("noParamDefault")}
@@ -419,7 +419,7 @@ export default function RecipeEditor({
           {b.max}
         </span>
         <Input
-          className="numField"
+          className="w-[4.6rem] flex-none text-right"
           type="number"
           min={b.min}
           max={b.max}
@@ -432,14 +432,13 @@ export default function RecipeEditor({
              — et le bouton global juste au-dessus porte deja le rembobinage pour la meme action.
              Le glyphe serait repete jusqu'a sept fois par carte, sur vingt-huit cartes, en
              elargissant chaque fois une ligne qui contient deja un curseur et un champ. */
-          <button
-            className="mini"
+          <Button type="button" variant="neutre" size="coquille"
+            
             disabled={(vals[b.id] ?? seedFor(b)) === defOf(b)}
             onClick={() => set(b, defOf(b) as number)}
-            title={t("paramDefaultHint")}
-          >
+            title={t("paramDefaultHint")}>
             {t("paramDefault", { value: defOf(b) as number })}
-          </button>
+          </Button>
         ) : (
           <span className="sub" title={t("noParamDefaultHint")}>
             {t("noParamDefault")}
@@ -469,27 +468,25 @@ export default function RecipeEditor({
             </Badge>
           )}
           {dirty && (
-            <button
+            <Button type="button" variant="neutre" size="commande"
               className="iconBtn"
               onClick={() => {
                 setVals(seed);
                 setPresents(presence());
               }}
-              title={t("resetTitle")}
-            >
+              title={t("resetTitle")}>
               <Icone nom="reinitialiser" />
               <span className="lbl">{tc("reset")}</span>
-            </button>
+            </Button>
           )}
-          <button
-            className="mini iconBtn"
+          <Button type="button" variant="neutre" size="coquille"
+            className="iconBtn"
             disabled={atDefaults}
             onClick={applyDefaults}
-            title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}
-          >
+            title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}>
             <Icone nom="defauts" taille={15} />
             <span className="lbl">{t("defaults")}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -594,29 +591,28 @@ export default function RecipeEditor({
         {advanced.length > 0 && (
           /* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
              de changer de dessin. */
-          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
+          <Button type="button" variant="neutre" size="commande" className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
             <Icone nom="chevron" />
             <span className="lbl">{showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})</span>
-          </button>
+          </Button>
         )}
         {actions?.(params)}
         {onDispense && (
-          <button className="good iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
+          <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
             <Icone nom="preparer" />
             <span className="lbl">{t("prepareWith")}</span>
-          </button>
+          </Button>
         )}
         {onWrite && (
-          <button
-            className="primary iconBtn"
+          <Button type="button" variant="neutre" size="commande"
+            className="iconBtn"
             disabled={busy}
             aria-busy={working || undefined}
             onClick={() => onWrite(params)}
-            title={t("writeTitle")}
-          >
+            title={t("writeTitle")}>
             <Icone nom="machine" />
             <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
-          </button>
+          </Button>
         )}
       </div>
 

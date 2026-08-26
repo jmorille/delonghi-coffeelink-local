@@ -8,6 +8,7 @@ import Icone from "../icons";
 import { Input } from "@/ui/input";
 import { Switch } from "@/ui/switch";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /**
  * Un réglage de la machine, tel que le serveur le publie (`vueReglages`).
@@ -126,10 +127,10 @@ export default function Reglages() {
       </div>
 
       <div className="row barreActions">
-        <button className="iconBtn" disabled={busy} onClick={lire} title={t("readTitle")}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={lire} title={t("readTitle")}>
           <Icone nom="lire" />
           <span className="lbl">{t("read")}</span>
-        </button>
+        </Button>
         {d?.modelName && <span className="sub">{t("model", { name: d.modelName })}</span>}
       </div>
       {msg && <p className={"status " + (msg.kind === "err" ? "err" : "ok")} role="status">{msg.text}</p>}
@@ -198,7 +199,7 @@ export default function Reglages() {
                           onChange={(e) => setBrouillon({ ...brouillon, [r.cle]: e.target.value })}
                         />
                       </div>
-                      <button
+                      <Button type="button" variant="neutre" size="commande"
                         className="iconBtn"
                         disabled={busy || !brouillon[r.cle]}
                         onClick={() =>
@@ -207,11 +208,10 @@ export default function Reglages() {
                             detail: t("confirmDetail"),
                             onConfirm: () => void ecrire({ cle: r.cle, value: Number(brouillon[r.cle]) }, t("writeSent", { name: nom(r.cle) })),
                           })
-                        }
-                      >
+                        }>
                         <Icone nom="ecrire" />
                         <span className="lbl">{t("write")}</span>
-                      </button>
+                      </Button>
                     </div>
                   </>
                 )}

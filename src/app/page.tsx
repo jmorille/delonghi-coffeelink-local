@@ -26,6 +26,7 @@ import { cleAnnonce, echecAnnonce } from "./register";
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
 import { Switch } from "@/ui/switch";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 // Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
@@ -656,10 +657,10 @@ export default function Boissons() {
       {serveurMuet && (
         <Alerte>
           {tc("serverDown")}{" "}
-          <button className="mini iconBtn" onClick={reessayer}>
+          <Button type="button" variant="neutre" size="coquille" className="iconBtn" onClick={reessayer}>
             <Icone nom="reinitialiser" taille={14} />
             <span className="lbl">{tc("retry")}</span>
-          </button>
+          </Button>
         </Alerte>
       )}
       {!live && !serveurMuet && <p className="sub">{tc("pushOff")}</p>}
@@ -707,10 +708,10 @@ export default function Boissons() {
           serveurMuet ? null : (
             <Alerte>
               {t("catalogFailed", { reason: erreurCatalogue })}{" "}
-              <button className="mini iconBtn" onClick={reessayer}>
+              <Button type="button" variant="neutre" size="coquille" className="iconBtn" onClick={reessayer}>
                 <Icone nom="reinitialiser" taille={14} />
                 <span className="lbl">{tc("retry")}</span>
-              </button>
+              </Button>
             </Alerte>
           )
         ) : (
@@ -769,31 +770,29 @@ export default function Boissons() {
                    maintenant la ou vivent deja les gestes qui se meritent l'ouverture — et la
                    rangee de l'affiche n'a plus qu'un voisin a 8 px de l'action physique. */
                 actions={({ nom }) => (
-                  <button
-                    className="good iconBtn"
+                  <Button type="button" variant="marche" size="commande"
+                    className="iconBtn"
                     disabled={busy}
                     aria-busy={pending === bevScope(b.id) || undefined}
                     aria-label={t("prepareFor", { beverage: nom })}
-                    onClick={() => dispense(b)}
-                  >
+                    onClick={() => dispense(b)}>
                     <Icone nom="preparer" />
                     <span className="lbl">{tc("prepare")}</span>
-                  </button>
+                  </Button>
                 )}
                 /* La barre d'actions de l'EDITEUR, apres « Infos techniques ». La charge utile ne
                    sert pas ici : relire interroge la machine, elle n'envoie pas de reglages. */
                 editorActions={() => (
-                  <button
+                  <Button type="button" variant="neutre" size="commande"
                     className="iconBtn"
                     disabled={busy}
                     aria-busy={pending === bevScope(b.id) || undefined}
                     aria-label={t("readFor", { beverage: bevLabel(b) })}
                     onClick={() => startImport("all", [b.id])}
-                    title={t("readTitle")}
-                  >
+                    title={t("readTitle")}>
                     <Icone nom="lire" />
                     <span className="lbl">{tc("read")}</span>
-                  </button>
+                  </Button>
                 )}
                 /* **La ligne de l'affiche : la contenance, deux valeurs au plus.** Voir
                    `resumeContenance`. La legende complete — nom d'usine, nombre de parametres,
@@ -1162,8 +1161,13 @@ function PowerCard({
           indisponible dominait la carte sans rien pouvoir faire.
         */}
         <div className="garde actions">
-          <button
-            className={"danger iconBtn" + (running ? "" : " discret")}
+          {/* Pleine au repos serait une invitation ; en contour tant que rien ne coule, elle dit
+              qu'il n'y a rien à arrêter sans pour autant disparaître. */}
+          <Button
+            type="button"
+            variant={running ? "arret" : "discret-arret"}
+            size="commande"
+            className="iconBtn"
             disabled={busy || !stopAvailable}
             aria-busy={working || undefined}
             aria-label={t("stop")}
@@ -1172,7 +1176,7 @@ function PowerCard({
           >
             <Icone nom="arreter" />
             <span className="lbl">{t("stop")}</span>
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -10,6 +10,7 @@ import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLa
 import Alerte from "../Alerte";
 import Icone from "../icons";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /**
  * `stateTone` rend le vocabulaire des anciennes classes (`""`, `"on"`, `"info"`) ; les plaquettes
@@ -642,10 +643,10 @@ export default function Dashboard() {
               container query sur `.actions`, qui n'existe pas ici. Doubler un texte visible par un
               `aria-label` identique n'ajoute rien et cree un endroit ou les deux peuvent diverger —
               ce qui casse la regle « le nom accessible contient le texte vu ». */}
-          <button className="iconBtn" onClick={register} disabled={busy} title={t("announceTitle")}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={register} disabled={busy} title={t("announceTitle")}>
             <Icone nom="annonce" />
             <span className="lbl">{t("announce")}</span>
-          </button>
+          </Button>
         </div>
       </div>
       </section>
@@ -654,27 +655,26 @@ export default function Dashboard() {
       <h2 id="titre-commandes">{t("machineCommands")}</h2>
       <div className="card">
         <div className="row">
-          <button className="good iconBtn" disabled={busy} onClick={() => power(true)}>
+          <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={busy} onClick={() => power(true)}>
             <Icone nom="marche" />
             <span className="lbl">{tp("turnOn")}</span>
-          </button>
-          <button className="danger discret iconBtn" disabled={busy} onClick={() => power(false)}>
+          </Button>
+          <Button type="button" variant="discret-arret" size="commande" className="iconBtn" disabled={busy} onClick={() => power(false)}>
             <Icone nom="marche" />
             <span className="lbl">{tp("turnOff")}</span>
-          </button>
+          </Button>
           {/* **Le troisième ordre donné à l'appareil, à côté des deux autres.** Il reste désactivé
               tant que le serveur ne signale aucune préparation (`program.dispense`) : sans boisson
               en cours, la trame d'arrêt partirait avec un espresso deviné. Rouge en contour, le
               traitement que le produit réserve à ce qui interrompt. */}
-          <button
-            className="danger discret iconBtn"
+          <Button type="button" variant="discret-arret" size="commande"
+            className="iconBtn"
             disabled={busy || !arretPossible}
             onClick={stop}
-            title={arretPossible ? tp("stopTitle") : t("stopUnavailable")}
-          >
+            title={arretPossible ? tp("stopTitle") : t("stopUnavailable")}>
             <Icone nom="arreter" />
             <span className="lbl">{t("stopPreparation")}</span>
-          </button>
+          </Button>
         </div>
 
         {/* **Séparé des trois au-dessus, et c'est le point.** Ces trois-là agissent sur l'appareil ;
@@ -690,14 +690,14 @@ export default function Dashboard() {
               oppose deux balayages de la MÊME action ; entre deux lectures distinctes il ne disait
               plus « moins large », il disait « moins important », à côté d'une rangée de commandes
               pleine hauteur. Ne pas le réintroduire. */}
-          <button className="iconBtn" disabled={busy} onClick={readState} title={t("readStateTitle")}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={readState} title={t("readStateTitle")}>
             <Icone nom="oeil" />
             <span className="lbl">{t("readState")}</span>
-          </button>
-          <button className="iconBtn" disabled={busy} onClick={readAll} title={t("readAllTitle")}>
+          </Button>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={readAll} title={t("readAllTitle")}>
             <Icone nom="lire" />
             <span className="lbl">{t("readAll")}</span>
-          </button>
+          </Button>
         </div>
         <Statut scope="power" />
       </div>
@@ -779,15 +779,14 @@ export default function Dashboard() {
                             souris. Ne pas retirer l'un des deux — une icône ne nomme rien.
                             « Vider la file », en dessous, garde son libellé : il est unique sur la
                             carte et n'annule pas la même chose. */}
-                        <button
-                          className="danger discret iconBtn iconSeul aDroite"
+                        <Button type="button" variant="discret-arret" size="commande"
+                          className="iconBtn iconSeul aDroite"
                           disabled={busy}
                           onClick={() => annulerTaches(tache.id)}
                           aria-label={t("taskCancel")}
-                          title={t("taskCancelTitle")}
-                        >
+                          title={t("taskCancelTitle")}>
                           <Icone nom="fermer" />
-                        </button>
+                        </Button>
                       </dd>
                     </div>
                   ))}
@@ -840,10 +839,10 @@ export default function Dashboard() {
 
             {(encours || attente.length > 0) && (
               <div className="row note">
-                <button className="danger discret iconBtn" disabled={busy} onClick={() => annulerTaches()}>
+                <Button type="button" variant="discret-arret" size="commande" className="iconBtn" disabled={busy} onClick={() => annulerTaches()}>
                   <Icone nom="fermer" />
                   <span className="lbl">{t("taskCancelAll")}</span>
-                </button>
+                </Button>
               </div>
             )}
           </>

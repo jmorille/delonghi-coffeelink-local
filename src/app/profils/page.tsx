@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 interface OrderEntry {
   id: number;
@@ -103,11 +104,11 @@ function Editeur({
         </div>
       </div>
       <div className="row">
-        <button className="iconBtn" disabled={busy || !edition.name.trim()} onClick={onEcrire}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || !edition.name.trim()} onClick={onEcrire}>
           <Icone nom="ecrire" />
           <span className="lbl">{t("renameWrite")}</span>
-        </button>
-        <button className="mini discret" disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</button>
+        </Button>
+        <Button type="button" variant="discret" size="coquille"  disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</Button>
       </div>
       <p className="legende">{t("renameNote")}</p>
     </div>
@@ -296,19 +297,19 @@ export default function Profils() {
           </div>
           {/* Importer, c'est LIRE sur la machine : le glyphe est celui que /machines et l'accueil
               emploient deja pour ca — une valeur qui descend de l'appareil vers nous. */}
-          <button className="primary iconBtn" disabled={busy || data?.import?.active} onClick={startImport}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || data?.import?.active} onClick={startImport}>
             <Icone nom="lire" />
             <span className="lbl">{data?.import?.active ? t("importing") : t("import")}</span>
-          </button>
+          </Button>
           {/* Le chevron ne change pas de dessin, il pivote : `.iconBtn.ouvert` s'en charge. Un
               second glyphe pour l'etat ouvert aurait ete deux formes pour une seule bascule. */}
-          <button className={"iconBtn" + (showProps ? " ouvert" : "")} onClick={() => setShowProps(!showProps)}>
+          <Button type="button" variant="neutre" size="commande" className={"iconBtn" + (showProps ? " ouvert" : "")} onClick={() => setShowProps(!showProps)}>
             <Icone nom="chevron" />
             <span className="lbl">
               {showProps ? tc("hide") : t("propsButton")} (
               {absentCount ? t("propsCountAbsent", { read: readCount, absent: absentCount }) : t("propsCount", { read: readCount })})
             </span>
-          </button>
+          </Button>
         </div>
         {data?.import && (
           <div className="kv blocSuite">
@@ -411,23 +412,22 @@ export default function Profils() {
                   )}
                 </div>
                 <div className="row">
-                  <button className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
                     <Icone nom="choisir" />
                     <span className="lbl">{t("activate")}</span>
-                  </button>
+                  </Button>
                   {/* **Renommer n'est proposé que si le modèle le permet.** `profileNamesCustomizable`
                       vient du catalogue extrait de l'APK : sur un modèle qui dit non, la trame
                       partirait quand même et on ne sait pas ce qu'elle y ferait. */}
                   {data.model.namesCustomizable !== false && (
-                    <button
-                      className="discret iconBtn"
+                    <Button type="button" variant="discret" size="commande"
+                      className="iconBtn"
                       disabled={busy}
                       onClick={() => setEdition(edition?.kind === "profile" && edition.index === p.id ? null : { kind: "profile", index: p.id, name: p.name ?? "", icon: String(p.icon ?? 0) })}
-                      title={t("renameTitle")}
-                    >
+                      title={t("renameTitle")}>
                       <Icone nom="modifier" />
                       <span className="lbl">{t("rename")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -454,15 +454,14 @@ export default function Profils() {
                   écrire un ordre inventé sur la machine. */}
               {p.order && p.order.length > 0 && (
                 <>
-                  <button
-                    className="discret iconBtn"
+                  <Button type="button" variant="discret" size="commande"
+                    className="iconBtn"
                     disabled={busy}
                     onClick={() => setFavoris(favoris?.profileId === p.id ? null : { profileId: p.id, ids: p.order!.map((o) => o.id) })}
-                    title={t("favoritesTitle")}
-                  >
+                    title={t("favoritesTitle")}>
                     <Icone nom="etoile" />
                     <span className="lbl">{t("favorites")}</span>
-                  </button>
+                  </Button>
                   {favoris?.profileId === p.id && (
                     <div className="note">
                       <ol className="listeFavoris">
@@ -470,14 +469,14 @@ export default function Profils() {
                           <li key={`${id}-${i}`}>
                             <span>{(() => { const o = p.order!.find((x) => x.id === id); return o ? nomBoisson(o) : `#${id}`; })()}</span>
                             <span className="row">
-                              <button className="mini discret" disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</button>
-                              <button className="mini discret" disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</button>
+                              <Button type="button" variant="discret" size="coquille"  disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</Button>
+                              <Button type="button" variant="discret" size="coquille"  disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</Button>
                             </span>
                           </li>
                         ))}
                       </ol>
                       <div className="row">
-                        <button
+                        <Button type="button" variant="neutre" size="commande"
                           className="iconBtn"
                           disabled={busy}
                           onClick={() =>
@@ -486,14 +485,13 @@ export default function Profils() {
                               detail: t("confirmRenameDetail"),
                               onConfirm: () => void ecrireFavoris(),
                             })
-                          }
-                        >
+                          }>
                           <Icone nom="ecrire" />
                           <span className="lbl">{t("favoritesWrite")}</span>
-                        </button>
-                        <button className="mini discret" disabled={busy} onClick={() => setFavoris({ profileId: p.id, ids: p.order!.map((o) => o.id) })}>
+                        </Button>
+                        <Button type="button" variant="discret" size="coquille"  disabled={busy} onClick={() => setFavoris({ profileId: p.id, ids: p.order!.map((o) => o.id) })}>
                           {t("favoritesReset")}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )}
@@ -524,15 +522,14 @@ export default function Profils() {
                     <TableCell className="num">{c.icon ?? tc("dash")}</TableCell>
                     <TableCell className="num">{c.beverageId}</TableCell>
                     <TableCell className="titreLigne">
-                      <button
-                        className="discret iconBtn iconSeul"
+                      <Button type="button" variant="discret" size="commande"
+                        className="iconBtn iconSeul"
                         disabled={busy}
                         onClick={() => setEdition(edition?.kind === "custom" && edition.index === c.slot ? null : { kind: "custom", index: c.slot, name: c.name ?? "", icon: String(c.icon ?? 0) })}
                         aria-label={t("rename")}
-                        title={t("renameTitle")}
-                      >
+                        title={t("renameTitle")}>
                         <Icone nom="modifier" />
-                      </button>
+                      </Button>
                       {/* **Le nom se change ici, la RECETTE se change sur `/`.** Un emplacement perso
                           est une boisson du catalogue (id 229+n) : son éditeur borné par le modèle,
                           avec les valeurs enregistrées du profil, « Préparer » et « Écrire dans le

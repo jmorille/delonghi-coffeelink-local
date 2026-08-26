@@ -1373,7 +1373,11 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 .paramRow > .ctl { flex: 1 1 15rem; }
 .ctl [data-slot="slider"] { flex: 1 1 5rem; min-width: 0; }
 /* Champ numérique : assez large pour trois chiffres, jamais plus, et il ne s'étire pas. */
-.numField { width: 4.6rem; flex: none; text-align: right; }
+/* `.numField` a disparu : le champ est un composant, et sa classe de base porte `w-full` dans la
+   couche `utilities` — une largeur écrite ici perdait en silence, et le champ mangeait toute la
+   ligne en écrasant le curseur à côté. La largeur se pose donc au point d'appel, en utilitaires,
+   où `tailwind-merge` la fait gagner. Défaut constaté au navigateur juste après la conversion des
+   boutons : rien n'était rouge, la ligne de réglage était simplement devenue inutilisable. */
 
 /* ── Tableaux ────────────────────────────────────────────────────────────────────────────────
    Un tableau garde ses colonnes et défile dans SA boîte ; la page, jamais. Les six colonnes de

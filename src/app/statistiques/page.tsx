@@ -6,6 +6,7 @@ import Icone from "../icons";
 import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -193,14 +194,14 @@ export default function Statistiques() {
             pour les dix compteurs identifies, huit pour l'espace complet. Inventer un second dessin
             aurait affirme une difference de nature qui n'existe pas ; la difference d'echelle est
             deja portee par `.mini`, qui rend le second en 13 px estompes a cote d'un 16 px plein. */}
-        <button className="iconBtn" disabled={busy || scanning || !plages.known.length} onClick={() => read(plages.known, t("scopeKnown"))}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || scanning || !plages.known.length} onClick={() => read(plages.known, t("scopeKnown"))}>
           <Icone nom="lire" />
           <span className="lbl">{t("readKnown")}</span>
-        </button>
-        <button className="mini iconBtn" disabled={busy || scanning || !plages.all.length} onClick={() => read(plages.all, t("scopeAll"))} title={t("readAllTitle")}>
+        </Button>
+        <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy || scanning || !plages.all.length} onClick={() => read(plages.all, t("scopeAll"))} title={t("readAllTitle")}>
           <Icone nom="lire" taille={14} />
           <span className="lbl">{t("readAll")}</span>
-        </button>
+        </Button>
         {d?.scan && (
           <Badge variant="marche">{t("scanning", { remaining: d.scan.remaining })}</Badge>
         )}

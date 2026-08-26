@@ -8,6 +8,7 @@ import Alerte from "../Alerte";
 import Icone from "../icons";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
 
 /**
  * Machines : la page qui les liste, les nomme, les configure et les supprime.
@@ -551,40 +552,41 @@ export default function Machines() {
                   pendant qu'une autre travaille libérerait le verrou de la première en avance. */}
               <div className="row">
                 {m.id !== courante && (
-                  <button className="iconBtn" onClick={() => select(m.id)} disabled={!!busy} aria-label={t("select")}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={() => select(m.id)} disabled={!!busy} aria-label={t("select")}>
                     <Icone nom="machine" />
                     <span className="lbl">{t("select")}</span>
-                  </button>
+                  </Button>
                 )}
-                <button
-                  className={"iconBtn" + (ouvert ? "" : " primary")}
+                <Button
+                  type="button"
+                  variant="neutre"
+                  size="commande"
+                  className="iconBtn"
                   onClick={() => setOpen({ ...open, [m.id]: !ouvert })}
                   aria-expanded={ouvert}
                   aria-label={ouvert ? t("configureHide") : t("configure")}
                 >
                   <Icone nom="chevron" />
                   <span className="lbl">{ouvert ? t("configureHide") : t("configure")}</span>
-                </button>
+                </Button>
                 {m.id !== d.defaultId && (
-                  <button
-                    className="mini iconBtn"
+                  <Button type="button" variant="neutre" size="coquille"
+                    className="iconBtn"
                     onClick={() => patch(m, { makeDefault: true }, (r) => t("defaultSet", { name: r.machine.label }))}
                     disabled={!!busy}
-                    aria-label={t("makeDefault")}
-                  >
+                    aria-label={t("makeDefault")}>
                     <Icone nom="etoile" taille={14} />
                     <span className="lbl">{t("makeDefault")}</span>
-                  </button>
+                  </Button>
                 )}
-                <button
-                  className="danger discret iconBtn"
+                <Button type="button" variant="discret-arret" size="commande"
+                  className="iconBtn"
                   onClick={() => remove(m)}
                   disabled={!!busy}
-                  aria-label={d.machines.length <= 1 ? t("reset") : t("delete")}
-                >
+                  aria-label={d.machines.length <= 1 ? t("reset") : t("delete")}>
                   <Icone nom="corbeille" />
                   <span className="lbl">{d.machines.length <= 1 ? t("reset") : t("delete")}</span>
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -648,15 +650,14 @@ export default function Machines() {
                     configurée avant que ça n'existe, lecture qui a expiré, ou simple vérification.
                     C'est une LECTURE — rien n'est préparé ni écrit. */}
                 {m.ready && (
-                  <button
-                    className="mini iconBtn"
+                  <Button type="button" variant="neutre" size="coquille"
+                    className="iconBtn"
                     onClick={() => readModel(m)}
                     disabled={!!busy}
-                    aria-label={m.model.key ? t("modelReread") : t("modelRead")}
-                  >
+                    aria-label={m.model.key ? t("modelReread") : t("modelRead")}>
                     <Icone nom="lire" taille={14} />
                     <span className="lbl">{m.model.key ? t("modelReread") : t("modelRead")}</span>
-                  </button>
+                  </Button>
                 )}
               </span>
             </div>
@@ -698,25 +699,23 @@ export default function Machines() {
                     }}
                     className="champ"
                   />
-                  <button
-                    className="primary iconBtn"
+                  <Button type="button" variant="neutre" size="commande"
+                    className="iconBtn"
                     onClick={() => rename(m)}
                     disabled={!!busy || nom === (m.custom ?? "")}
-                    aria-label={t("rename")}
-                  >
+                    aria-label={t("rename")}>
                     <Icone nom="ecrire" />
                     <span className="lbl">{t("rename")}</span>
-                  </button>
+                  </Button>
                   {m.custom && (
-                    <button
-                      className="mini iconBtn"
+                    <Button type="button" variant="neutre" size="coquille"
+                      className="iconBtn"
                       onClick={() => setRenaming({ ...renaming, [m.id]: "" })}
                       disabled={!!busy}
-                      aria-label={t("nameClear")}
-                    >
+                      aria-label={t("nameClear")}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{t("nameClear")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {/* **La note sort de la rangee.** `.row` veut dire « ces commandes tiennent sur une
@@ -752,26 +751,24 @@ export default function Machines() {
                     }}
                     className="champ"
                   />
-                  <button
-                    className="primary iconBtn"
+                  <Button type="button" variant="neutre" size="commande"
+                    className="iconBtn"
                     onClick={() => saveIp(m)}
                     disabled={!!busy || !(ip[m.id] ?? "").trim()}
                     aria-busy={occupe || undefined}
-                    aria-label={occupe ? tm("testing") : tm("save")}
-                  >
+                    aria-label={occupe ? tm("testing") : tm("save")}>
                     <Icone nom="ecrire" />
                     <span className="lbl">{occupe ? tm("testing") : tm("save")}</span>
-                  </button>
+                  </Button>
                   {m.ipCachedAt && (
-                    <button
-                      className="mini iconBtn"
+                    <Button type="button" variant="neutre" size="coquille"
+                      className="iconBtn"
                       onClick={() => forgetIp(m)}
                       disabled={!!busy}
-                      aria-label={tm("forget")}
-                    >
+                      aria-label={tm("forget")}>
                       <Icone nom="corbeille" taille={14} />
                       <span className="lbl">{tm("forget")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <p className="legende" id={`adr-n-${m.id}`}>{tm("setNote")}</p>
@@ -861,26 +858,24 @@ export default function Machines() {
                           </button>
                         </span>
                       </span>
-                      <button
-                        className="primary iconBtn"
+                      <Button type="button" variant="neutre" size="commande"
+                        className="iconBtn"
                         onClick={() => discover(m)}
                         disabled={!!busy || !c.email || !c.password || !m.dsn}
                         aria-busy={occupe || undefined}
-                        aria-label={occupe ? tk("working") : tk("fetch")}
-                      >
+                        aria-label={occupe ? tk("working") : tk("fetch")}>
                         <Icone nom="cle" />
                         <span className="lbl">{occupe ? tk("working") : tk("fetch")}</span>
-                      </button>
+                      </Button>
                       {m.lanKeyCachedAt && (
-                        <button
-                          className="mini iconBtn"
+                        <Button type="button" variant="neutre" size="coquille"
+                          className="iconBtn"
                           onClick={() => forgetKey(m)}
                           disabled={!!busy}
-                          aria-label={tk("forget")}
-                        >
+                          aria-label={tk("forget")}>
                           <Icone nom="corbeille" taille={14} />
                           <span className="lbl">{tk("forget")}</span>
-                        </button>
+                        </Button>
                       )}
                     </div>
                     <p className="legende">{tk("privacy")}</p>
@@ -904,19 +899,18 @@ export default function Machines() {
                     {/* Même authentification, donc même endroit : le jeton Ayla que la
                         récupération de clé obtient ouvre aussi la fiche OTA. */}
                     <div className="row note">
-                      <button
+                      <Button type="button" variant="neutre" size="commande"
                         className="iconBtn"
                         onClick={() => checkOta(m)}
                         disabled={!!busy || !m.dsn}
                         aria-busy={occupe || undefined}
-                        aria-label={t("otaCheck")}
-                      >
+                        aria-label={t("otaCheck")}>
                         {/* Le nuage ne sert qu'ici, dans tout le produit : c'est la seule action qui
                             quitte le réseau local. Le glyphe est autant un avertissement qu'une
                             étiquette. */}
                         <Icone nom="nuage" />
                         <span className="lbl">{t("otaCheck")}</span>
-                      </button>
+                      </Button>
                     </div>
                     <p className="legende">{t("otaNote")}</p>
                   </>
@@ -973,10 +967,10 @@ export default function Machines() {
               placeholder={t("addressPlaceholder")}
             />
           </span>
-          <button className="primary iconBtn" onClick={add} disabled={!!busy} aria-label={t("add")}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={add} disabled={!!busy} aria-label={t("add")}>
             <Icone nom="ajouter" />
             <span className="lbl">{t("add")}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -996,15 +990,14 @@ export default function Machines() {
             {cloud?.set ? (
               <>
                 <span>{t("cloudSessionSince", { date: new Date(cloud.at ?? 0).toLocaleString("fr-FR") })}</span>
-                <button
-                  className="mini iconBtn"
+                <Button type="button" variant="neutre" size="coquille"
+                  className="iconBtn"
                   onClick={forgetCloud}
                   disabled={!!busy}
-                  aria-label={t("cloudSessionForget")}
-                >
+                  aria-label={t("cloudSessionForget")}>
                   <Icone nom="corbeille" taille={14} />
                   <span className="lbl">{t("cloudSessionForget")}</span>
-                </button>
+                </Button>
               </>
             ) : (
               <span className="sub">{t("cloudSessionNone")}</span>
