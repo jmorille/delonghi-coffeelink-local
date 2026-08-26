@@ -4,6 +4,8 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { MACHINE_EVENT, currentMachine, mfetch, setCurrentMachine } from "./machine";
 import Icone from "./icons";
+import { Touche } from "@/ui/facade";
+import { cn } from "@/ui/cn";
 
 /**
  * Barre de navigation. Le pilotage a deux prérequis — l'adresse de la machine et la clé LAN — et il
@@ -26,7 +28,7 @@ import Icone from "./icons";
  * Les pages masquées restent **servies** : une URL saisie à la main continue d'afficher le cache
  * de la dernière lecture, avec la bannière d'avertissement. On retire l'invitation, pas l'accès.
  *
- * **Deux présentations, une seule liste.** Au-dessus de 1 080 px les entrées sont une rangée dans
+ * **Deux présentations, une seule liste.** Au-dessus du seuil `rail` (1 200 px) les entrées sont une rangée dans
  * la barre ; en dessous, elles vivent dans un panneau qui s'ouvre par la gauche. Le seuil est
  * mesuré, pas choisi : c'est la largeur à laquelle marque + huit entrées + sélecteur de
  * thème tiennent sur une ligne — à 900 px, où je l'avais d'abord posé, la barre passe à deux rangs
@@ -125,8 +127,21 @@ export default function Nav() {
     panneau.current?.close();
   };
 
+  /**
+   * Le sélecteur reste un `<select>` natif, et c'est délibéré. Sur les deux appareils prioritaires
+   * — téléphone et tablette — le natif ouvre le sélecteur du système, qui se manipule au pouce ;
+   * une liste déroulante réécrite en JavaScript ne fait que l'imiter moins bien. Ce qui change,
+   * c'est la matière : une plaque signalétique fraisée dans le rail, pas un champ de formulaire.
+   */
   const selecteurMachine = (
-    <select value={courante ?? ""} onChange={(e) => change(e.target.value)} aria-label={t("machines")}>
+    <select
+      value={courante ?? ""}
+      onChange={(e) => change(e.target.value)}
+      aria-label={t("machines")}
+      className="creuset serigraphie min-h-9 tactile:min-h-11 max-w-40 truncate text-encre appearance-none
+                 bg-creux px-2 py-1 pr-6 outline-none
+                 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ambre"
+    >
       {machines.map((m) => (
         <option key={m.id} value={m.id}>
           {m.label}
@@ -135,59 +150,133 @@ export default function Nav() {
     </select>
   );
 
+  /**
+   * **Une entrée de rail est une légende gravée surmontant sa lampe.** C'est la navigation d'un
+   * panneau d'appareil : le nom est sérigraphié, et un témoin ambre dit lequel est engagé — l'ambre
+   * étant, dans tout le produit, la couleur de ce qui est CHOISI. Un lien souligné en couleur
+   * aurait été la version générique de la même information.
+   *
+   * `aria-current` porte l'état pour qui n'a pas la lampe : le témoin est `aria-hidden`, donc il
+   * n'existe que pour l'œil, et l'annonce passe par l'attribut.
+   */
   const liens = entries.map((e) => {
     const courant = chemin === e.href;
     return (
-      <a href={e.href} key={e.href} aria-current={courant ? "page" : undefined} className={courant ? "actif" : undefined}>
-        {t(e.key)}
+      <a
+        href={e.href}
+        key={e.href}
+        aria-current={courant ? "page" : undefined}
+        className="group flex min-h-9 tactile:min-h-11 flex-col items-center justify-center gap-1 px-2 py-1
+                   rail:min-h-0 rounded-touche
+                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ambre"
+      >
+        {/* `text-encre` sans `!` : `.serigraphie` vit dans la couche `components` et les
+            utilitaires dans `utilities`, qui vient après — l'encre pleine l'emporte par la
+            cascade, pas par la force. C'est la règle que l'en-tête de `globals.css` pose. */}
+        <span
+          className={cn(
+            "serigraphie transition-colors",
+            courant ? "text-encre" : "group-hover:text-encre",
+          )}
+        >
+          {t(e.key)}
+        </span>
+        <span
+          aria-hidden
+          className={cn(
+            "h-0.5 w-full",
+            courant
+              ? "bg-ambre shadow-[0_0_6px_-1px_var(--color-ambre)]"
+              : "bg-transparent group-hover:bg-arete-commande",
+          )}
+        />
       </a>
     );
   });
 
   return (
     <>
-      {/* Présentation « barre » : à partir de 1 080 px. */}
-      <nav className="barNav">
+      {/* Le rail : à partir du seuil `rail`, les entrées sont une rangée de légendes gravées.
+          **`flex` n'est pas cosmétique ici.** Le menu a été un enchaînement d'`<a>` : React les
+          rend sans espace entre eux, donc l'inline formatting context n'offrait AUCUN point de
+          coupure et la rangée ne pouvait pas se replier — mesuré, min-content 442 px dans une
+          fenêtre de 356, soit 265 px de débordement latéral sur les huit pages. En flex, chaque
+          lien est un élément, donc un point de coupure. */}
+      {/* `min-w-0` est une ceinture : même si un jour une entrée s'allonge au-delà du seuil mesuré,
+          le rail se comprime au lieu de pousser la page — un défilement latéral sur une surface de
+          pilotage est le pire des deux maux. */}
+      <nav className="hidden min-w-0 flex-1 items-center justify-end gap-1 rail:flex">
         {/* Le sélecteur n'apparaît qu'à partir de deux machines : avec une seule, il n'offre aucun
             choix et ne ferait que du bruit. */}
         {machines.length > 1 && selecteurMachine}
-        {/* `aria-current` marque la page courante. Le type `Entree` le déclarait depuis toujours sans
-            que rien ne l'utilise : les huit liens étaient rigoureusement identiques, et sur une barre
-            de huit entrées on ne savait pas où l'on se trouvait. La navigation se fait par liens
-            classiques, donc `usePathname` suffit — pas d'état à synchroniser. */}
         {liens}
       </nav>
 
-      {/* Présentation « panneau » : en dessous de 1 080 px. Le bouton reste dans la barre — il porte
-          l'état d'ouverture, donc il doit rester visible et au même endroit une fois ouvert. */}
-      <button type="button" className="menuBtn" aria-label={t("openMenu")} aria-expanded={ouvert} onClick={ouvrir}>
-        <Icone nom="menu" taille={20} />
-      </button>
+      {/* En dessous du seuil, les entrées vivent dans un panneau. Le bouton reste dans le rail —
+          il porte l'état d'ouverture, donc il doit rester visible et au même endroit une fois
+          ouvert. */}
+      <div className="ml-auto flex items-center rail:hidden">
+        <Touche
+          compacte
+          aria-label={t("openMenu")}
+          aria-expanded={ouvert}
+          onClick={ouvrir}
+          icone={<Icone nom="menu" taille={20} />}
+        />
+      </div>
 
+      {/*
+        Le `<dialog>` natif est conservé plutôt que remplacé par un panneau shadcn : `showModal()`
+        apporte le piège de focus, la touche Échap et l'inertie du fond sans une ligne de code, et
+        cette page-ci est justement celle qu'on ouvre quand une machine ne répond plus. Ce qui
+        change est la matière — un panneau de boîtier en creux, avec sa grille, et non une feuille
+        blanche qui glisse.
+
+        Le `::backdrop` — noir opaque par défaut, une des surfaces que personne ne dessine et qui
+        trahit immédiatement une interface assemblée — est habillé dans `surfaces.css`, avec le
+        reste du panneau : il se fond, et sa teinte suit la finition.
+      */}
       <dialog
-        className="drawer"
         ref={panneau}
         aria-label={t("menuLabel")}
         onClose={() => setOuvert(false)}
+        /* `drawer` porte la géométrie, le voile et le MOUVEMENT — voir surfaces.css. Ils étaient
+           réécrits ici en utilitaires, et la réécriture avait perdu la transition : le panneau se
+           téléportait. La composition reste au composant, la matière retourne à la feuille ;
+           `grille` est la seule matière posée ici, parce que c'est un choix de ce panneau-là. */
+        className="drawer grille"
         /* Clic sur le fond : la cible est le `<dialog>` lui-même, jamais un de ses enfants — c'est
            ce qui distingue « à côté du panneau » de « dans le panneau ». */
         onClick={(e) => {
           if (e.target === panneau.current) fermer();
         }}
       >
-        <div className="tete">
-          <Icone nom="machine" taille={20} />
-          <strong>{tApp("brand")}</strong>
-          <button type="button" className="menuBtn" aria-label={t("closeMenu")} onClick={fermer}>
-            <Icone nom="fermer" taille={20} />
-          </button>
+        <div className="flex h-full flex-col">
+          <div className="brosse flex items-center gap-2 border-b border-gravure bg-releve px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+            <Icone nom="machine" taille={18} />
+            <span className="serigraphie flex-1 text-encre">{tApp("brand")}</span>
+            <Touche
+              compacte
+              taille="sm"
+              aria-label={t("closeMenu")}
+              onClick={fermer}
+              icone={<Icone nom="fermer" taille={18} />}
+            />
+          </div>
+
+          <nav aria-label={t("menuLabel")} className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+            {liens}
+          </nav>
+
+          {/* Le sélecteur de machine est un réglage, pas une destination : il reste séparé des
+              liens, en bas, là où le pouce arrive sur un téléphone. Le pied ne se rend que s'il a
+              quelque chose à porter. */}
+          {machines.length > 1 && (
+            <div className="border-t border-gravure p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+              {selecteurMachine}
+            </div>
+          )}
         </div>
-        <nav aria-label={t("menuLabel")}>{liens}</nav>
-        {/* Le sélecteur de machine est un réglage, pas une destination : il reste séparé des
-            liens, en bas, là où le pouce arrive sur un téléphone. Le pied ne se rend que s'il a
-            quelque chose à porter : avec une seule machine et le mode banc retiré, il n'aurait
-            plus été qu'un filet et douze pixels de rembourrage sous le dernier lien. */}
-        {machines.length > 1 && <div className="pied">{selecteurMachine}</div>}
       </dialog>
     </>
   );

@@ -506,7 +506,7 @@ export default function Profils() {
                   <th>{t("machineName")}</th>
                   <th>{t("iconColumn")}</th>
                   <th>{t("beverageId")}</th>
-                  <th><span className="horsEcran">{t("rename")}</span></th>
+                  <th><span className="sr-only">{t("rename")}</span></th>
                 </tr>
               </thead>
               <tbody>

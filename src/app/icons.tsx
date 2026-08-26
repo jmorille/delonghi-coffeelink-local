@@ -22,7 +22,16 @@
  */
 import type { SVGProps } from "react";
 
-/** Le contrat visuel commun : cadre, trait, jointures. Rien d'autre ne doit le redéfinir. */
+/**
+ * Le contrat visuel commun : cadre, trait, jointures. Rien d'autre ne doit le redéfinir.
+ *
+ * **Les extrémités sont carrées et les jointures à angle vif.** Ce n'est pas un détail de goût :
+ * un pictogramme de façade est *gravé* ou sérigraphié, donc il n'a pas de bouts arrondis — ceux-ci
+ * appartiennent au trait écrit à la main, qui est la grammaire de toutes les bibliothèques
+ * d'icônes courantes. Passer de `round` à `square`/`miter` et de 1,6 à 1,75 est ce qui range ce
+ * jeu du côté de l'appareil plutôt que du côté de l'interface générique — et comme tout le monde
+ * passe par ici, la bascule est d'une ligne.
+ */
 export function traitCommun(taille = 17): SVGProps<SVGSVGElement> {
   return {
     width: taille,
@@ -30,9 +39,9 @@ export function traitCommun(taille = 17): SVGProps<SVGSVGElement> {
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
-    strokeWidth: 1.6,
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
+    strokeWidth: 1.75,
+    strokeLinecap: "square",
+    strokeLinejoin: "miter",
     "aria-hidden": true,
     focusable: false,
   };

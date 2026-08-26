@@ -2,9 +2,13 @@
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
-import { IMAGES_PERSO, VignetteBoisson, useImageLabel } from "./BeverageImage";
+import { IMAGES_PERSO, Monogramme, VignetteBoisson, useImageLabel } from "./BeverageImage";
 import RecipeEditor from "./RecipeEditor";
 import { beverageParams, isSet, type Beverage, type Param, type RecipeParam } from "./beverage";
+// **Le constructeur de trame de PRODUCTION, celui que `server.mjs` appelle.** Pur et sans
+// `Buffer`, donc importable ici — c'est sa raison d'être. Recopier l'assemblage dans la page
+// aurait donné une ligne « Trame » qui ressemble à ce qui part sans en être la preuve.
+import { MODE, actionPreparer, encodeDispense } from "@/lib/trame-boisson.mjs";
 import Icone from "./icons";
 
 /**
@@ -51,6 +55,39 @@ function summary(
     .filter(isSet)
     .map((p) => `${paramLabel(p)} ${p.def}${p.unit ? " " + unitLabel(p.unit) : ""}`)
     .join(" · ");
+}
+
+/**
+ * **La ligne de la carte FERMÉE : deux valeurs, et ce sont des contenances.**
+ *
+ * La légende complète en aligne jusqu'à huit — « Espresso macchiato · 3 paramètres · Café 30 ml ·
+ * Arôme 3 niveau · Lait 40 ml · Accessoire 2 · 2 503 (boissons avec lait chaud) ». Mesurée sur les
+ * vingt-huit boissons de l'appareil, cette phrase fait jusqu'à quatre-vingts caractères dont
+ * environ vingt-cinq varient d'une carte à l'autre : « 9 127 (boissons sans lait) » est identique
+ * sur les dix-huit cartes sans lait, et le compteur est un compteur de CATÉGORIE, pas de tasse.
+ * Trois lignes de gris qui ne départagent rien, sur la page qu'on ouvre trois fois par jour.
+ *
+ * Ce qui départage, quand on choisit un café debout devant la machine, c'est **la taille de la
+ * tasse**. D'où les contenances seules, deux au plus : « Café 30 ml · Lait 40 ml ».
+ *
+ * ⚠️ **Le repli sur les niveaux n'est pas une commodité.** Cinq boissons de ce modèle ne déclarent
+ * aucun paramètre en millilitres — « Mug de voyage » n'expose qu'arôme, ordre lait/café et
+ * accessoire. Sans repli leur affiche perdait sa ligne, et une carte muette au milieu de vingt-sept
+ * cartes qui parlent se lit comme une donnée manquante, pas comme une boisson sans contenance
+ * réglable. Les deux registres ne se MÊLENT jamais pour autant : un espresso qui déclare 40 ml
+ * affiche « Café 40 ml » et rien d'autre, plutôt que d'aller compléter avec un arôme qui ne dit
+ * pas la taille. Ordre / accessoire ne remontent dans aucun des deux cas — ce sont des réglages,
+ * pas une contenance, et leur place est l'éditeur.
+ */
+export function resumeContenance(
+  users: Param[],
+  paramLabel: (p: Param) => string,
+  unitLabel: (u: string) => string,
+): string {
+  const poses = users.filter(isSet);
+  const volumes = poses.filter((p) => p.unit === "ml");
+  const retenus = (volumes.length ? volumes : poses.filter((p) => p.unit === "niveau")).slice(0, 2);
+  return summary(retenus, paramLabel, unitLabel);
 }
 
 /**
@@ -146,7 +183,9 @@ export default function BeverageCard({
   onChooseIcon,
   titreChoix,
   pastilles,
+  marques,
   legende,
+  niveauTitre = 3,
 }: {
   bev: Beverage;
   profile: number;
@@ -230,6 +269,23 @@ export default function BeverageCard({
    */
   pastilles?: ReactNode;
   /**
+   * **Le bandeau de marques de l'affiche — ce qui se lit sans lire, carte fermée.**
+   *
+   * Il tient au-dessus du dessin, HORS du flux du texte, et c'est sa raison d'être : posées à côté
+   * du nom, les pastilles passaient à la ligne dès qu'un nom était long, ce qui faisait respirer la
+   * touche sur deux hauteurs différentes selon la boisson — sur une grille de vingt-huit affiches,
+   * les dessins ne s'alignaient plus d'une colonne à l'autre.
+   *
+   * Une marque n'a droit à ce bandeau que si elle DÉPARTAGE : « lait » (la moitié du catalogue) et
+   * l'anomalie « désaligné » (rare, donc informative) le font ; « lu sur la machine » ne le fait pas
+   * en toutes lettres puisqu'elle est vraie partout — elle se réduit à une lampe verte, le vert
+   * étant réservé dans tout ce produit à ce que la MACHINE rapporte.
+   *
+   * Absent, on retombe sur `pastilles` : `/recettes` passait déjà sa pastille « lait » par là et n'a
+   * rien à changer.
+   */
+  marques?: ReactNode;
+  /**
    * **La legende sous le titre, quand celle de la carte ne dit rien de juste.**
    *
    * Celle d'origine decrit une boisson de la MACHINE : son nom d'usine, son nombre de parametres, le
@@ -240,9 +296,23 @@ export default function BeverageCard({
    * prop remplace la ligne entiere ; absente, rien ne change.
    */
   legende?: ReactNode;
+  /**
+   * **Le niveau du titre de la carte, parce qu'il appartient à la page.**
+   *
+   * `/` range ses vingt-huit cartes sous des `h2` de catégorie (« Cafés », « Boissons lactées ») :
+   * une carte y est un `h3`, et c'est le défaut. `/recettes` n'a pas de sections — une seule
+   * liste sous le titre de page — donc ses cartes sont le premier niveau, et sauter de `h1` à
+   * `h3` y laissait un barreau vide dans la seule échelle qu'un lecteur d'écran peut parcourir.
+   *
+   * Aucun effet visuel : `.cardTitle` porte la taille, le poids et la marge.
+   */
+  niveauTitre?: 2 | 3;
 }) {
   const t = useTranslations("beverages");
   const tc = useTranslations("common");
+  /* La balise est calculée une fois : deux `<h2>{nom}</h2>` / `<h3>{nom}</h3>` côte à côte dans
+     le rendu auraient été deux endroits à garder d'accord pour un seul titre. */
+  const Titre = `h${niveauTitre}` as "h2" | "h3";
   const bevLabel = useBeverageLabel();
   const paramLabel = useParamLabel();
   const unitLabel = useUnitLabel();
@@ -279,7 +349,25 @@ export default function BeverageCard({
    * `id` est omis quand la carte porte son propre dessin : `VignetteBoisson` préfère sa table par
    * identifiant, donc le passer écraserait l'image choisie par l'illustration d'usine de la boisson.
    */
-  const dessin = icone != null ? <VignetteBoisson icon={icone} /> : <VignetteBoisson id={bev.id} icon={bev.icon} />;
+  /**
+   * **Le repli du dessin est le même nœud aux deux tailles**, et c'est le CSS qui décide laquelle :
+   * `.monogramme` porte la taille d'une vignette de ligne de titre, `.vignetteGrande .monogramme`
+   * celle d'une affiche. Deux nœuds auraient été deux marques à garder d'accord pour une seule
+   * boisson — la divergence habituelle de ce dépôt, en plus petit.
+   */
+  const repli = <Monogramme nom={nom} />;
+  const dessin =
+    icone != null ? (
+      <VignetteBoisson icon={icone} repli={repli} />
+    ) : (
+      <VignetteBoisson id={bev.id} icon={bev.icon} repli={repli} />
+    );
+  /**
+   * Le bandeau de marques de l'affiche. `marques` d'abord — `/` y met sa lampe de provenance et son
+   * anomalie —, `pastilles` en repli, ce que `/recettes` passait déjà. Aucun des deux : pas de
+   * bandeau, donc pas de rangée vide à réserver.
+   */
+  const marquesAffiche = marques !== undefined ? marques : pastilles;
   /**
    * **La vignette EST le déclencheur du choix d'image — et seulement carte OUVERTE.**
    *
@@ -316,20 +404,79 @@ export default function BeverageCard({
     setGrille(false);
     onToggle();
   };
+
+  /**
+   * **« Infos techniques » — ce qui ne se lit nulle part ailleurs.**
+   *
+   * Le tableau « Tous les paramètres » a été retiré : l'éditeur au-dessus montre déjà chaque
+   * réglage avec ses bornes, son défaut et la valeur du profil. Restent les propriétés Ayla, la
+   * trame lue, et — depuis que l'éditeur passe ses valeurs vivantes — la trame qui PARTIRAIT.
+   *
+   * `params` est la charge utile de l'éditeur à cet instant précis, celle que « Préparer avec ces
+   * valeurs » enverrait. La trame est donc assemblée à chaque rendu : bouger l'arôme d'un cran
+   * réécrit la ligne sous le curseur, sans réseau et sans état à synchroniser.
+   */
+  const panneauTechnique = (params: RecipeParam[]) => (
+    <>
+      <div className="kv">
+        <span className="k">{t("boundsProp")}</span>
+        <span className="mono">{bev.boundsProp ?? "—"}</span>
+      </div>
+      <div className="kv">
+        <span className="k">{t("valuesProp", { profile: profileName ? `${profile} — ${profileName}` : profile })}</span>
+        <span className="mono">{bev.valuesProp ?? "—"}</span>
+      </div>
+      {read && (
+        <div className="kv">
+          {/* « Trame lue » sur une trame qu'on a assemblée soi-même affirmerait une lecture qui
+              n'a pas eu lieu. La provenance vient de la trame, pas de la page qui la montre. */}
+          <span className="k">
+            {read.calculee
+              ? t("computedFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })
+              : t("readFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })}
+          </span>
+          <span className="mono">
+            {read.hex}
+          </span>
+        </div>
+      )}
+      {/* **La trame de la commande, pas celle de la lecture** — et les deux se lisent l'une sous
+          l'autre parce que c'est là qu'on les compare. Elle est dite « calculée » comme sa voisine
+          d'au-dessus : rien ne l'a encore envoyée, et l'afficher sans le dire laisserait croire
+          qu'un café est parti.
+
+          ⚠️ Elle change avec l'INVERSION (paramètre 12) : `actionPreparer` est la règle de l'app,
+          pas une supposition d'ici, et un flat white ne porte donc pas la même action qu'un
+          cappuccino droit. La montrer était la seule façon que ce fait cesse d'être invisible. */}
+      <div className="kv">
+        {/* La MÊME phrase que la trame calculée d'au-dessus, avec une troisième nature : trois
+            libellés pour trois trames auraient laissé « calculée » se dire de trois façons. */}
+        <span className="k">{t("computedFrame", { kind: t("framePrepare") })}</span>
+        <span className="mono">{encodeDispense(bev.id, profile, MODE.START, actionPreparer(params), params).hex}</span>
+      </div>
+    </>
+  );
+
   return (
     /* Ouverte, la carte s'étend sur toute la rangée de la grille (voir `.cards > .card.open`) :
        l'éditeur de recette a besoin de largeur, et le comprimer dans une colonne de 19 rem aurait
        fait de la grille la cause d'un formulaire illisible. */
     <div id={`b${bev.id}`} className={"card" + (open ? " open" : "")} role="listitem">
       {compacte ? (
-        /* **L'affiche.** L'image d'abord, en grand et centrée : c'est elle qu'on balaie du regard
-           pour retrouver une recette. Le chevron ne porte plus le mot « Détails » — un libellé qui
-           répétait ce que la flèche dit déjà, sur chaque carte de la grille. Son nom accessible,
-           lui, reste complet : c'est le seul repère d'un lecteur d'écran. */
+        /* **L'affiche — et c'est maintenant la forme de la carte fermée des DEUX pages.**
+           L'image d'abord, en grand et centrée : c'est elle qu'on balaie du regard pour retrouver
+           une boisson, et c'était le plus petit élément de la carte tant qu'elle tenait 44 px à
+           gauche du nom. Le chevron ne porte plus le mot « Détails » — un libellé qui répétait ce
+           que la flèche dit déjà, sur chaque carte de la grille. Son nom accessible, lui, reste
+           complet : c'est le seul repère d'un lecteur d'écran.
+
+           L'ordre est celui de la lecture d'une touche d'appareil : les marques, le dessin, le nom
+           gravé dessous, la contenance, puis les commandes sous un filet. */
         <div className="cardHead compacte">
+          {marquesAffiche ? <div className="marques">{marquesAffiche}</div> : null}
           <div className="vignetteGrande">{dessin}</div>
-          <h3 className="cardTitle">{nom}</h3>
-          <p className="sub">{apercuCompact}</p>
+          <Titre className="cardTitle">{nom}</Titre>
+          {apercuCompact ? <p className="sub">{apercuCompact}</p> : null}
           <div className="row actions">
             <button
               className="iconBtn"
@@ -344,7 +491,11 @@ export default function BeverageCard({
         </div>
       ) : (
       <div className="cardHead">
-        <div>
+        {/* **La face de la touche.** Fermée, cette boîte EST la touche : creusée dans le boîtier,
+            biseau inversé, le dessin et le nom sérigraphiés dessus, les pastilles d'état en guise
+            de lampes. Ouverte, elle redevient un simple bloc de titre — la carte est alors le
+            sujet de la page, plus un élément d'un clavier. Voir `.toucheBev` dans surfaces.css. */}
+        <div className="toucheBev">
           {/* Le nom et ses pastilles sont UN objet : une rangée avec une gouttière, au lieu de
               quatre `marginLeft: 8` posés pastille par pastille. La gouttière gère aussi le repli —
               une pastille qui passe à la ligne garde son écart, une marge gauche non. */}
@@ -355,7 +506,7 @@ export default function BeverageCard({
           {vignette()}
           {/* Un vrai titre, pas un `<strong>` : c'est le seul moyen de sauter de boisson en boisson
               au lecteur d'écran. Sans lui, 28 cartes n'offraient que 2 repères de navigation. */}
-          <h3 className="cardTitle">{nom}</h3>
+          <Titre className="cardTitle">{nom}</Titre>
           {/* Catégorie de la boisson : pastille neutre. Le vert est réservé à ce que la
               MACHINE rapporte — le laisser ici en mettait quatre par carte, vingt-huit fois, et
               plus rien ne signalait qu'une session venait de tomber. */}
@@ -368,11 +519,21 @@ export default function BeverageCard({
           {bev.beanSystem?.name && (
             <span
               className="pill info"
-              title={t("beanSystemHint", {
-                grinder: bev.beanSystem.grinder,
-                temperature: bev.beanSystem.temperature,
-                aroma: bev.beanSystem.aroma,
-              })}
+              /* **Pas d'infobulle plutôt qu'une infobulle à zéros.** Le nom du grain et ses trois
+                 réglages arrivent dans la même trame `0xBA`, donc en pratique ils vont ensemble —
+                 mais l'index du grain, lui, peut venir de la lecture rapide seule, et le type le
+                 dit désormais (`grinder: number | null`). Un `?? 0` aurait affiché « mouture 0,
+                 température 0, arôme 0 » : trois réglages plausibles et faux, sur l'écran même qui
+                 sert à décider du goût d'un café. */
+              title={
+                bev.beanSystem.grinder !== null && bev.beanSystem.temperature !== null && bev.beanSystem.aroma !== null
+                  ? t("beanSystemHint", {
+                      grinder: bev.beanSystem.grinder,
+                      temperature: bev.beanSystem.temperature,
+                      aroma: bev.beanSystem.aroma,
+                    })
+                  : undefined
+              }
             >
               {t("beanSystem", { name: bev.beanSystem.name })}
             </span>
@@ -386,7 +547,11 @@ export default function BeverageCard({
           )}
           </div>
           {sousTitre && <p className="sub">{sousTitre}</p>}
-          <div className="legende">
+        </div>
+        {/* Sérigraphiée SOUS la touche, sur le boîtier : le nom d'usine, le compte de paramètres,
+            le résumé des réglages, le compteur de catégorie. C'est la ligne qu'on lit après avoir
+            reconnu la boisson, jamais avant — d'où sa place et sa taille. */}
+        <div className="legende">
             {legende !== undefined ? legende : <>
             {/* Le nom d'usine n'est montré que s'il apprend quelque chose. « Espresso macchiato /
                 Espresso Macchiato » disait deux fois la même chose ; « Nom perso / Custom » dit que
@@ -406,7 +571,6 @@ export default function BeverageCard({
               </>
             )}
             </>}
-          </div>
         </div>
         {/* Les trois boutons portaient le même nom sur les 28 cartes : « Détails », « Lire »,
             « Préparer », 84 boutons homonymes pour un lecteur d'écran. Le nom accessible dit
@@ -490,38 +654,15 @@ export default function BeverageCard({
                 {editorActions?.(params)}
               </>
             )}
+            /* **Le panneau est rendu par l'éditeur pour qu'il reçoive les valeurs VIVANTES.** Il
+               appartient toujours à la carte — c'est elle qui tient `tech` et qui décide de ce
+               qu'on y lit — mais la trame « Préparer » qu'il affiche doit se réécrire au cran de
+               curseur près, et l'état des curseurs est chez l'éditeur. Le remonter ici aurait
+               demandé un second état à synchroniser, donc la possibilité d'afficher la trame du
+               rendu précédent sur le seul panneau dont l'exactitude est tout l'intérêt.
+               Visuellement rien ne bouge : `panneau` est rendu en dernier, là où ce bloc était. */
+            panneau={(params) => (tech ? panneauTechnique(params) : null)}
           />
-
-          {tech && (
-          <>
-          {/* Le tableau « Tous les paramètres » a été retiré : l'éditeur de recette au-dessus
-              montre déjà chaque réglage avec ses bornes, son défaut et la valeur du profil. Le
-              dupliquer ici en lecture seule n'ajoutait rien. Les informations techniques gardent ce
-              qui ne se lit nulle part ailleurs : les propriétés Ayla et la trame brute. */}
-          <div className="kv">
-            <span className="k">{t("boundsProp")}</span>
-            <span className="mono">{bev.boundsProp ?? "—"}</span>
-          </div>
-          <div className="kv">
-            <span className="k">{t("valuesProp", { profile: profileName ? `${profile} — ${profileName}` : profile })}</span>
-            <span className="mono">{bev.valuesProp ?? "—"}</span>
-          </div>
-          {read && (
-            <div className="kv">
-              {/* « Trame lue » sur une trame qu'on a assemblée soi-même affirmerait une lecture qui
-                  n'a pas eu lieu. La provenance vient de la trame, pas de la page qui la montre. */}
-              <span className="k">
-                {read.calculee
-                  ? t("computedFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })
-                  : t("readFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })}
-              </span>
-              <span className="mono">
-                {read.hex}
-              </span>
-            </div>
-          )}
-          </>
-          )}
 
           {dessous}
         </div>

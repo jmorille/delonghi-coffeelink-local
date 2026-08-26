@@ -38,6 +38,30 @@ export interface Decoded {
    */
   calculee?: boolean;
 }
+/**
+ * **La configuration de grains sélectionnée sur la machine.**
+ *
+ * `source` dit d'où vient l'index : `"sync"` = le mot 4 de `d260_beansystem_sync_par`, une seule
+ * lecture de propriété ; `"flag"` = le drapeau de l'octet 50 d'une trame `0xBA`, qui exige un
+ * balayage de tous les index. Voir `activeBeanSystem` dans `server.mjs`.
+ *
+ * `name` et les trois réglages peuvent être `null` alors que `index` est connu : ils ne viennent
+ * que du balayage `0xBA`, qui n'a peut-être pas encore eu lieu pour cet index. L'interface doit
+ * donc savoir afficher un grain qu'elle sait sélectionné mais qu'elle ne sait pas nommer.
+ *
+ * `disagree` est rempli quand les deux sources ne désignent pas le même grain. Le serveur ne
+ * tranche pas — il rend les deux index et leurs deux horodatages, et c'est l'interface qui le dit.
+ */
+export type BeanSystem = {
+  index: number;
+  name: string | null;
+  grinder: number | null;
+  temperature: number | null;
+  aroma: number | null;
+  source: "sync" | "flag";
+  disagree: { sync: number; syncAt: number | null; flag: number; flagAt: number | null } | null;
+};
+
 export interface Beverage {
   id: number;
   label: string;
@@ -59,7 +83,7 @@ export interface Beverage {
    * Configuration de grains active, pour la boisson Bean System uniquement. C'est un ATTRIBUT de
    * la boisson — le nom du grain n'est pas le nom de la tasse.
    */
-  beanSystem: { index: number; name: string | null; grinder: number; temperature: number; aroma: number } | null;
+  beanSystem: BeanSystem | null;
   /** Nom SAISI sur la machine, s'il y en a un. C'est lui que réécrit une écriture d'icône. */
   machineName: string | null;
   /**

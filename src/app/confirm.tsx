@@ -112,10 +112,21 @@ export function ConfirmDialog({ ask, onClose }: { ask: Ask | null; onClose: () =
       className="confirm"
       ref={ref}
       aria-labelledby="confirm-question"
-      // Échap et le clic sur le fond passent par `cancel` : on annule, on n'envoie rien.
+      /* **Échap passe par `cancel` ; le clic sur le fond, non — et le commentaire d'origine
+         affirmait le contraire.** Un `<dialog>` n'émet rien quand on clique sur son `::backdrop` :
+         il faut le gérer, ce que `Nav.tsx` fait pour son panneau et ce qui manquait ici. Sur une
+         tablette, toucher à côté est LE geste d'abandon ; sans lui, le dialogue paraissait figé.
+
+         Le sens de la fermeture est le seul acceptable pour une garde : on annule, on n'envoie
+         rien. C'est aussi pourquoi le raccourci est offert sans réserve — il ne peut que renoncer. */
       onCancel={(e) => {
         e.preventDefault();
         onClose();
+      }}
+      /* La cible est le `<dialog>` lui-même, jamais un de ses enfants : c'est ce qui distingue
+         « à côté du dialogue » de « dans le dialogue ». */
+      onClick={(e) => {
+        if (e.target === ref.current) onClose();
       }}
     >
       {ask && (

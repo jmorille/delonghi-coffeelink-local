@@ -1,0 +1,1845 @@
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   LES SURFACES — la structure des neuf pages, rendue dans la façade
+   ═══════════════════════════════════════════════════════════════════════════════════════════
+
+   **Ce fichier a changé de nature, pas de contenu.** Il portait autrefois un monde visuel complet —
+   sa propre palette, ses rayons de 12 px, ses ombres douces. Ce monde a été remplacé par la façade
+   (`globals.css`). Ce qui reste ici est la **structure** : les formules de grille, les container
+   queries, les seuils de repli, les correctifs de débordement.
+
+   La distinction est la seule qui compte pour comprendre pourquoi ce fichier n'a pas été jeté avec
+   l'apparence qu'il portait. Sa structure n'est pas de l'identité visuelle, c'est de la
+   **connaissance produit**, chèrement acquise et mesurée au navigateur :
+
+   - `minmax(min(19rem, 100%), 1fr)` sur `.cards` — le plancher dur faisait déborder les 28 cartes
+     à 320 px de fenêtre ;
+   - `overflow-wrap: anywhere` sur `.cardTitle` — un nom de profil est tapé sur la machine, rien ne
+     borne sa longueur, et un mot de 48 caractères sortait de sa propre carte ;
+   - la formule de colonnes de `.kv`, `minmax(0, min(13rem, 44%))` — un seuil en largeur de
+     conteneur mettait « Mouture » et « 3 » sur deux lignes dans les cartes de grains ;
+
+   Réécrire tout cela à neuf aurait reperdu chacun de ces défauts, un par un. Le remplacement du
+   monde s'est donc fait **à la racine** : le bloc ci-dessous rebranche les ~35 noms de rôle de
+   l'ancienne palette sur les rôles de la façade, et les 1 200 lignes de structure qui suivent
+   changent d'apparence sans changer d'une virgule.
+
+   ── La couche ────────────────────────────────────────────────────────────────────────────────
+
+   Ce fichier est importé par `globals.css` dans la couche `surfaces`, nommée AVANT toutes celles
+   de Tailwind, donc de rang le plus bas. Conséquence voulue : la base de la façade (corps, titres,
+   focus, sélection) et ses matières l'emportent toujours, sans avoir à surenchérir en spécificité,
+   et un utilitaire Tailwind l'emporte sur les deux. Une page migrée n'a rien à défaire ici.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Le rebranchement ──────────────────────────────────────────────────────────────────────
+     À gauche les noms que les 1 200 lignes suivantes emploient ; à droite les rôles de la façade.
+     Aucune couleur n'est écrite ici : c'est ce qui garantit que les deux finitions du boîtier
+     suivent, et qu'il n'existe qu'UN endroit où une teinte est décidée. */
+
+  /* Surfaces. `--raise` doit rester distinct de `--panel` : c'est ce qui empêche la plaque de la
+     machine d'être la plaque de boisson n°0. Sur la façade, ce cran est un éclaircissement de
+     l'arête haute, pas une couleur de plus. */
+  --bg: var(--boitier);
+  --panel: var(--releve);
+  --panel-2: var(--creux);
+  --raise: color-mix(in srgb, var(--releve) 62%, var(--arete-haute));
+
+  /* Trois traits, trois usages — la distinction est conservée telle quelle, elle était juste.
+     Elle tombe exactement sur trois rôles de la façade : la gravure décorative, l'arête basse
+     d'une plaque, et l'arête d'une commande (mesurée ≥ 3:1 dans les deux finitions). */
+  --rule: var(--gravure);
+  --edge: var(--arete-basse);
+  --arete-ctl: var(--arete-commande);
+
+  --text: var(--encre);
+  --encre-douce: var(--encre-faible);
+
+  /* Les trois fonctions. Une « teinte » devient le VERRE de la lampe éteinte — une couleur opaque,
+     donc mesurable une fois pour toutes, ce que l'ancienne feuille avait déjà établi contre les
+     fonds en alpha dont le contraste dépendait de ce qu'il y avait derrière. */
+  --accent-text: var(--ambre);
+  --accent-edge: var(--ambre);
+  --ambre-plein: var(--ambre);
+  --accent-ink: var(--lampe-encre);
+  --accent-tint: var(--ambre-verre);
+
+  --ok-text: var(--vert);
+  --ok-edge: var(--vert);
+  --accent-2: var(--vert);
+  --ok-ink: var(--lampe-encre);
+  --ok-tint: var(--vert-verre);
+
+  /* Le rouge est le seul dont l'encre et le bord diffèrent : mesuré, `--rouge` ne tient pas 4,5:1
+     sur le graphite, alors que `--rouge-encre` tient 5,76:1. Le bord et le grand corps prennent
+     le premier, le texte le second. */
+  --danger-text: var(--rouge-encre);
+  --danger-edge: var(--rouge);
+  --danger: var(--rouge);
+  --danger-ink: var(--lampe-encre);
+  --danger-tint: var(--rouge-verre);
+
+  /* Géométrie. `--radius` valait 12 px : c'est la valeur qui, à elle seule, faisait lire toute
+     l'interface comme un tableau de bord. Elle vaut désormais celle du boîtier. */
+  --radius: var(--r-plaque);
+
+  /* Rôles typographiques que la façade ne nomme pas sous ces noms-là. `--t-section` disparaît en
+     tant que taille : sur un panneau d'appareil, un titre de section est une légende gravée, et
+     c'est la règle `h2` de la base de la façade qui le rend — la variable ne subsiste que pour
+     les quelques sites qui la lisent directement. */
+  --t-section: var(--t-corps);
+  --t-mini: var(--t-legende);
+  --lead-section: 1.3;
+  --lead-ctl: 1.2;
+
+  /* La mesure de lecture : 66 caractères, inchangée — c'est de la typographie, pas du monde. */
+  --mesure: 66ch;
+
+  /* **Hauteur d'une commande : 44 px, et c'est une décision reprise, pas une préférence.**
+     La bascule vers le nouveau monde l'avait posée à 40 px « plancher tactile retenu par la
+     façade » — sauf que le dépôt portait déjà l'arbitrage inverse, mesuré et écrit : voir le
+     commentaire du sélecteur de finition plus bas, qui raconte la fois où descendre un seul axe
+     sous 44 px avait été jugé « le mauvais échange ». La scène n'a pas changé : on manipule ces
+     commandes debout devant la machine, au pouce, sur téléphone comme sur tablette murale, et
+     l'une d'elles fait couler de l'eau chaude. WCAG 2.5.8 demande 24 px ; 44 px est le seuil de
+     l'AAA (2.5.5) et c'est celui que ce produit s'est donné. */
+  --h-ctl: 44px;
+  --track-corps: 1;
+
+  --pile-sans: var(--font-legende), ui-sans-serif, system-ui, sans-serif;
+  --pile-mono: var(--font-valeur), ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+/* Les parties rendues par le navigateur appartiennent aussi au thème : sélection, caret,
+   ascenseurs et cases à cocher sortaient d'un bleu système qui n'est nulle part dans la palette. */
+::selection { background: var(--accent-tint); color: var(--text); }
+html { scrollbar-color: var(--arete-ctl) var(--bg); }
+input, select, textarea { caret-color: var(--accent-text); accent-color: var(--ambre-plein); }
+/* Un anneau de focus unique, visible sur les quatre surfaces, et jamais supprimé. */
+:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; border-radius: var(--r-touche); }
+body {
+  background: var(--bg);
+  color: var(--text);
+  /* 16 px, et non plus 15 : la racine vaut 16, donc tout ce que la feuille écrit en `rem` se
+     mesure enfin contre le texte qu'on lit. La scène d'usage pousse dans le même sens — une
+     tablette posée sur un plan de travail se lit plus loin qu'un écran de bureau, pas plus près.
+     La densité que le produit demande est reprise par l'interligne et l'espacement, pas en
+     rapetissant le texte. */
+  font-family: var(--pile-sans);
+  font-size: var(--t-corps);
+  line-height: var(--lead-corps);
+  letter-spacing: var(--track-corps);
+  /* Les chiffres de cette interface sont des mesures — un compteur, une borne, un identifiant de
+     boisson — et ils se comparent en colonne. Segoe UI les rend déjà de largeur égale (mesuré :
+     écart nul entre dix « 1 » et dix « 0 ») ; SF et Roboto non, et ce sont les faces de la
+     tablette. Non vérifiable ici faute de ces appareils, sans effet mesurable là où ça l'est. */
+  font-variant-numeric: tabular-nums;
+}
+/* Titre de page. `text-wrap: balance` évite le mot orphelin sur la deuxième ligne quand le titre
+   passe à deux lignes sur un téléphone. */
+h1 {
+  font-size: var(--t-page); line-height: var(--lead-page); letter-spacing: -.012em;
+  text-wrap: balance; margin: 0 0 var(--s-1);
+}
+/* **Plus d'air au-dessus d'un titre qu'en dessous**, et un pas franc au-dessus de la gouttiere des
+   cartes : 32 px entre deux sections contre 12 entre deux cartes de la même section. C'était 24
+   contre 16, soit un rapport de 1,5 — assez faible pour qu'un titre de section se lise comme une
+   simple ligne de plus. Le rapport est maintenant de 2,7. */
+h2 {
+  font-size: var(--t-section); line-height: var(--lead-section); letter-spacing: -.008em;
+  text-wrap: balance; margin: var(--s-6) 0 var(--s-3);
+}
+/* `.sub` est un TON, pas un espacement. Il portait `margin: 0 0 18px`, ce qui convient a l'intro
+   d'une page et à rien d'autre : les vingt usages en carte devaient donc l'annuler à la main
+   (`style={{ margin: 0 }}`, quatorze fois). Seule l'intro de page garde la marge, parce qu'elle est
+   la seule a en avoir besoin. */
+.sub { color: var(--encre-douce); font-size: var(--t-petit); margin: 0; }
+/* Trois rôles pour un texte secondaire, et c'est la DISTANCE qui les distingue — elle dit à quoi
+   le texte appartient. Les pages en composaient l'équivalent à la main, avec 0, 2, 4, 6, 8, 10 ou
+   12 px selon l'endroit, donc sans jamais dire laquelle des trois relations elles décrivaient.
+   - `.legende` : collée (2 px) à la ligne juste au-dessus — c'est SA légende.
+   - `.chapeau` : introduit ce qui suit (12 px en dessous) — une phrase avant des commandes.
+   - `.note`    : suit un bloc (12 px au-dessus) — une remarque qui ferme une carte. */
+.legende { color: var(--encre-douce); font-size: var(--t-petit); margin: var(--s-hair) 0 0; }
+.chapeau { color: var(--encre-douce); font-size: var(--t-petit); margin: 0 0 var(--s-3); }
+.note { color: var(--encre-douce); font-size: var(--t-petit); margin: var(--s-3) 0 0; }
+/* **La mesure s'applique là où le texte vit, c'est-à-dire dans les cartes.** `max-width` ne
+   s'applique pas à une boîte en ligne, donc les dizaines de `.sub` employés comme fragment au
+   milieu d'une phrase (« (env) », « non lu ») ne sont pas touchés : seuls les blocs le sont, et
+   ce sont eux qui couraient à 152 caractères. */
+.sub, .legende, .chapeau, .note, .status, .warn, p { max-width: var(--mesure); }
+/* **Et une garde, parce que ces trois classes ont deux emplois.** Elles disent un TON (« texte
+   secondaire ») mais aussi une RELATION (« ce bloc suit », « ce bloc introduit »), et à ce
+   deuxième titre les pages les posent sur des conteneurs : `cardHead chapeau`, `row note`. La
+   mesure y devenait une largeur de composition — 68ch = 513 px — et l'en-tête d'une carte de
+   1 140 px se retrouvait à 513, ses pastilles repliées sur deux lignes avec les boutons collés au
+   titre. Vu à la capture d'écran, pas au calcul.
+   Une rangée de commandes n'a pas de mesure de lecture, et un bloc qui contient des blocs n'est
+   pas un paragraphe : les deux cas sont dits ici plutôt qu'à chacun des quatorze appels. */
+.row, .cardHead, .titreLigne, .machineHead, .kv, .cards, .grilleBrute, .paramRow,
+.actions, .barreActions, .panneaux, .etats { max-width: none; }
+/* **Une carte teintée reste une carte.** `.warn` est dans la liste au-dessus parce que c'est un
+   bandeau de prose ; mais la classe sert aussi à teinter une CARTE entière (`card warn`), et le
+   plafond de mesure s'y appliquait alors au conteneur. Résultat visible sur `/systeme` : dans une
+   liste de onze constats, les quatre en avertissement faisaient 66ch de large et les sept autres
+   toute la largeur — deux gabarits dans une même liste, sans raison lisible. Le texte reste borné :
+   les paragraphes internes (`.legende`, `.note`) portent la mesure eux-mêmes. */
+.card.warn { max-width: none; }
+.chapeau:has(> .kv), .note:has(> .kv), .legende:has(> .kv) { max-width: none; }
+/* **Aucune exception, et c'est une correction.** J'avais dispensé la cellule de tableau et la
+   valeur d'une ligne clé/valeur, en pensant qu'on n'y trouve que des fragments. Mesuré : une
+   valeur de /machines est une phrase de 129 caractères (« Catalogue de boissons : celui du modèle
+   détecté… »). `max-width` ne coupe rien, il replie — une colonne n'y perd donc rien, et il n'y a
+   plus de règle à retenir. Le journal, lui, n'est pas visé : ses lignes sont des `div` et une
+   trame de 52 octets doit tenir sur une ligne, pas sur trois. */
+/* Un `.kv` qui EST le bloc détaché n'a pas besoin des deux filets. */
+.kv.blocSuite { border-bottom: none; }
+/* Ligne de titre : le nom et ses pastilles, un seul objet, espacé par une gouttière et non par
+   sept `marginLeft: 8` posés un par un sur chaque pastille de chaque page. */
+.titreLigne { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); min-width: 0; }
+/* Titre d'un sous-bloc de carte (« Nom », « Adresse de la machine », « Clé LAN » sur /machines).
+   Il portait `margin: "18px 0 6px"` sur deux sites et `"0 0 6px"` sur un troisième — la même
+   chose écrite deux fois, la différence étant seulement « est-ce le premier ». La feuille sait
+   répondre à ça. */
+/* Un cran EN DESSOUS du titre de carte, et non au même niveau : il vit à l'intérieur d'une carte
+   qui a déjà son titre, et deux titres identiques imbriqués ne disent pas lequel contient l'autre.
+   Le poids le tient debout, la taille dit le rang. */
+.titreBloc { font-size: var(--t-petit); font-weight: 700; line-height: var(--lead-section); margin: var(--s-5) 0 var(--s-2); }
+.titreBloc:first-child { margin-top: 0; }
+/* Groupe serré : deux commandes qui forment un seul objet (une valeur et son bouton). */
+.row.serre { gap: var(--s-1); }
+/* Barre d'actions au-dessus d'un contenu : elle appartient au titre de section, pas à une carte.
+   Sur /beans une carte entière ne portait qu'une phrase et un bouton — le gabarit tenait lieu de
+   composition, et il ajoutait un contour entre le titre et la grille qu'il introduit. */
+.barreActions { margin-bottom: var(--s-4); }
+/* Champ de saisie dans une rangée : il PREND la place disponible et se laisse comprimer, au lieu
+   d'imposer 240 px que la colonne n'a pas toujours. Le plafond évite le champ de 700 px de large
+   pour saisir un nom d'hôte. */
+.champ { flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+
+/* ── Champ de mot de passe : la bascule est DANS le champ ─────────────────────────────────────
+   **Elle était à côté, et elle se détachait.** `.champ` porte `flex-grow: 1` ; à l'intérieur du
+   groupe « serré » qui l'accompagnait, il prenait toute la largeur disponible et renvoyait le
+   bouton à la ligne suivante. Mesuré : 48 px SOUS le champ, à 1 024 px comme à 1 921 px — donc
+   pas un défaut de petite largeur, un défaut de structure. La commande qui sert à relire ce qu'on
+   vient de taper flottait sous son champ, rattachée visuellement à rien.
+
+   Posée en absolu dans le champ, elle ne peut plus s'en séparer : il n'y a plus de ligne où se
+   replier. Elle ne coûte plus rien à une rangée qui se repliait déjà sur quatre lignes, et c'est
+   la position que tout le monde connaît.
+
+   Le rembourrage du champ lui réserve sa place — en propriété logique, pour qu'un jour en écriture
+   droite-à-gauche la réservation change de côté avec elle. */
+.champMdp { position: relative; display: flex; flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+.champMdp > .champ { flex: 1 1 auto; max-width: none; padding-inline-end: 46px; }
+.champMdp > .oeil {
+  position: absolute; inset-block: 0; inset-inline-end: 0;
+  /* 44 px de cible, sans dessin : ni fond, ni bordure, ni hauteur minimale héritée du bouton
+     générique — dans un champ, un second cadre ferait deux boîtes imbriquées. */
+  width: 44px; min-height: 0; padding: 0; border: none; background: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  /* 10 px : le rayon des champs et des boutons, ligne 478. Arrondi du seul côté qu'il longe. */
+  color: var(--encre-douce); border-radius: 0 var(--r-touche) var(--r-touche) 0;
+}
+.champMdp > .oeil:hover { color: var(--text); }
+/* Décalage NÉGATIF : l'anneau de focus standard se dessine 2 px à l'extérieur, donc par-dessus la
+   bordure du champ et à cheval sur son coin. Rentré de 2 px, il reste lisible et dans la boîte. */
+.champMdp > .oeil:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: -2px; border-radius: var(--r-touche); }
+
+/* ── Champ étiqueté ──────────────────────────────────────────────────────────────────────────
+   Une étiquette au-dessus de son champ, en un seul objet qui se replie d'un bloc. Sans elle, la
+   page posait des `<label>` frères d'un `<input>`, sans `for` : ils s'affichaient, ne nommaient
+   rien, et cliquer dessus ne donnait pas le focus au champ. */
+.champBloc { display: flex; flex-direction: column; gap: var(--s-hair); flex: 1 1 15rem; min-width: 0; max-width: 24rem; }
+.champBloc > label { font-size: var(--t-petit); color: var(--encre-douce); line-height: var(--lead-dense); }
+.champBloc > .champ, .champBloc > .champMdp { flex: 0 0 auto; max-width: none; width: 100%; }
+
+/* ── Case a cocher et son libelle ────────────────────────────────────────────────────────────
+   **Le libelle bascule, la note explique.** Elles etaient dans le meme `<label>` : le nom
+   accessible de la case faisait 130 caracteres, et sa zone cliquable 317 x 99 px sur telephone
+   — pour le seul reglage de la page qui ecrive un secret de compte sur le disque. Le pouce qui
+   fait defiler la page la cochait. */
+.caseLibelle {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  cursor: pointer; min-height: var(--h-ctl);
+  /* La cible reste confortable sans etre une bande : le libelle est court, la note reste dehors. */
+  padding-inline-end: var(--s-2);
+}
+.caseLibelle > input { flex: none; width: 18px; height: 18px; margin: 0; }
+.caseLibelle:has(input:focus-visible) { outline: 2px solid var(--accent-edge); outline-offset: 2px; border-radius: var(--r-touche); }
+
+/* Liste de contraintes : des puces, pas des `<br>`. Le retrait suit l'echelle d'espacement plutot
+   que le defaut du navigateur, qui est en `px` et ne suit aucun de nos rythmes. */
+.listeLimites { margin: 0; padding-inline-start: 1.1em; }
+.listeLimites > li { margin-block: 2px; }
+/* Sous-bloc d'une carte séparé par un filet : le bloc des profils, un rappel de bornes. Six sites
+   le composaient à la main, avec 10, 12 ou 14 px de part et d'autre selon la page. */
+.blocSuite { margin-top: var(--s-4); padding-top: var(--s-4); border-top: 1px solid var(--rule); }
+/* Titre d'une carte de boisson : un vrai `h3` pour la navigation par titres. Il n'a plus besoin de
+   `display: inline` pour cohabiter avec ses pastilles — c'est `.titreLigne` qui les aligne, et un
+   flex container aurait de toute façon blockifié la déclaration. Le niveau sémantique n'a jamais
+   dépendu du `display`. */
+/* **Le titre de carte a la taille du corps, et c'est une décision.** Le distinguer par la taille
+   demandait un sixième palier entre 16 et 20, donc un pas de 6 % — invisible, et il rendait la
+   rampe molle exactement là où elle l'était déjà. La carte est son propre encadrement : le titre
+   n'a pas à crier qu'il en est le titre. */
+.cardTitle {
+  font-size: var(--t-corps); font-weight: 700; line-height: var(--lead-section); margin: 0;
+  /* **Le titre d'une carte est une donnée, pas une chaîne choisie.** Les noms de recettes perso
+     sont tapés sur la machine : rien ne borne leur longueur et rien ne garantit une espace.
+     Mesuré avec un nom d'un seul mot de 48 caractères : le titre rendait 389 px dans un parent
+     de 338, dans une carte de 372 — il débordait de sa propre carte. `anywhere` coupe le mot
+     plutôt que la carte. */
+  overflow-wrap: anywhere;
+}
+/* **Une carte n'a pas de contour : elle a des arêtes.** C'était le dernier reste de la grammaire
+   que la thèse refuse — une boîte remplie, cerclée d'un pixel, à coins arrondis. Un boîtier
+   d'appareil ne connaît pas ce trait : il connaît une plaque vissée dessus, dont le relief vient
+   d'un biseau — arête haute claire en haut, arête basse sombre en bas — et d'une ombre COURTE.
+   La même matière que `.plaque` dans globals.css ; écrite ici parce que c'est `.card` que les neuf
+   pages emploient, et qu'un alias de plus n'aurait servi qu'à ce que les deux divergent. */
+.card {
+  background: var(--panel); border: 0;
+  border-radius: var(--radius); padding: var(--s-4); margin-bottom: var(--s-3);
+  box-shadow:
+    inset 0 var(--trait) 0 0 var(--arete-haute),
+    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-basse),
+    0 1px 2px -1px color-mix(in srgb, var(--arete-basse) 70%, transparent);
+}
+/* **Chaque carte s'interroge elle-même.** Une carte dans une grille fait ~320 px de large que la
+   fenêtre en fasse 800 ou 1400 : c'est SA largeur qui décide si un libellé de bouton tient, pas
+   celle de la fenêtre. D'où une container query et non une media query — voir `.iconBtn`. */
+.card { container-type: inline-size; container-name: carte; }
+/* Le premier et le dernier enfant d'une carte ne debordent pas de son rembourrage. Sans ces deux
+   règles, chaque site devait le dire lui-même : `<h2 style={{ marginTop: 0 }}>` six fois,
+   `marginBottom: 0` autant. Une carte sait où elle commence. */
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+/* La carte de la machine n'est pas un élément de la liste des boissons : c'est l'état de
+   l'appareil. Elle se distingue par sa surface et son contour, pas par sa position — un simple
+   trait à 1,26:1 la rendait indiscernable de la carte de boisson n°0. */
+.card.machine {
+  background: var(--raise);
+  border-color: transparent;
+  box-shadow:
+    inset 0 1px 0 0 var(--arete-haute),
+    inset 0 -1px 0 0 var(--arete-basse),
+    0 2px 6px -3px var(--arete-basse);
+}
+/* **Tout bouton est une touche encastrée.** C'est la règle qui fait basculer les neuf surfaces
+   d'un coup : le relief vient d'un biseau — arête haute claire, arête basse sombre, plus une ombre
+   COURTE et décalée — et l'appui enfonce réellement la touche d'un pixel en inversant ce biseau.
+   Pas de bordure d'un pixel sur toute la boîte : un boîtier n'a pas de contour, il a des arêtes. */
+button {
+  font: inherit; font-weight: 600; cursor: pointer; color: var(--text);
+  background: var(--releve); border: 0;
+  border-radius: var(--r-touche); padding: 10px 14px;
+  /* Voir `--lead-ctl` : sans cette ligne, la hauteur du bouton suit la prose voisine. */
+  line-height: var(--lead-ctl);
+  box-shadow:
+    inset 0 1px 0 0 var(--arete-haute),
+    inset 0 -1px 0 0 var(--arete-basse),
+    0 1px 2px -1px var(--arete-basse);
+  transition: transform .075s, box-shadow .075s, background .075s;
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+}
+/* La puce de réglage est la seule commande volontairement plus courte que les autres — son
+   encombrement visuel est minimal et sa cible tactile est portée par un pseudo-élément (plus bas). */
+button:not(.mini), input:not([type="range"]):not([type="radio"]):not([type="checkbox"]), select {
+  min-height: var(--h-ctl);
+}
+/* **Le survol est mis sous condition, partout.** Sur un écran tactile il n'existe pas, mais le
+   navigateur le simule après le tap : le bouton reste « survolé » jusqu'au tap suivant, ce qui
+   laisse un bouton éclairci qu'on croit sélectionné. `hover: hover` écarte ce faux état. */
+@media (hover: hover) {
+  button:hover:not(:disabled) { background: color-mix(in srgb, var(--releve) 86%, var(--arete-haute)); }
+  }
+/* Bouton en ligne dans une ligne de réglage (« défaut : 40 ») : même style, encombrement minimal. */
+/* La puce garde SA hauteur : `--lead-ctl` la ramenait à 21,8 px, un pixel de trop en moins par
+   rapport aux ~23 px sur lesquels son encombrement a été réglé. C'est la seule commande dont la
+   hauteur est un choix et pas une conséquence. */
+button.mini { padding: 2px 7px; border-radius: var(--r-touche); font-size: var(--t-mini); font-weight: 500; color: var(--encre-douce); line-height: var(--lead-dense); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+/* **La touche principale n'est PAS ambre.** L'ambre veut dire « choisi » dans tout le produit —
+   profil actif, page courante, provenance d'une valeur lue. L'étendre à « bouton important »
+   allumerait le témoin du choix sur « Configurer » et « Ajouter », qui ne choisissent rien, et la
+   couleur cesserait de se lire d'un coup d'œil sur un panneau. Une touche principale est donc une
+   touche de boîtier usinée plus haut : sa face est éclaircie vers l'arête, et son importance vient
+   du relief, pas d'une couleur de fonction qu'elle n'a pas. */
+button.primary { background: color-mix(in srgb, var(--releve) 68%, var(--arete-haute)); color: var(--encre); }
+/* ── Le vert ne s'allume que sur ce que la machine FAIT ───────────────────────────────────────
+   ═════════════════════════════════════════════════════════════════════════════════════════════
+   **`.good` était vert au repos, et c'était un mensonge répété vingt-huit fois.** La loi du produit
+   dit : ambre = choisi, vert = la MARCHE, rouge = l'arrêt et le défaut. Un bouton « Préparer » au
+   repos ne marche pas — il attend qu'on appuie. Vingt-huit touches vertes sur l'écran d'accueil,
+   c'est la couleur de la marche dépensée sur une intention, et le jour où la machine prépare
+   vraiment un café, plus rien ne se distingue.
+
+   La touche est donc **neutre au repos**, et sa fonction se lit à son icône et à son nom. Le vert
+   reste dans le produit, à sa seule place légitime : les plaquettes d'état que la machine pousse
+   (`.pill.on`), et rien d'autre.
+
+   `.good` n'est pas supprimée pour autant : elle continue de dire « cette touche démarre quelque
+   chose sur l'appareil », ce qui est vrai et ce dont la confirmation a besoin. Elle ne le dit plus
+   par la couleur, elle le dit par un liseré vert d'un pixel sous la touche — l'arête d'une touche
+   de démarrage, pas son verre allumé. Contraste mesuré contre la plaque redérivée : `--vert`
+   #4fae66 sur `--releve` #37393b → 4,19:1 en graphite, #1f5c31 sur #d2d2cd → 5,26:1 en aluminium.
+   Le seuil d'un élément non textuel est 3:1 (WCAG 1.4.11).
+   ═════════════════════════════════════════════════════════════════════════════════════════════ */
+button.good {
+  background: var(--releve);
+  color: var(--text);
+  box-shadow:
+    inset 0 var(--trait) 0 0 var(--arete-haute),
+    inset 0 calc(-2 * var(--trait)) 0 0 var(--ok-edge),
+    0 1px 2px -1px var(--arete-basse);
+}
+button.good:active {
+  box-shadow:
+    inset 0 var(--trait) 0 0 var(--arete-basse),
+    inset 0 calc(-2 * var(--trait)) 0 0 var(--ok-edge);
+}
+/* **Une commande partie et pas encore acquittée n'est pas une commande qui marche.** Le protocole
+   ne rend la main sur rien : la machine ramasse la trame à sa prochaine visite, deux à quatre
+   secondes plus tard, et peut ne jamais répondre. C'est l'attente rendue — la hachure inerte de
+   `.attente`, jamais un sablier qui promet une arrivée. */
+button[aria-busy="true"] {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--encre-douce) 22%, transparent) 0 1px,
+    transparent 1px 6px
+  );
+}
+button.danger { background: var(--rouge-verre); color: var(--rouge-encre); }
+.row { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: center; }
+/* ── Ligne clé / valeur ───────────────────────────────────────────────────────────────────────
+   **Deux colonnes, pas deux bords.** C'était un `space-between` : le libellé à gauche, la valeur
+   collée au bord droit, donc l'écart entre les deux dépendait de la longueur du libellé et de
+   celle de la valeur. Mesuré sur les neuf lignes de la carte machine de `/machines` : 62, 116,
+   150, 219, 346, 387, 392 et 465 px. Neuf lignes, neuf distances — l'œil n'a aucune colonne à
+   suivre, et lire « quelle est l'adresse » demande de traverser un vide différent à chaque ligne.
+   La passe précédente avait plafonné le cas le pire à 44 rem ; ça limitait les dégâts sans traiter
+   la cause, et c'était dit comme tel.
+
+   En grille, la valeur commence à 13 rem quelle que soit la carte : les valeurs forment une
+   colonne, l'écart est constant, et le plafond de largeur devient inutile — l'espace restant à
+   droite est du vide inerte, plus un vide traversé du regard. Une valeur longue (une trame, une
+   adresse) récupère au passage toute la largeur, au lieu d'être coupée à 44 rem. */
+.kv {
+  display: grid;
+  /* 13 rem, mais jamais plus de 44 % de la carte. Le plafond en pourcentage remplace une container
+     query qui empilait libellé et valeur sous 24 rem : dans les cartes de grains, larges de 276 px,
+     elle mettait « Mouture » sur une ligne et « 3 » sur la suivante — deux lignes pour un
+     caractère. Le vrai critère n'est pas la largeur du conteneur mais la longueur du libellé, et un
+     pourcentage l'approche mieux qu'un seuil : la colonne se resserre au lieu de disparaître, et
+     l'alignement — la raison d'être de la grille — survit dans les deux cas. */
+  grid-template-columns: minmax(0, min(13rem, 44%)) minmax(0, 1fr);
+  gap: var(--s-hair) var(--s-4);
+  padding: var(--s-1) 0;
+  border-bottom: 1px dashed var(--rule);
+  /* Une pastille est un objet, pas une colonne : sans ça `justify-self` vaut `stretch` et
+     « en attente » s'étirait sur les 330 px de la colonne de valeurs. La ligne de base aligne la
+     pastille sur son libellé au lieu de la centrer sur la hauteur de la rangée. */
+  justify-items: start;
+  align-items: baseline;
+}
+/* **Une valeur qui doit occuper toute sa colonne le dit.** `justify-items: start` ci-dessus est le
+   bon défaut — une pastille est un objet, pas une colonne — mais il empêche `margin-left: auto` de
+   fonctionner dans la cellule de valeur : la boîte n'est large que de son contenu, donc « pousser à
+   droite » ne pousse nulle part. C'est ce qui laissait les croix « Annuler » de la file en dents de
+   scie, chacune posée là où le libellé qui la précède s'arrête. */
+.kv > .etire { justify-self: stretch; }
+.kv:last-child { border-bottom: none; }
+/* Le libellé et la valeur gardent la MÊME taille : ils forment une ligne, et deux tailles dans une
+   ligne de tableau cassent l'alignement optique qui fait tenir la colonne. Le ton les distingue. */
+.kv .k { color: var(--encre-douce); }
+/* **Une paire nom/valeur écrite comme telle.** Là où ces lignes sont de vraies paires — `/pilotage`
+   pour l'instant — la liste est un `<dl>`, chaque rangée un `<div className="kv">` (permis comme
+   groupe dans un `<dl>`), et ses deux cellules un `<dt>`/`<dd>`. L'appariement cesse alors d'être
+   une affaire de colonnes : il est dans le balisage, donc lisible en linéaire. Reste à neutraliser
+   ce que le navigateur ajoute de son côté — la marge de 40 px du `<dd>`, que la grille ne peut pas
+   absorber, et la marge verticale du `<dl>`, qui décollerait la liste de sa carte. */
+dl.kvListe { margin: 0; }
+.kv > dd { margin: 0; }
+/* Le compte qui suit un titre de section (« Dans l'ordre de la machine (23) ») héritait du gras du
+   titre : il pesait autant que lui. Trois pages posaient `fontWeight: 400` à la main. */
+h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
+/* Une valeur chiffrée mise en avant — le total des boissons préparées. Elle emprunte le palier de
+   section : c'est une donnée, pas un titre, et lui donner sa propre taille aurait rouvert la
+   sixième valeur que cette passe supprime. Chiffres tabulaires, jamais du monospace : un nombre
+   n'est pas un identifiant. */
+/* `.chiffre` a été retirée : c'était 16 px gras pour un nombre dans une phrase, et ses deux
+   emplois — le compteur total de `/statistiques`, la valeur courante d'un réglage d'appareil —
+   sont des MESURES. Elles portent `.valeur` (globals.css), qui est ce qu'une façade affiche en
+   grand, en Helvetica monospacée, avec des chiffres qui ne bougent pas quand ils changent. */
+/* Les 52 compteurs non identifiés : une grille de paires brutes, secondaire par nature. Le bloc
+   portait sa grille et sa gouttière en style inline — la seule survivante de la passe précédente. */
+.grilleBrute {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0 var(--s-3); font-size: var(--t-petit);
+}
+.kv > * { min-width: 0; overflow-wrap: anywhere; }
+/* Trois rôles, trois traitements — et la pastille nue en a un, elle aussi. Sans fond ni
+   bordure, `<span className="pill">` (« par défaut », « forcé par l'environnement ») ne se
+   distinguait de rien : elle ressemblait à du texte mal espacé. */
+/* **La pastille n'est plus une pilule.** Le rayon complet est le vocabulaire du tableau de bord ;
+   sur une façade, un état est une plaquette sérigraphiée en creux, en capitales espacées. Les
+   variantes qui rapportent un état de l'appareil portent EN PLUS une lampe, dessinée en
+   pseudo-élément — c'est ce qui sépare « ce que la machine dit » d'une simple catégorie, et c'est
+   la raison pour laquelle `.pill` nue n'en reçoit aucune. */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: var(--r-plaque);
+  font-size: var(--t-mini); font-weight: 650; line-height: var(--lead-dense);
+  letter-spacing: var(--suivi-legende); text-transform: uppercase;
+  background: var(--creux); color: var(--encre-douce); border: 0;
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+}
+.pill.on::before, .pill.off::before, .pill.info::before {
+  content: ""; inline-size: 7px; block-size: 7px; border-radius: 999px; flex: none;
+  background: currentColor; box-shadow: 0 0 6px -1px currentColor;
+}
+/* Ce que la machine rapporte. Le vert et le rouge ne servent qu'à ça. */
+.pill.on { background: var(--vert-verre); color: var(--vert); }
+.pill.off { background: var(--rouge-verre); color: var(--rouge-encre); }
+/* Ce que nous avons choisi ou lu : profil de grain, provenance d'une valeur. Distinct du vert
+   parce que ce n'est pas un état de l'appareil — « Bean Adapt : Grain A » décrit une
+   configuration, pas une machine prête. */
+.pill.info { background: var(--ambre-verre); color: var(--ambre); }
+/* **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un
+   attribut `title` — donc nulle part sur la tablette et le téléphone, les deux appareils que
+   PRODUCT.md met au premier rang. La pastille est maintenant un lien vers la page qui les nomme.
+   Elle garde exactement l'apparence de la pastille correspondante : c'est un lien parce qu'elle
+   mène quelque part, pas pour se distinguer de ses voisines. */
+a.pill { text-decoration: none; }
+a.pill:hover { text-decoration: underline; text-underline-offset: 2px; }
+a.pill:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+input, select {
+  font: inherit; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--arete-ctl); border-radius: var(--r-touche); padding: 8px 10px;
+  line-height: var(--lead-ctl);
+}
+input::placeholder { color: var(--encre-douce); opacity: 1; }
+label { display: block; font-size: var(--t-petit); color: var(--encre-douce); margin-bottom: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: var(--t-petit); line-height: var(--lead-dense); }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+.log { font-family: var(--pile-mono); font-size: var(--t-mini); line-height: var(--lead-dense); max-height: 260px; overflow: auto; }
+/* Les lignes du journal portent maintenant la trame ECAM : sans repli, une trame de 52 octets
+   obligerait a faire defiler horizontalement pour lire une seule ligne. */
+.log > div { overflow-wrap: anywhere; }
+/* `--accent-2` et `--accent` sont des tons de SURFACE : en texte sur une carte blanche ils
+   tombaient à 2,58:1 et 2,92:1. Les tons de texte sont calculés pour ça (6,41:1 et 6,28:1). */
+.log .in { color: var(--ok-text); }
+.log .out { color: var(--accent-text); }
+.log .sys { color: var(--encre-douce); }
+/* **`.mono` désigne un identifiant, jamais une mesure ni une phrase.** Il servait 81 fois et
+   couvrait trois emplois : un identifiant qu'on lit caractère par caractère (DSN, hôte, nom de
+   propriété Ayla, trame hexadécimale) — le bon ; une colonne de chiffres, où l'alignement était le
+   vrai besoin ; et un nombre d'un seul caractère au milieu d'une phrase, où c'était du costume.
+   `.num` prend les deux derniers : les chiffres tabulaires alignent aussi bien, dans la voix de
+   l'interface, sans faire passer « 3 » pour du code.
+   L'oeil du monospace est plus petit à taille égale : le cran de moins évite qu'un identifiant
+   pèse plus lourd que le libellé qui le nomme. */
+.mono { font-family: var(--pile-mono); font-size: .95em; }
+.num { font-variant-numeric: tabular-nums; }
+/* ── L'avertissement n'a pas droit à l'ambre ──────────────────────────────────────────────────
+   ═════════════════════════════════════════════════════════════════════════════════════════════
+   **Deux sens pour une couleur, c'est zéro sens.** L'ambre veut dire CHOISI ou CONFIGURÉ dans tout
+   ce produit — le profil actif, la page courante, la provenance d'une valeur lue. Ce bandeau le
+   portait aussi pour dire « attention », et les deux emplois se croisaient sur la même page : sur
+   `/reglages`, la carte d'avertissement était ambre au-dessus de plaquettes ambre qui, elles,
+   disaient « c'est celui-ci ». Plus rien ne se lit d'un coup d'œil quand la même teinte répond à
+   deux questions.
+
+   Un boîtier d'appareil sait faire autrement, et c'est même sa manière : **la mise en garde est un
+   creux hachuré**, la matière que ce monde emploie déjà pour ce qui n'est pas un état de marche.
+   Elle attire l'œil par la texture et par le retrait, pas par une couleur de fonction qu'elle
+   n'a pas. Le rouge n'est pas la réponse non plus : le rouge est l'ARRÊT et le DÉFAUT, et une note
+   de prudence n'est ni l'un ni l'autre — l'employer ici userait le seul signal qui doit encore
+   pouvoir faire sursauter.
+   ═════════════════════════════════════════════════════════════════════════════════════════════ */
+.warn {
+  background: var(--panel-2);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--encre-douce) 18%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+  border: 0;
+  box-shadow:
+    inset 0 var(--trait) 0 0 var(--arete-basse),
+    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-haute);
+  padding: 10px 14px;
+  border-radius: var(--r-creux);
+  color: var(--text);
+}
+/* Bandeau d'avertissement : le pictogramme et le texte, jamais concaténés. Le décalage est en `em`
+   pour que l'icône reste centrée sur la PREMIÈRE ligne quel que soit le corps du texte — un
+   bandeau de page et un titre de carte n'ont pas la même taille.
+   `.alerte` est posé à côté de `.warn`, jamais dessus : `.warn` sert aussi de teinte à des cartes
+   entières (`card warn`), et en faire un conteneur flex y aurait mis les blocs en rangée. */
+.alerte { display: flex; align-items: flex-start; gap: var(--s-2); }
+.alerte > svg { flex: none; margin-top: .18em; color: var(--accent-text); }
+.alerte > * { min-width: 0; }
+
+/* Interrupteur (marche/arrêt machine) */
+.switch { position: relative; display: inline-block; width: 52px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switch .track {
+  position: absolute; inset: 0; border-radius: var(--r-touche);
+  background: var(--creux); border: 0;
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+  transition: background .18s;
+}
+.switch .knob {
+  position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+  border-radius: var(--r-touche);
+  background: var(--aluminium);
+  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
+  transition: transform .18s, background .18s;
+}
+.switch input:checked + .track { background: var(--vert-verre); }
+.switch input:checked + .track .knob { transform: translateX(24px); background: var(--vert); }
+/* **La position inconnue.** Ni allumé ni éteint : la poignée quitte ses deux extrémités, se
+   centre, et la piste prend la hachure d'attente — la matière que ce monde emploie partout pour
+   « la machine n'a rien dit ». C'est un état à part entière, pas un état désactivé qu'on aurait
+   grisé : le `opacity: .45` du désactivé dirait « cette commande ne vous est pas offerte », alors
+   que ce qu'il faut dire est « nous ne savons pas ce qu'elle vaut ». */
+.switch.inconnu .track {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--encre-douce) 22%, transparent) 0 1px,
+    transparent 1px 6px
+  );
+}
+.switch.inconnu .knob {
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--encre-douce);
+}
+/* La règle de la poignée allumée porte une transformation : sans ce rappel, une machine dont
+   l'état devient inconnu PENDANT qu'elle est allumée garderait sa poignée à droite. */
+.switch.inconnu input:checked + .track .knob { transform: translateX(-50%); }
+.switch.inconnu input:disabled + .track { opacity: 1; }
+.switch input:disabled { cursor: not-allowed; }
+.switch input:disabled + .track { opacity: .45; }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+
+/* Ligne de réglage : un interrupteur et ce qu'il fait. Volontairement PAS un `.kv` — sa première
+   colonne fait 13 rem, ce qui aurait laissé 150 px de vide entre un interrupteur de 52 px et son
+   libellé. Ici la commande est un objet de largeur fixe et le texte prend le reste.
+   `align-items: flex-start` et non `center` : la conséquence passe sur deux lignes en dessous de
+   360 px, et l'interrupteur doit alors rester en face de la première, pas au milieu du bloc. */
+.ligneReglage {
+  display: flex; align-items: flex-start; gap: var(--s-4);
+  padding: var(--s-3) 0; border-bottom: 1px dashed var(--rule);
+  cursor: pointer;
+}
+.ligneReglage:last-of-type { border-bottom: none; }
+.ligneReglage > .switch { margin-top: 2px; }
+.texteReglage { display: grid; gap: var(--s-hair); min-width: 0; }
+
+/* Compte rendu d'une action, rendu DANS la carte qui l'a déclenchée.
+   Avant, un seul message vivait tout en haut de la page : un « Préparer » sur la 22e boisson
+   confirmait à 3 000 px du doigt. Porte `role="status"`, sinon le changement n'est annoncé
+   à personne. */
+.status {
+  display: block; margin: var(--s-3) 0 0; padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule); border-radius: var(--r-touche);
+  font-size: var(--t-petit); overflow-wrap: anywhere;
+}
+.status:empty { display: none; }
+/* **Le même compte rendu, mais sur la ligne qu'il commente.** `/pilotage` fait atterrir le retour
+   de « Rappeler la machine » dans la ligne « État de la machine » plutôt que dans un encadré sous
+   le bouton : à cette place, un cadre bordé de pleine largeur dans la colonne des valeurs pèserait
+   plus lourd que les quatre lignes qu'il accompagne. Donc pas de bordure ni de fond — la taille de
+   texte secondaire suffit, et l'échec garde le pictogramme d'alerte. Vide, l'élément disparaît sans
+   être démonté : c'est ce qui permet à `role="status"` d'annoncer le changement. */
+.enLigne { font-size: var(--t-petit); color: var(--encre-douce); overflow-wrap: anywhere; }
+.enLigne:empty { display: none; }
+/* Le statut est teinté par le fond et la bordure, jamais par un liseré latéral. La couleur seule
+   ne porte pas l'information : le texte dit toujours ce qui s'est passé. */
+/* `color-mix(... transparent)` composait sur ce qu'il y avait derrière : le contraste dépendait
+   du contexte et n'était donc mesurable nulle part. Fonds opaques, une seule valeur à vérifier. */
+.status.ok { border-color: var(--ok-edge); background: var(--ok-tint); }
+.status.err { border-color: var(--danger-edge); background: var(--danger-tint); }
+
+/* Un bouton qui travaille le dit sur lui-même, au lieu de laisser la page griser en silence. */
+/* L'opacité d'attente est dite avec la hachure, plus haut : deux règles pour un même sélecteur,
+   à deux cent soixante lignes d'écart, c'est la garantie qu'un jour l'une contredira l'autre. */
+/* Les autres commandes sont bloquées le temps de l'envoi — la machine ne traite qu'une commande
+   à la fois. Ce curseur est le seul indice que le blocage est temporaire et volontaire. */
+button:disabled { cursor: not-allowed; }
+
+/* Puce de réglage (« défaut : 40 ») : l'encombrement visuel reste minimal, la cible tactile fait
+   44 px. Sans ce pseudo-élément, la puce mesure ~23 px de haut — la plus petite cible de
+   l'interface, sur l'appareil tactile qui sert à piloter. */
+button.mini { position: relative; }
+button.mini::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%;
+  height: 44px; transform: translateY(-50%);
+}
+
+/* Confirmation d'une action physique ou persistante.
+   `window.confirm()` ne convenait pas : non stylable, il affichait les valeurs en texte brut sans
+   pouvoir mettre le rinçage en évidence, et il renvoie `false` dans une iframe en bac à sable —
+   donc tous les boutons devenaient silencieusement inertes dans une carte de tableau de bord.
+   `<dialog>` + `showModal()` apporte le piège de focus et la touche Échap sans code. */
+dialog.confirm {
+  max-width: min(30rem, calc(100vw - 32px));
+  padding: 0; border: 1px solid var(--edge); border-radius: var(--radius);
+  background: var(--raise); color: var(--text);
+  /* Un panneau de boîtier ne flotte pas dans un halo de 48 px : il est posé, avec une ombre
+     courte et franchement décalée, et son relief vient de ses arêtes. */
+  box-shadow:
+    inset 0 1px 0 0 var(--arete-haute),
+    inset 0 -1px 0 0 var(--arete-basse),
+    0 8px 20px -10px var(--arete-basse);
+}
+dialog.confirm::backdrop { background: rgba(6, 7, 9, .62); }
+dialog.confirm .body { padding: 18px 20px 16px; }
+dialog.confirm h2 { margin: 0 0 10px; font-size: var(--t-section); line-height: var(--lead-section); }
+/* La provenance des valeurs : une ligne, sous la liste, sans fond. Elle répond à « lesquelles ? »
+   quand `detail` répond à « quoi ? », et elle ne doit pas peser autant que la mise en garde. */
+dialog.confirm .source {
+  margin: var(--s-2) 0 0; font-size: var(--t-petit); line-height: var(--lead-corps);
+  color: var(--encre-douce);
+}
+dialog.confirm .detail {
+  margin: 0; padding: 10px 12px; border-radius: var(--r-touche);
+  background: var(--panel-2); color: var(--encre-douce);
+  font-size: var(--t-petit); overflow-wrap: anywhere;
+}
+dialog.confirm .warn { margin: 12px 0 0; font-size: var(--t-petit); }
+/* Renoncer à la question, depuis la question elle-même. Séparée par un filet et non par une simple
+   marge : elle ne décrit pas l'action en cours — c'est un réglage durable posé dans un dialogue qui,
+   lui, ne concerne qu'un geste. Sans la coupure, elle se lisait comme une quatrième ligne de détail.
+   La cible tient 44 px de haut au doigt : la case seule en fait 16, et c'est le libellé entier qui
+   est cliquable puisque le `<label>` enveloppe les deux. */
+dialog.confirm .renoncer {
+  display: flex; align-items: flex-start; gap: var(--s-3);
+  margin: var(--s-4) 0 0; padding: var(--s-3) 0 0; border-top: 1px solid var(--rule);
+  font-size: var(--t-petit); line-height: var(--lead-corps); cursor: pointer;
+  min-height: 44px;
+}
+dialog.confirm .renoncer input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-text); }
+dialog.confirm .renoncer > span { display: grid; gap: var(--s-hair); min-width: 0; }
+dialog.confirm .renoncer .sub { font-size: var(--t-petit); }
+dialog.confirm .actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 14px 20px; border-top: 1px solid var(--rule); background: var(--panel-2);
+}
+
+/* ── Sélecteur de thème ────────────────────────────────────────────────────────────────────────
+   Trois radios natives déguisées en segments. L'entrée reste dans le flux (masquée par
+   `clip-path`, jamais par `display: none`) pour garder le focus clavier et le groupement. */
+/* La position retenue : teinte d'accent, comme partout ailleurs pour « ce que nous avons choisi ».
+   La couleur n'est pas seule à le dire — l'état coché est porté par la radio elle-même. */
+
+/* **La liste ordonnée des favoris d'un profil.** Une liste numérotée, pas une table : chaque
+   ligne est un nom et ses deux flèches, et le numéro EST l'information — c'est l'ordre qu'on
+   écrit dans la machine. `list-style-position: inside` garde le compteur dans la carte, dont le
+   remplissage n'absorbe pas le retrait par défaut du navigateur. */
+ol.listeFavoris { margin: var(--s-2) 0; padding: 0; list-style: none; counter-reset: favori; }
+ol.listeFavoris > li {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-hair) 0; border-bottom: 1px dotted var(--rule);
+}
+/* **Le rang est écrit, pas laissé au marqueur natif.** Un `<li>` en flex supprime la puce du
+   navigateur : sans ce compteur, la liste perdait le seul élément qui la rende lisible — le
+   NUMÉRO, qui est précisément ce qu'on écrit dans la machine. */
+ol.listeFavoris > li::before {
+  counter-increment: favori; content: counter(favori) ".";
+  flex: none; min-width: 1.6em; color: var(--encre-douce); font-variant-numeric: tabular-nums;
+}
+/* Le nom prend la place restante, les deux flèches restent collées à droite et alignées d'une
+   ligne à l'autre — sinon elles suivraient la longueur du nom. */
+ol.listeFavoris > li > :first-of-type { flex: 1 1 auto; min-width: 0; }
+ol.listeFavoris > li:last-child { border-bottom: 0; }
+
+/* Texte réservé aux lecteurs d'écran : nomme une commande dont l'icône est décorative. */
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   ADAPTATION AUX APPAREILS
+   ═══════════════════════════════════════════════════════════════════════════════════════════
+
+   PRODUCT.md nomme trois appareils, tous de premier ordre : la **tablette 9" et 11"**, qui est la
+   surface de pilotage des boissons ; le **téléphone**, debout devant la machine ; le **desktop**
+   pour les pages de réglage. Avant cette passe, une seule media query existait dans tout le
+   fichier, et elle portait sur le thème. Ce que ça donnait, mesuré :
+
+   - **265 px de débordement horizontal sur les huit pages à 375 px** (cause au § du menu) ;
+   - la **barre haute à 151 px** sur un téléphone, soit un quart de la hauteur utile ;
+   - **28 cartes de boisson en une seule colonne à TOUTES les largeurs** — 3 314 px de page sur une
+     tablette 11" en paysage, dont 295 px de largeur inutilisée ;
+   - **treize cibles tactiles sous 44 px** par page.
+
+   Les seuils sont pris sur le contenu, pas sur un catalogue d'appareils :
+
+   - **`--breakpoint-rail`** (1 200 px) = la largeur à laquelle marque + neuf entrées + sélecteur
+     de finition tiennent sur
+     une ligne. Ce chiffre est mesuré, et il a démenti mon estimation : j'avais posé le seuil à
+     900 px, où la barre passe en réalité à **deux rangs de 107 px de haut** — le défaut se
+     reproduisait encore à 1 024 px. Les huit entrées demandent 644 px à elles seules une fois
+     portées à 44 px de haut, plus 130 de marque et 132 de sélecteur. Le retrait du mode banc a
+     libéré 52 px : le seuil garde sa valeur, il a simplement 52 px de marge en plus. Le descendre
+     ferait basculer une tablette 9" en paysage (1 024 px) du côté « barre », ce qui défairait la
+     décision ci-dessous.
+     En dessous, le menu passe dans un panneau, et une tablette 11" en portrait (834 px) comme une
+     9" en paysage (1 024 px) sont donc du côté « panneau ». C'est voulu : deux rangs auraient
+     coûté 107 px de haut en permanence — 14 % d'un écran de tablette en paysage — pour des liens
+     qu'on ouvre trois fois par jour, sur l'appareil où la grille de boissons est justement ce
+     qu'on regarde tout le temps. `flex-wrap` reste sur la barre comme filet : si une entrée
+     s'ajoute un jour, elle passe à la ligne au lieu de déborder.
+   - **1120 px** = à partir de là, le conteneur s'élargit pour tenir une troisième colonne de
+     350 px. Une tablette 11" en paysage (1 194 px) est donc au-dessus, ce qui est tout l'objet
+     du chiffre.
+   - Les cartes, elles, ne suivent aucun seuil : `auto-fill` + `minmax` décident, et chaque carte
+     s'adapte à sa propre largeur par container query.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Liste de cartes en grille ────────────────────────────────────────────────────────────────
+   Le catalogue de boissons est une liste homogène de 28 cartes : en une colonne, elle imposait
+   3 300 px de défilement pour choisir un café, y compris sur l'écran de 1 194 px où trois
+   colonnes tiennent. `auto-fill` remplit ce qu'il y a, sans seuil à maintenir. */
+.cards {
+  display: grid; gap: var(--s-3); align-items: start;
+  /* **`min()` autour du plancher, sinon la grille déborde sur les petits écrans.** Un
+     `minmax(19rem, 1fr)` est un plancher DUR : à 320 px de fenêtre la piste reste à 304 px dans un
+     conteneur de 280, et les 28 cartes dépassent — mesuré, bord droit à 324 pour une fenêtre de
+     320, barre de défilement horizontale à la clé. `min(…, 100%)` laisse la colonne descendre sous
+     son minimum quand il n'y a pas la place, ce qui est le seul comportement correct : une colonne
+     de 280 px vaut mieux qu'une page qui glisse latéralement. */
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--carte-min, 19rem), 100%), 1fr));
+}
+/* `/beans` avait choisi 260 px, et pour une raison écrite : ses cartes servent à COMPARER deux
+   réglages de grain, donc il faut en voir le plus possible côte à côte. Unifier tout le monde à
+   19 rem faisait passer la page de trois colonnes à deux sur une tablette — une décision de
+   conception défaite par une refactorisation. La grille reste unique, son minimum est un réglage. */
+.cards.dense { --carte-min: 16.25rem; }
+/* `align-items: start` : sans lui une carte courte s'étire à la hauteur de la plus grande de sa
+   rangée, ce qui laisse des blancs et fait croire à une donnée manquante. */
+/* La gouttière remplace la marge : sinon les deux s'additionnent entre les rangs. */
+.cards > .card { margin-bottom: 0; }
+/* **La carte ouverte prend toute la rangée.** L'éditeur de recette a besoin de largeur — un
+   curseur, ses bornes, un champ et une puce de défaut ne tiennent pas dans 19 rem — et l'écraser
+   dans une colonne aurait rendu la grille responsable d'un formulaire illisible. Ouverte, la carte
+   cesse d'être un élément de liste et devient le sujet de la page. */
+.cards > .card.open { grid-column: 1 / -1; }
+
+/* ── Le catalogue n'est pas une grille de tuiles : c'est un clavier ───────────────────────────
+   ═════════════════════════════════════════════════════════════════════════════════════════════
+   **C'est ici que la thèse se tient ou se perd.** « Le serveur n'affiche pas la machine : il en est
+   une » — et une machine ne présente pas ses vingt-huit boissons comme vingt-huit fiches
+   rectangulaires posées sur du noir. Elle les présente comme un clavier : des touches creusées
+   dans la tôle, chacune avec son dessin, et le nom sérigraphié en dessous, sur le boîtier.
+
+   Trois choses en découlent, et aucune n'est décorative :
+
+   1. **La carte fermée n'existe plus comme objet.** Elle n'a ni fond, ni relief, ni rembourrage :
+      c'est le boîtier qu'on voit, avec sa grille perforée, ENTRE et DERRIÈRE les touches. Sans ça,
+      la matière de fond du monde n'est visible nulle part sur la page qu'on ouvre trois fois par
+      jour — elle serait revendiquée et jamais montrée.
+   2. **La touche est en CREUX**, biseau inversé, cernée d'une ouverture fraisée d'un pixel. C'est
+      la géométrie de `.creuset` : une touche d'appareil est enfoncée dans sa tôle, elle n'est pas
+      posée dessus. Le relief en saillie reste réservé à ce qui S'ENFONCE quand on appuie — les
+      boutons — et la face d'une boisson n'est pas un bouton : c'est ce qui la NOMME.
+   3. **La légende est dessous, sur le boîtier**, en capitales espacées. Le seul endroit de ce
+      produit où les capitales sont légitimes est celui-là : un texte imprimé sur de la tôle.
+
+   Le `clavier` est demandé explicitement, il n'est pas déduit de `.cards` : les cinq autres grilles
+   du produit — réglages de l'appareil, systèmes de grains, constats de `/systeme` — ne sont pas des
+   claviers de boissons, et les traiter comme tels serait la même erreur de catégorie que la grille
+   de tuiles, dans l'autre sens. Elles restent des plaques, ce qu'elles sont.
+   ═════════════════════════════════════════════════════════════════════════════════════════════ */
+/* ── Le pas du clavier, et ce qui le tient ────────────────────────────────────────────
+   **Le plus grand intervalle DANS une touche valait exactement l'intervalle ENTRE deux touches.**
+   Douze pixels des deux côtés : la carte étant transparente et sans relief, plus aucune frontière
+   ne séparait les trois boutons de la boisson N de la face de la boisson N+1. En une colonne — donc
+   sur téléphone, donc debout devant la machine — le bouton visé et le voisin d'une autre boisson
+   étaient à la même distance. L'un des trois fait couler de l'eau chaude.
+
+   La correction était alors le PAS : ouvrir l'intervalle vertical à 24 px, trois fois le plus grand
+   intervalle intérieur, faute de pouvoir rendre son contour à la carte sans revenir à la tuile.
+
+   **Le creux le fait mieux, et il le fait vraiment.** La touche n'entoure plus le seul nom : elle
+   englobe la carte entière — marques, dessin, nom, contenance, commandes. La frontière n'est plus
+   déduite d'un rapport de blancs, elle est MATÉRIELLE, et rien ne peut plus se lire comme
+   appartenant à la boisson d'à côté. Ce n'est pas la tuile que la thèse refuse : une tuile est
+   posée sur le fond avec une ombre portée, cette touche est enfoncée dans la tôle — biseau inversé,
+   fraisage d'un pixel tout autour. Le boîtier reste visible là où un clavier le montre, dans la
+   gouttière entre les touches, et non sous elles.
+
+   ⚠️ **Ce que cela rouvre, sciemment.** La version précédente énonçait ici que « la carte fermée
+   n'existe plus comme objet ». C'était vrai de la grammaire et faux de l'usage : sur une grille de
+   vingt-huit cartes, rien ne disait où finissait Lacteso et où commençait Lait chaud. Une touche
+   d'appareil est un objet — c'est même la seule chose qu'elle est.
+
+   Le pas vertical redescend donc à 12 px, celui de l'horizontale : le vrai pas d'un clavier. Ce
+   sont les ~320 px de défilement que la compensation coûtait sur téléphone, rendus. À l'intérieur,
+   le rapport reste de trois pour un, mais mesuré depuis le rembourrage de la touche :
+
+     4 px   le dessin et son nom            — le nom appartient à la touche
+     2 px   le nom et la contenance         — la contenance qualifie le nom
+     8 px   au-dessus du filet              — même unité, autre nature : on quitte l'identité
+     8 px   les commandes entre elles       — en dessous, deux cibles de 44 px se touchent, et
+                                              « Préparer » n'est pas un bouton qu'on veut
+                                              atteindre par erreur
+    12 px   le rembourrage de la touche     — puis 12 px de gouttière : la frontière est double
+   ────────────────────────────────────────────────────────────────────────────────────── */
+.cards.clavier { row-gap: var(--s-3); }
+/* **La carte fermée EST la touche.** Fraisage d'un pixel tout autour — l'ouverture dans la tôle —
+   puis le biseau inversé : sombre en haut, clair en bas, c'est-à-dire une surface enfoncée. C'est
+   exactement la géométrie que portait la seule ligne de titre ; elle a changé d'échelle, pas de
+   nature.
+
+   `background` et `box-shadow` sont réécrits plutôt qu'hérités : `.card` déclare la PLAQUE — relief
+   en saillie, ombre courte vers le bas — et une plaque n'est pas une touche. La carte OUVERTE la
+   reprend telle quelle, et c'est le contraste qu'on veut : fermée elle est un élément du clavier,
+   ouverte elle est le sujet de la page. */
+.cards.clavier > .card:not(.open) {
+  background: var(--panel-2);
+  border-radius: var(--r-touche);
+  padding: var(--s-3);
+  box-shadow:
+    0 0 0 var(--trait) var(--rule),
+    inset 0 var(--trait) 0 0 var(--arete-basse),
+    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-haute);
+}
+.cards.clavier > .card:not(.open) > .cardHead { flex-direction: column; align-items: stretch; }
+/* `.cardHead > :first-child { flex: 1 1 12rem }` visait la rangée ; en colonne il ferait grandir la
+   face pour remplir la hauteur de la piste, et les 28 touches n'auraient plus la même taille. */
+.cards.clavier > .card:not(.open) > .cardHead > .toucheBev { flex: 0 0 auto; }
+
+/* **Le creux a déménagé d'un cran vers l'extérieur : il n'en reste donc aucun ici.**
+   `.toucheBev` portait le fraisage et le biseau inversé tant que la face n'était que la ligne de
+   titre. C'est la carte qui les porte maintenant, et un second creux dedans ferait un creux dans un
+   creux — la faute exacte de la carte imbriquée, en matière plutôt qu'en boîte. Ne reste que la
+   disposition, qui n'a jamais été décorative. */
+.cards.clavier > .card:not(.open) > .cardHead > .toucheBev {
+  display: flex; flex-direction: column; gap: var(--s-1);
+}
+/* La légende, sous la touche. Le retrait latéral l'aligne sur le NOM de la boisson et non sur le
+   bord de la touche : une légende est cadrée sur ce qu'elle nomme.
+
+   ⚠️ **Elle était en capitales espacées, et c'était une sérigraphie mal placée.** Le registre gravé
+   se mérite : il est fait pour trois mots imprimés sur de la tôle. Ce qui passe ici est une PHRASE
+   — « Espresso macchiato · 3 paramètres · café 40 ml · 12 cafés courts », jusqu'à quatre-vingts
+   caractères — et à 12 px avec 0,11 em de chasse en plus par caractère, c'est le texte le plus lent
+   à lire de tout le produit, sur la page qu'on ouvre trois fois par jour, à bout de bras d'une
+   tablette murale.
+
+   Ne reste donc que ce qui appartient VRAIMENT au clavier : la position. La casse, la taille et la
+   couleur redeviennent celles de `.legende`, qui est le même rôle sur les neuf surfaces — une
+   divergence de moins, et un rôle qui se reconnaît d'une page à l'autre.
+
+   L'interligne, lui, reste dit ici : sous une touche, cette ligne fait deux à trois lignes dans une
+   colonne de 19 rem, et l'interligne de prose y ouvre un blanc qui la détache de la touche qu'elle
+   nomme. `--lead-dense` est le pas prévu pour ça. */
+.cards.clavier > .card:not(.open) > .cardHead > .legende {
+  margin-top: var(--s-1);
+  padding-inline: var(--s-1);
+  line-height: var(--lead-dense);
+}
+.cards.clavier > .card:not(.open) > .cardHead > .actions { margin-top: var(--s-2); }
+
+/* La tête « affiche » suit le même pas : la vignette et son nom sont collés (4 px), et les
+   commandes prennent leurs 8 px — le total sous le nom est le même que sous une légende de touche,
+   donc les deux formes de carte ont un rythme identique bien qu'elles n'aient pas la même tête. */
+.cards.clavier > .card:not(.open) > .cardHead.compacte { gap: var(--s-1); }
+/* La contenance qualifie le nom : 2 px, pas 4. La gouttiere de la colonne en pose deja 4, d'ou le
+   retrait negatif plutot qu'un `gap` a part. */
+.cards.clavier > .card:not(.open) > .cardHead.compacte > .sub {
+  margin-top: calc(var(--s-hair) - var(--s-1));
+}
+
+/* La vignette d'affiche non plus n'a plus de creux : même raison qu'au-dessus, c'est la carte qui
+   le porte. Le centrage, lui, est déclaré une fois avec `.cardHead.compacte`, plus bas. */
+/* **Aucune règle de titre ici, et c'est le résultat de la passe typographique.** La version
+   précédente posait sur ce titre-là 12 px, capitales et chasse élargie — sauf que sur `/recettes`
+   ce titre est `e.recipe.name`, **tapé sur la machine par quelqu'un**. Rien n'en borne la
+   longueur et rien n'y garantit une espace : `.cardTitle` porte `overflow-wrap: anywhere` pour
+   cette raison précise, mesuré sur un nom d'un seul mot de 48 caractères. Lui ajouter 0,11 em par
+   caractère aggravait ce qu'on avait corrigé, et le mettait en capitales par-dessus.
+
+   Le titre d'une affiche est le NOM qu'on cherche des yeux dans sa propre bibliothèque : il garde
+   les 16 px, la graisse 700 et l'encre pleine de `.cardTitle`. Le registre gravé continue de
+   vivre là où il est vrai — l'intertitre, la marque, la plaquette d'état, la légende. */
+
+/* **La lampe de la touche engagée.** Ambre, parce que dans tout ce produit l'ambre veut dire
+   CHOISI — et une carte ouverte est exactement la boisson qu'on a choisie. Elle est le premier
+   élément de la ligne de titre, donc elle n'a besoin d'aucun positionnement absolu. Elle est
+   décorative au sens strict : l'`aria-expanded` du chevron porte déjà l'état pour qui ne la voit
+   pas, donc un `content: ""` est ici la bonne réponse et non un raccourci. */
+.cards.clavier > .card.open > .cardHead > .toucheBev > .titreLigne::before {
+  content: "";
+  flex: none;
+  inline-size: 8px; block-size: 8px;
+  border-radius: 999px;
+  background: var(--ambre-plein);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ambre-plein) 60%, var(--edge)),
+    0 0 6px -1px var(--ambre-plein);
+}
+
+/* **1 120 px : la tablette 11" en paysage récupère sa troisième colonne.** Le seuil était à
+   1 200 px, et il privait l'appareil que PRODUCT.md désigne comme LA surface de pilotage : à
+   1 194 px, le plafond de 880 px du conteneur imposait deux colonnes alors que la place en tenait
+   trois. 1 120 px est le point où chacune des trois garde 350 px — en descendant plus bas elles
+   tomberaient à leur minimum de 19 rem, et deux colonnes larges valent mieux que trois étroites. */
+/* Rien à 1 120 px pour les cartes. La règle de mesure qui vivait ici n'existe plus : `--mesure`
+   la porte pour tous les rôles de prose, à toutes les largeurs et à tous les niveaux. Celle-ci ne
+   visait que les enfants directs du conteneur au-delà de 1 120 px — la phrase d'introduction, une
+   par page — en supposant qu'« une carte borne déjà son texte ». Mesuré : une carte de
+   /statistiques fait 1 110 px de large, soit 153 caractères. */
+
+/* ── Le menu, deux présentations pour une seule liste ─────────────────────────────────────────
+   Une seule des deux est dans le DOM rendu à un instant donné : `display: none` la retire aussi
+   de l'arbre d'accessibilité, donc pas de double landmark ni de liens annoncés en double. */
+/* Sous le seuil du rail, plus rien ne pousse la fin de barre à droite : c'est le `ml-auto` du
+   bouton de menu qui prend le relais, posé dans `Nav.tsx`. Sans lui, marque + thème + bouton se
+   tassaient tous les trois à gauche. Aucune règle ici : le seuil vit dans `--breakpoint-rail`, et
+   une media query écrite en dur à 1 079 px aurait été une deuxième vérité à tenir à jour. */
+
+/* ── Le panneau de navigation, et le SEUL mouvement authored du produit ───────────────────────
+   ═════════════════════════════════════════════════════════════════════════════════════════════
+   `<dialog>` + `showModal()` apporte le piège de focus, la touche Échap et le fond inerte sans une
+   ligne de JS — le même choix que pour les confirmations, pour la même raison.
+
+   **Il sort du bord gauche, et ce n'est pas un réflexe de tiroir.** C'est le bord où la marque est
+   gravée dans le rail : le menu sort de là où le produit se nomme. Un panneau qui vient de la
+   droite serait un panneau générique posé sur une page ; celui-ci sort de l'appareil.
+
+   Ce bloc a failli mourir : la bascule vers le nouveau monde a rebâti le panneau en utilitaires
+   Tailwind dans `Nav.tsx` et n'a repris ni la transition ni le fondu du voile — le menu se
+   téléportait, sur le seul geste qu'un téléphone fait à chaque session, et cinquante lignes
+   décrivant une coquille disparue restaient ici sans que rien ne les atteigne. Ce qui décrivait
+   l'ancienne coquille (`.tete`, `.menuBtn`, `.pied`, `nav a.actif`) est parti ; ce qui décrit le
+   PANNEAU — sa géométrie, son voile, son mouvement — est resté, et `Nav.tsx` porte de nouveau la
+   classe. La règle générale : la matière et le mouvement vivent dans la feuille, la composition
+   vit dans le composant.
+
+   `@starting-style` est ce qui donne un état de départ à un élément qui vient d'apparaître : sans
+   lui, `display: none → block` saute l'animation d'entrée et le panneau surgit d'un coup. C'est le
+   détail que presque personne n'écrit, et c'est lui qui fait toute la différence ici.
+   ═════════════════════════════════════════════════════════════════════════════════════════════ */
+dialog.drawer {
+  position: fixed; inset: 0 auto 0 0; margin: 0;
+  width: min(20rem, 86vw); max-width: none;
+  /* `dvh` et non `vh` : la barre d'adresse mobile se rétracte, et en `vh` le panneau dépassait
+     alors du bas d'un écran de téléphone. */
+  height: 100dvh; max-height: 100dvh;
+  padding: 0; border: 0; border-right: var(--trait) solid var(--rule); border-radius: 0;
+  /* Le boîtier, pas une plaque : le panneau est une TRANCHE de l'appareil qu'on ouvre, et il porte
+     la même grille perforée que le fond (posée par `Nav.tsx`, qui compose). */
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column;
+  translate: -100% 0;
+  /* **La sortie est plus rapide que l'entrée**, comme tout mouvement qui a un sens : on arrive
+     posément, on s'efface vite. 160 ms ici, qui est la durée de FERMETURE — c'est l'état fermé qui
+     porte la base — contre 240 ms sur `[open]`, la durée d'ouverture.
+     La courbe décélère fortement (`.22, .82, .26, 1`) : un panneau lourd qui arrive en butée. */
+  transition: translate .16s cubic-bezier(.22, .82, .26, 1),
+              overlay .16s allow-discrete, display .16s allow-discrete;
+}
+dialog.drawer[open] {
+  translate: 0 0;
+  transition-duration: .24s;
+}
+@starting-style { dialog.drawer[open] { translate: -100% 0; } }
+dialog.drawer::backdrop {
+  /* `--gravure` est la marque la plus sombre de CHAQUE finition : un voile qui suit le boîtier au
+     lieu d'un noir écrit en dur, qui posait une nuit sur l'aluminium clair. */
+  background: color-mix(in srgb, var(--gravure) 72%, transparent);
+  opacity: 0;
+  transition: opacity .16s, overlay .16s allow-discrete, display .16s allow-discrete;
+}
+dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
+@starting-style { dialog.drawer[open]::backdrop { opacity: 0; } }
+
+/* ── Boutons à icône ─────────────────────────────────────────────────────────────────────────
+   Le libellé se replie quand la CARTE est étroite, pas quand la fenêtre l'est : à 1 400 px de
+   fenêtre, une carte de grille fait toujours 19 rem, et c'est elle qui décide. Le texte passe hors
+   écran (`clip-path`) plutôt que d'être supprimé : il reste dans l'arbre d'accessibilité, donc un
+   lecteur d'écran énonce la même chose que la carte soit large ou étroite.
+   **Seules les actions de l'en-tête de carte se replient** (`.actions`), et c'est délibéré : leurs
+   trois icônes sont distinctes — chevron, téléchargement, tasse — et elles se répètent 28 fois.
+   Dans l'éditeur de recette, « réinitialiser » et « valeurs par défaut » sont deux flèches de
+   retour ; réduites à leur dessin, côte à côte, elles ne se distingueraient plus. Une icône ne
+   remplace un mot que si elle est sans ambiguïté à sa place. */
+/* Une icône de 17 px fait une ligne flex de 17 px, là où le texte en faisait 22,5 : sans hauteur
+   imposée, les boutons à icône tombaient à 39 px à côté de boutons à texte de 44,5. Le
+   `min-height: 44px` qui vivait ici est devenu `--h-ctl` sur `button` : c'était le même besoin que
+   celui des boutons à texte, résolu deux fois. */
+/* Le libellé d'une commande ne passe pas à la ligne : mesuré à 320 px, « Arrêter la préparation »
+   se coupait en deux et le bouton montait à 61 px au milieu de commandes de 44. Une hauteur de
+   commande est une constante du système (voir `--h-ctl`) ; c'est au conteneur de céder, pas à elle. */
+.iconBtn { display: inline-flex; align-items: center; gap: var(--s-2); white-space: nowrap; }
+.iconBtn > svg { flex: none; }
+/* **L'exception : un bouton dont le libelle est un NOM.** Les boissons de /pilotage sont rendues
+   une par bouton, dans une grille de cellules de 150 px, et leur libelle est le nom tape sur la
+   machine — rien ne le borne. Le `nowrap` ci-dessus est juste pour un verbe du catalogue, dont la
+   longueur est connue ; sur un nom il transforme un repli en debordement. Mesure dans une cellule de
+   155 px, bord droit du libelle par rapport au bord de contenu du bouton : « Recette perso 1 »
+   deborde de 11 px, un nom de 36 caracteres de 171 px — le texte sort du bouton, par-dessus son
+   propre remplissage, la boite du bouton restant a 155 px (donc invisible a un controle qui
+   n'observerait que la grille). Avec le repli : dedans dans les deux cas, sur deux et trois lignes.
+   Le nom se replie, la tasse reste a sa place. */
+/* **Icône seule, choisie et non subie.** À distinguer du repli automatique plus bas, qui cache un
+   `.lbl` présent quand la carte devient étroite : ici il n'y a pas de libellé du tout, parce que le
+   bouton se répète — une ligne par tâche en attente. Le remplissage latéral retombe à 10 px pour ne
+   pas laisser une pastille large autour d'un glyphe de 17 ; la hauteur, elle, ne bouge pas
+   (`min-height: var(--h-ctl)` s'applique toujours), donc la cible tactile reste entière. Le nom
+   accessible est porté par `aria-label` côté composant — sans lui le bouton n'aurait plus de nom
+   du tout. */
+.iconBtn.iconSeul { padding-left: 10px; padding-right: 10px; }
+/* **Aligné au bord droit, sinon la colonne de boutons est en dents de scie.** Dans une ligne de
+   file, ce qui précède le bouton n'a pas de largeur fixe : la pastille de rang fait « lecture » ou
+   « lecture différée ». Sans cette marge, chaque bouton se pose là où le texte le laisse, et deux
+   lignes voisines décalent leur croix d'une soixantaine de pixels. */
+.titreLigne > .aDroite { margin-left: auto; }
+/* **La vignette d'une boisson.** `flex-shrink: 0` parce que `.titreLigne` est une rangée
+   souple : sans lui, une image se comprime en fuseau quand le nom est long, au lieu de passer
+   à la ligne comme les pastilles. `object-fit: contain` conserve les proportions des visuels
+   (300 × 340, plus hauts que larges — le format de `FORMAT_IMAGE`) ; sans lui ils seraient étirés dans un carré. Fond
+   transparent conservé : ces WebP ont un canal alpha, et leur poser une couleur ferait
+   apparaître un rectangle autour de la tasse. */
+.bevVignette {
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  object-fit: contain;
+}
+
+/* **La grille du sélecteur d'image.** `auto-fill` avec un minimum de 5.5 rem : les vingt vignettes
+   tiennent en quatre à six colonnes selon la largeur de la carte, sans jamais imposer de défilement
+   horizontal. Chaque case porte son NOM sous l'image — une planche de vingt dessins muets obligerait
+   à reconnaître un flat white d'un caffelatte à 44 px. */
+/* **La tête d'une carte FERMÉE de `/recettes`** : une affiche, pas une fiche. Colonne centrée au
+   lieu de la rangée `.cardHead` habituelle — l'image se lit d'abord, le nom ensuite, la contenance
+   en dessous. `.cardHead > :first-child { flex: 1 1 12rem }` ne s'applique plus puisqu'on n'est
+   plus en rangée ; c'est voulu, la vignette prendrait la largeur entière. */
+.cardHead.compacte {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s-2);
+}
+/* Aucune règle de `flex` sur les enfants de l'affiche : c'est `.cardHead:not(.compacte)` qui la
+   rend inutile, plus bas dans ce fichier. La raison y est écrite en entier — elle appartient à la
+   règle qui causait le dégât, pas à celle qui l'aurait rattrapé. */
+/* **Le dessin est centré, le texte est calé à gauche.** La version précédente centrait tout, et
+   c'était la disposition d'une carte isolée : sur une grille de vingt-huit affiches, vingt-huit
+   noms centrés commencent à vingt-huit abscisses différentes, et l'œil qui descend une colonne
+   doit rattraper chaque ligne. Ce qui se REGARDE gagne à être au milieu ; ce qui se LIT gagne à
+   commencer toujours au même x. C'est la règle d'une affiche, pas un compromis. */
+/* ⚠️ **`text-align: center` ne centre pas ce dessin, et c'est mesuré.** Le socle CSS pose
+   `img { display: block }` — un `<img>` en bloc de 96 px dans une boîte de 321 se colle donc à
+   gauche, `text-align` n'ayant aucune prise sur un bloc. Une rangée centrée, elle, centre ce
+   qu'on lui donne quelle qu'en soit la nature : le dessin, ou les initiales gravées qui le
+   remplacent. */
+.cardHead.compacte > .vignetteGrande { display: flex; justify-content: center; }
+/* **Le filet sous la contenance : la frontière entre ce que la boisson EST et ce qu'on en FAIT.**
+   Un trait d'un pixel dans la couleur de la gravure — la même que le fraisage de la touche, donc
+   la seule ligne que ce monde connaisse. Il tient la pleine largeur du creux (`align-self:
+   stretch`), sinon il flotterait sous un texte de longueur variable et cesserait d'être une
+   séparation pour devenir un soulignement.
+
+   `space-between` place le chevron à gauche et l'action physique à droite, aux deux extrémités du
+   creux : c'est le plus grand écart que la carte puisse mettre entre « ouvrir » et « préparer ». */
+.cardHead.compacte > .actions {
+  flex: 0 0 auto;
+  align-self: stretch;
+  justify-content: space-between;
+  margin-top: var(--s-1);
+  padding-top: var(--s-2);
+  border-top: var(--trait) solid var(--rule);
+}
+/* **La vignette d'affiche suit la largeur de SA carte, pas un chiffre fixe.** 6,5 rem étaient
+   justes dans une colonne de 19 rem et petits dans les 350 px qu'une tablette 11" en paysage donne
+   à chacune de ses trois colonnes — or c'est l'appareil de pilotage. `cqi` mesure la carte
+   elle-même (`container-name: carte`, déjà déclaré sur `.card`), donc le dessin grandit avec la
+   piste : 95 px dans une colonne étroite de téléphone, 111 px sur la tablette, plafonné à 128 px
+   pour qu'une carte ouverte-puis-refermée en pleine largeur ne devienne pas une affiche de cinéma.
+
+   `width: auto` avec la hauteur imposée laisse le rapport intrinsèque du fichier décider de la
+   largeur — ces WebP font 300 × 340, donc plus hauts que larges, et `object-fit: contain` de
+   `.bevVignette` n'a plus rien à corriger. */
+.vignetteGrande .bevVignette {
+  width: auto;
+  height: clamp(5.5rem, 34cqi, 8rem);
+  max-width: 100%;
+}
+
+/* ── Le bandeau de marques d'une affiche ──────────────────────────────────────────────────────
+   Il tient AU-DESSUS du dessin et hors du flux du texte. Posées à côté du nom, les pastilles
+   passaient à la ligne dès qu'un nom était long : la touche respirait sur deux hauteurs selon la
+   boisson, et les dessins ne s'alignaient plus d'une colonne à l'autre.
+
+   `min-height` réserve la hauteur d'une pastille même quand la carte n'a aucune marque — sans elle,
+   une boisson sans lait et jamais lue remonterait son dessin de 22 px, ce qui se lit comme un
+   défaut d'alignement plutôt que comme une absence d'information. */
+.marques {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2);
+  min-height: 1.375rem;
+}
+/* Les marques d'état vont à droite, les marques de nature à gauche. Deux coins, deux rôles : on
+   apprend une fois de quel côté regarder. */
+.marques > .aDroite { margin-left: auto; }
+/* ⚠️ **Une pastille neutre sur la touche est invisible : `.pill` a le fond du creux, et le creux
+   est maintenant le fond de la carte.** Elle ne rendait plus que ses deux arêtes, donc « LAIT » se
+   lisait comme un mot souligné — l'apparence d'un lien, sur un élément qui ne mène nulle part.
+
+   La bonne réponse n'est pas de lui trouver une autre couleur : sur de la tôle, une marque de
+   nature est SÉRIGRAPHIÉE, pas encapsulée. Elle garde donc les capitales espacées et l'encre
+   faible de `.pill`, et perd le contenant. Les pastilles d'ÉTAT (`.on`, `.off`, `.info`) gardent
+   le leur : leur teinte porte l'information, et « désaligné » doit rester une anomalie visible. */
+.marques > .pill:not(.on):not(.off):not(.info) {
+  background: none;
+  box-shadow: none;
+  padding-inline: 0;
+}
+
+/* **La lampe de provenance.** Même géométrie que la lampe ambre de la touche ouverte — 8 px, un
+   liseré interne, un halo court — parce que c'est le même objet : un témoin sur une façade. Seule
+   la couleur change, et elle dit laquelle des deux choses on regarde. Le vert est réservé dans ce
+   produit à ce que la MACHINE rapporte, et « lu sur la machine » est exactement cela ; l'ambre
+   reste le CHOISI, donc la touche engagée. Vingt-trois pastilles vertes en toutes lettres avaient
+   fait abandonner ce vert ici — un point unique le rend de nouveau payable.
+
+   Elle n'est jamais seule à porter l'information : le texte hors vue la nomme pour un lecteur
+   d'écran, et sa signification est imprimée une fois par page dans `.legendeMarques`. */
+.lampeLue {
+  display: inline-flex; flex: none;
+  inline-size: 8px; block-size: 8px;
+  border-radius: 999px;
+  background: var(--vert);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--vert) 60%, var(--edge)),
+    0 0 6px -1px var(--vert);
+}
+/* La légende de page qui nomme la lampe, une fois, au-dessus des sections. */
+.legendeMarques {
+  display: flex; align-items: center; gap: var(--s-2);
+  margin: 0 0 var(--s-3);
+  color: var(--encre-douce); font-size: var(--t-petit);
+}
+
+/* **Les initiales gravées, quand il n'y a pas de dessin — et c'est l'état par défaut du produit.**
+   `public/boissons/` est gitignoré et le Dockerfile ne copie pas `public/` : l'image publiée n'a
+   aucun visuel, un clone frais non plus. Une affiche dont le dessin fait le tiers de la hauteur ne
+   peut pas y laisser un vide — ce serait vingt-huit vides. La boisson Bean System, elle, n'en aura
+   jamais : l'APK ne contient aucune vignette pour les identifiants 200-205 (voir `Monogramme`).
+
+   Registre gravé : capitales, chasse élargie, et le seul relief que ce monde autorise à un texte
+   — une arête claire d'un pixel EN DESSOUS, ce qui creuse la lettre au lieu de la soulever. Le
+   `text-indent` reprend la chasse que `letter-spacing` ajoute après la dernière lettre ; sans lui
+   la marque est décalée de 2 px vers la gauche de son cadre.
+
+   Deux tailles, un seul nœud : celle d'une vignette de ligne de titre par défaut, celle d'une
+   affiche sous `.vignetteGrande`. C'est le CSS qui décide, pas deux composants à garder d'accord. */
+.monogramme {
+  display: inline-grid; place-items: center; flex: none;
+  inline-size: 2.4375rem; block-size: 2.75rem;
+  font-size: var(--t-petit); font-weight: 700;
+  letter-spacing: var(--suivi-legende); text-indent: var(--suivi-legende);
+  color: var(--encre-douce);
+  text-shadow: 0 1px 0 var(--arete-haute);
+}
+.vignetteGrande .monogramme {
+  inline-size: auto; block-size: clamp(5.5rem, 34cqi, 8rem);
+  aspect-ratio: 15 / 17;
+  font-size: clamp(1.375rem, 9cqi, 2rem);
+}
+
+/* Hors vue mais dans l'arbre d'accessibilité : ce qu'une lampe de 8 px n'a aucun moyen de nommer
+   autrement. `title` seul ne se voit ni sur téléphone ni sur tablette — les deux appareils que
+   PRODUCT.md met au premier rang — donc il ne peut pas être le porteur unique d'un sens. */
+.horsVue {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+.grilleImages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+}
+/* Le contour marque la case choisie. Il est doublé par `aria-checked`, jamais remplacé par lui :
+   la couleur seule ne dit rien à qui ne la distingue pas, et l'épaisseur du trait reste visible. */
+.choixImage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-2);
+  background: none;
+  border: 2px solid var(--arete-ctl);
+  border-radius: var(--r-touche);
+  cursor: pointer;
+  text-align: center;
+  font: inherit;
+  color: inherit;
+  line-height: 1.2;
+}
+.choixImage .lbl { font-size: 0.75rem; }
+.choixImage:hover { border-color: var(--ambre-plein); }
+.choixImage.actif { border-color: var(--ambre-plein); border-width: 3px; padding: calc(var(--s-2) - 1px); }
+.choixImage .bevVignette { width: 3rem; height: 3rem; }
+/* Le chevron des panneaux dépliants tourne au lieu de changer de dessin. */
+.iconBtn.ouvert > svg:first-child { transform: rotate(180deg); }
+/* **Le seuil était au-dessus de la largeur réelle des libellés : ils tenaient et disparaissaient
+   quand même.** 26 rem font 416 px, et une carte de la grille en fait 372 : le repli à l'icône
+   valait donc à toutes les largeurs de la grille — sur le bureau et sur la tablette 11" en paysage,
+   c'est-à-dire là où il y a le plus de place. Le comportement était inversé : plus l'écran était
+   grand, moins il y avait de libellés, et la seule bande où ils s'affichaient était une largeur de
+   fenêtre que personne n'utilise (une colonne autour de 630 px).
+
+   Mesuré, libellés rendus, dans une carte de 372 px : Détails 100 + Lire 77 + Préparer 112, deux
+   gouttières de 8 = **305 px**, pour 340 px de contenu disponible. La rangée tenait sur une ligne,
+   la carte gardait ses 154 px de haut et la page ses 2 123 px : le repli ne gagnait rien.
+
+   **Le seuil se compare à la boîte de CONTENU, pas à la carte.** `container-type: inline-size`
+   interroge le contenu du conteneur, donc 32 px de moins que la largeur de la carte — un premier
+   calcul en largeur de carte était faux d'un rembourrage entier. Mesuré au doigt, où la gouttière
+   passe à 12 px : Détails 104 + Lire 81 + Préparer 116 + 24 = **325 px**, pour 319 px de contenu
+   dans une carte de téléphone. Six pixels manquent. 20,5 rem (328 px) est donc le point exact où
+   les trois libellés cessent de tenir sur une ligne.
+
+     grille 3 colonnes (bureau, tablette 11" paysage) → contenu 340 → les trois libellés
+     téléphone 390 px                                 → contenu 319 → voir ci-dessous
+
+   **Et ce qui part alors n'est pas « le libellé », c'est un libellé à la fois, dans l'ordre.**
+   Tout masquer d'un coup était le vrai défaut : il ne restait rien pour distinguer « ouvrir les
+   détails », « lire les réglages » et « couler un café » — trois carrés de 44 px dont le dernier
+   agit sur un appareil. Deux replis, chacun mesuré, et jamais le geste qui fait le café :
+
+     contenu ≥ 329  les trois noms                    305 (souris) / 325 (doigt)  ≤ 340
+     contenu ≤ 328  le chevron passe à l'icône         44 + 81 + 116 + 24 = 265
+     contenu ≤ 296  « Lire » aussi                     44 + 44 + 116 + 24 = 228
+
+   Ce qui donne, sur les appareils que PRODUCT.md nomme : grille 3 colonnes (bureau, tablette 11"
+   paysage) 340 → les trois noms ; tablette 9" portrait 326 → deux noms ; téléphone 390 px 319 →
+   deux noms ; Android 360 px 289 → un nom ; écran de 320 px 248 → un nom. Chaque palier garde de
+   13 à 75 px de marge, au lieu des deux pixels d'un seuil unique.
+
+   Le chevron part le premier parce qu'il est le seul dont le dessin suffit — il tourne, et l'état
+   déplié se lit sans mot. Une action qui porte une couleur de RÔLE ne se déplie jamais : `.good`
+   (préparer), `.danger` (arrêter) et `.primary` (écrire) gardent leur nom à toutes les tailles.
+
+   PRODUCT.md préfère l'icône au libellé long, et c'est respecté : ce qui disparaît est ce dont
+   l'icône suffit, pas le geste qui coule la boisson. */
+/* ── Les paliers du CLAVIER : les mêmes, décalés de la largeur du rembourrage disparu ───────
+   Les deux seuils ci-dessous (20,5 et 18,5 rem) ont été mesurés au navigateur sur une carte
+   REMBOURRÉE : la container query interroge la boîte de contenu, donc 2 × 16 px de rembourrage en
+   étaient déjà retirés. Une touche de clavier n'a plus de rembourrage — sa boîte de contenu EST la
+   piste de grille — et les mêmes seuils y laissaient donc les libellés 2 rem plus longtemps.
+
+   Calculé sur les douze largeurs de fenêtre qui comptent, le décalage de +2 rem redonne exactement
+   le comportement mesuré, borne pour borne :
+
+     fenêtre   piste   carte rembourrée → clavier +2 rem      repli
+      320 px   296 px   16,50 rem        18,50 rem            les trois libellés
+      360 px   336 px   19,00 rem        21,00 rem            le premier
+      390 px   366 px   20,88 rem        22,88 rem            aucun
+     1024 px   325 px   18,33 rem        20,33 rem            les trois
+     1280 px   305 px   17,06 rem        19,06 rem            les trois
+     1440 px   345 px   19,56 rem        21,56 rem            le premier
+
+   C'est bien un décalage et non un nouveau réglage : ce qui décide reste la largeur RÉELLEMENT
+   offerte au libellé, et elle n'a pas bougé d'un pixel. */
+@container carte (max-width: 22.5rem) {
+  .cards.clavier .actions .iconBtn:first-child:not(.good):not(.danger):not(.primary) > .lbl {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .cards.clavier .actions .iconBtn:first-child:not(.good):not(.danger):not(.primary) { padding-left: 12px; padding-right: 12px; }
+}
+@container carte (max-width: 20.5rem) {
+  .cards.clavier .actions .iconBtn:not(.good):not(.danger):not(.primary) > .lbl {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .cards.clavier .actions .iconBtn:not(.good):not(.danger):not(.primary) { padding-left: 12px; padding-right: 12px; }
+}
+
+@container carte (max-width: 20.5rem) {
+  .actions .iconBtn:first-child:not(.good):not(.danger):not(.primary) > .lbl {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .actions .iconBtn:first-child:not(.good):not(.danger):not(.primary) { padding-left: 12px; padding-right: 12px; }
+}
+@container carte (max-width: 18.5rem) {
+  .actions .iconBtn:not(.good):not(.danger):not(.primary) > .lbl {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .actions .iconBtn:not(.good):not(.danger):not(.primary) { padding-left: 12px; padding-right: 12px; }
+}
+
+/* Panneau de l'éditeur de recette. Il était le seul bloc de la page écrit en style inline —
+   `borderRadius: 10, padding: 12` en dur, alors que `--radius` et l'échelle d'espacement
+   existent. Une carte imbriquée dans une carte reste une carte imbriquée : on garde donc le
+   fond de second plan et le filet, sans reprendre `.card`, qui porterait une deuxième ombre et
+   une deuxième marge de bas de carte. */
+.blocEditeur {
+  background: var(--panel-2); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: var(--s-3);
+}
+
+/* En-tête de carte : le titre et ses pastilles d'un côté, les actions de l'autre — et les actions
+   passent sous le titre dès que les deux ne tiennent plus, au lieu de comprimer le nom de la
+   boisson jusqu'à le couper. */
+.cardHead { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: flex-start; }
+/* ⚠️ **`:not(.compacte)` n'est pas une exception de confort : sans lui cette règle dévaste
+   l'affiche.** Elle vise la RANGÉE — le bloc de titre prend la place et les boutons se rangent à
+   droite. La tête « affiche » est une COLONNE : l'axe principal y est la hauteur, donc ce
+   `flex-basis` de 12 rem devient un plancher de 192 px et `flex-grow: 1` l'étire à la place
+   disponible. Mesuré : le bandeau de marques faisait 192 px à lui seul, le dessin tombait au bas
+   d'une carte de 460 px, et les vingt-huit affiches n'avaient plus rien d'une grille.
+   L'ancienne tête neutralisait déjà cela au cas par cas
+   (`.cards.clavier … > .toucheBev { flex: 0 0 auto }`) ; le dire une fois ici est plus sûr que de
+   le redire à chaque enfant que l'affiche gagnera. */
+.cardHead:not(.compacte) > :first-child { flex: 1 1 12rem; min-width: 0; }
+/* **Pas de `margin-left: auto`.** Le bloc de titre est en `flex: 1 1 12rem`, donc il POUSSE déjà
+   les actions au bord droit quand tout tient sur une ligne : la marge automatique n'agissait que
+   dans le cas replié, et elle y était nuisible — les trois boutons partaient se coller à droite
+   sous un titre aligné à gauche, laissant 189 × 44 px de vide à leur gauche, sur chacune des 28
+   cartes. Repliées, les actions reprennent le bord du titre : la carte n'a qu'un seul alignement. */
+.cardHead > .actions { flex: 0 0 auto; }
+/* La légende est sortie du bloc de titre pour pouvoir être sérigraphiée SOUS la touche (voir
+   `.toucheBev`). Elle est donc devenue un élément de cette rangée-ci, et une rangée l'aurait posée
+   à droite du nom : `flex: 1 0 100%` la remet sur sa propre ligne, ce qu'elle a toujours été.
+   Dit une fois ici, plutôt qu'aux deux sites qui montent la carte. */
+.cardHead > .legende { flex: 1 0 100%; }
+
+/* ── Ligne de réglage fluide ─────────────────────────────────────────────────────────────────
+   L'ancienne ligne était une suite de largeurs fixes — libellé 150, curseur 150, champ 80, puce
+   78 — soit 558 px incompressibles pour un réglage, dans une carte qui peut en faire 300. Le
+   libellé prend sa ligne quand il faut, le curseur absorbe le reste. */
+.paramRow { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); align-items: center; padding: var(--s-1) 0; }
+.paramRow > .nom { flex: 1 1 9rem; min-width: 0; }
+/* `.ctl` vit aussi hors d'une `.paramRow` — /recipes le pose dans une cellule de tableau. */
+.ctl { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.paramRow > .ctl { flex: 1 1 15rem; }
+.ctl input[type="range"] { flex: 1 1 5rem; min-width: 0; }
+/* Champ numérique : assez large pour trois chiffres, jamais plus, et il ne s'étire pas. */
+.numField { width: 4.6rem; flex: none; text-align: right; }
+
+/* ── Tableaux ────────────────────────────────────────────────────────────────────────────────
+   Un tableau garde ses colonnes et défile dans SA boîte ; la page, jamais. Les six colonnes de
+   l'éditeur de recettes — libellé, min, max, défaut, valeur du profil, curseur — écrasées dans
+   356 px donnaient des en-têtes sur quatre lignes et des chiffres illisibles : le tableau tenait,
+   mais on ne pouvait plus le lire. `/recipes` est une page de bureau selon PRODUCT.md, et c'est
+   justement pourquoi elle a besoin de ça : elle reste consultable ailleurs sans être refondue. */
+.tableWrap { overflow-x: auto; }
+/* En dessous, les colonnes cessent de se comprimer et le défilement prend le relais. */
+.tableWrap > table { min-width: 34rem; }
+
+/* ── Curseur ──────────────────────────────────────────────────────────────────────────────────
+   Le curseur natif est la commande la plus utilisée de l'éditeur de recette et la seule qui
+   n'appartenait pas au thème : piste bleu système, poignée de 14 px. 14 px, c'est sous le
+   plancher de 24 px des cibles, sur l'appareil tactile qui sert à piloter. */
+/* **C'est ici que la façade devient propre à ce produit.** La piste n'est pas une gouttière :
+   c'est un CREUX fraisé dans le boîtier, et la graduation y est sérigraphiée. Les crans ne sont
+   pas décoratifs — leur nombre vient de `--crans`, posé par l'éditeur de recette à partir des
+   bornes que la MACHINE publie pour ce paramètre (voir `RecipeEditor`).
+
+   **Sans `--crans`, aucune graduation n'est imprimée.** Une piste vide dit « je ne connais pas
+   les bornes de ce réglage » ; une piste graduée au hasard dirait « voici ce que la machine
+   autorise », et ce serait faux. C'est la même règle que partout ailleurs dans ce produit : ne
+   jamais afficher comme lu ce qui ne l'a pas été.
+
+   La poignée n'est pas ronde. Une poignée de commande d'appareil est un patin usiné : rectangle
+   à arête haute claire, hauteur pleine, 22 px de large — au-dessus du plancher de 24 px de cible
+   une fois la piste comptée, sur l'appareil tactile qui sert à piloter. */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  height: 28px; background: transparent; border: 0; padding: 0; margin: 0;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 12px; border-radius: var(--r-creux);
+  background: var(--creux);
+  background-image: var(--graduation, none);
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 24px; margin-top: -6px; border-radius: var(--r-touche);
+  background: var(--aluminium); border: 0;
+  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
+}
+input[type="range"]::-moz-range-track {
+  height: 12px; border-radius: var(--r-creux);
+  background: var(--creux);
+  background-image: var(--graduation, none);
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 24px; border-radius: var(--r-touche);
+  background: var(--aluminium); border: 0;
+  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
+}
+/* La graduation elle-même. Elle n'existe que lorsque `--crans` a été posé — donc lorsque les
+   bornes ont réellement été lues sur l'appareil. */
+[style*="--crans"] input[type="range"] {
+  --graduation: repeating-linear-gradient(
+    90deg,
+    var(--gravure) 0 1px,
+    transparent 1px calc(100% / var(--crans))
+  );
+}
+input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
+
+/* ── Pointeur grossier ───────────────────────────────────────────────────────────────────────
+   `pointer: coarse` est la bonne question, pas la largeur : un portable à écran tactile de
+   1 400 px a besoin des mêmes cibles qu'un téléphone, et une fenêtre de navigateur étroite sur un
+   desktop n'en a pas besoin du tout. Redimensionner sur la largeur aurait grossi les commandes du
+   desktop et laissé la tablette 11" en paysage — 1 194 px — avec des cibles de souris. */
+@media (pointer: coarse) {
+  /* `button`, `input` et `select` tiennent leur hauteur de `--h-ctl`, dans les deux cas : ces
+     trois lignes étaient ici, et elles ne suffisaient pas — un plancher ne rattrape pas une
+     commande dont la hauteur NATURELLE dépasse (mesuré au doigt : boutons 44, champs 46). La
+     cause est réglée en amont, il ne reste ici que ce qui appartient vraiment au doigt. */
+  button.mini { min-height: var(--h-ctl); padding: 4px 10px; }
+  /* **La pastille d'alarme est devenue un lien, donc une cible.** Elle mesure 23 px de haut, comme
+     toutes ses voisines, et c'est ce qu'il faut : elle se lit dans la même rangée qu'elles, la
+     grossir la ferait sortir du groupe. Même arbitrage que l'interrupteur juste en dessous — on
+     agrandit la zone de contact, pas le dessin. 23 + 2 × 11 = 45 px. Le débordement recouvre des
+     pastilles voisines qui ne sont pas cliquables : un doigt imprécis atteint l'alarme au lieu de
+     rien, ce qui est le bon échec. */
+  a.pill { position: relative; }
+  a.pill::after { content: ""; position: absolute; inset: -11px -8px; }
+  /* Les commandes de la COQUILLE — sélecteur de finition, ouverture et fermeture du panneau,
+     sélecteur de machine — sont écrites en utilitaires Tailwind, donc dans la couche `utilities`,
+     qui bat celle-ci quoi qu'on y mette. Elles portent leur propre agrandissement au doigt, par la
+     variante `tactile:` déclarée dans globals.css, qui interroge exactement la même chose. Les
+     deux mécanismes sont volontairement nommés l'un dans l'autre : c'est par ce bloc-ci qu'on
+     cherchera, et c'est là-bas que ça vit. */
+
+  /* La poignée grossit, la piste aussi : viser 6 px de haut au doigt ne marche pas. */
+  input[type="range"] { height: 44px; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 8px; }
+  /* Piste 8 + 2 de bordure = 10 ; poignée 30 + 2 = 32 ; (10 − 32) / 2 = −11. */
+  input[type="range"]::-webkit-slider-thumb { width: 30px; height: 30px; margin-top: -11px; }
+  input[type="range"]::-moz-range-track { height: 8px; }
+  input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; }
+  /* L'interrupteur de la machine est la commande la plus conséquente de l'interface — elle
+     déclenche un rinçage à l'eau chaude — et c'était la plus petite : 52 × 28. */
+  .switch { width: 64px; height: 36px; }
+  .switch .knob { width: 28px; height: 28px; }
+  .switch input:checked + .track .knob { transform: translateX(28px); }
+  /* 36 px de dessin, 44 px de cible : la case débordera la piste de 4 px en haut et en bas. Grossir
+     le dessin jusqu'à 44 aurait donné un interrupteur de tableau de bord d'automobile ; c'est la
+     zone de contact qu'il faut, pas le trait. */
+  .switch input { top: -4px; bottom: -4px; height: auto; }
+  /* Deux commandes voisines à 10 px l'une de l'autre se touchent par erreur au pouce. */
+  .row { gap: var(--s-3); }
+}
+
+/* ── Écran court ─────────────────────────────────────────────────────────────────────────────
+   Téléphone en paysage : 375 px de haut utile. La barre en prenait 66, le titre de page 40, et il
+   restait de quoi voir une carte et demie. Le seuil porte sur la HAUTEUR — un écran court n'est
+   pas un écran étroit, et c'est en paysage qu'on tient le téléphone devant la machine. */
+@media (max-height: 480px) {
+  h1 { font-size: var(--t-section); }
+  h2 { margin: var(--s-4) 0 var(--s-2); }
+  .card { padding: var(--s-3); margin-bottom: var(--s-3); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   HIÉRARCHIE
+   ═══════════════════════════════════════════════════════════════════════════════════════════
+
+   Le chemin de la tâche, sur la page d'accueil : **la machine est-elle allumée → quel profil →
+   quelle boisson → préparer**. Le test du plissement des yeux disait autre chose. Les aires
+   mesurées à 1 194 px de fenêtre :
+
+   - « Arrêter la préparation », bouton rouge plein : **8 844 px²** ;
+   - l'interrupteur marche/arrêt, la commande dont dépend tout le reste : **1 456 px²**.
+
+   Un rapport de **6,1** en faveur de l'action rare et destructrice. Et 413 px de vide séparaient
+   l'identité de la machine de son propre état, parce que la rangée était en `space-between` dans
+   une carte de 1 140 px : le nom à gauche, les pastilles qui le qualifient tout à droite.
+
+   Ce que ce bloc rétablit, dans l'ordre :
+
+   1. **l'interrupteur est la commande principale**, donc il en a la taille (`.switch.grand`) ;
+   2. **les pastilles d'état rejoignent l'état**, collées sous le nom qu'elles qualifient — c'est
+      de la proximité, pas un conteneur de plus, et le vide de 413 px disparaît sans être « rempli » ;
+   3. **l'arrêt ne prend son poids que quand il peut agir.** Une préparation tourne : le rouge plein
+      est justifié, c'est l'action urgente. Sinon il est en contour — présent, atteignable, mais il
+      ne domine plus une carte où il n'a rien à faire. Le poids suit l'état, pas la classe.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+.machineHead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-4); }
+/* Le bloc d'identité grandit : c'est lui qui pousse les actions au bord, sans marge automatique. */
+.machineIdent { flex: 1 1 14rem; min-width: 0; display: flex; flex-direction: column; gap: var(--s-hair); }
+/* **Pas de `margin-left: auto`** — exactement la correction déjà faite sur `.cardHead`, et pour la
+   même raison : `.machineIdent` est en `flex: 1 1 14rem`, donc il POUSSE déjà les actions au bord
+   droit quand tout tient sur une ligne. La marge automatique n'agissait que dans le cas replié, et
+   elle y était nuisible : mesuré à 390 px, le bouton d'arrêt partait se coller à droite sur sa
+   propre ligne, avec près de 200 px de vide à sa gauche sous un titre aligné à gauche. Repliée, la
+   commande reprend le bord du titre : la carte n'a qu'un seul alignement. */
+.machineHead > .actions { flex: 0 0 auto; }
+/* **Sous 584 px, la carte machine passe en deux rangées explicites.**
+   Les trois blocs demandent 76 (interrupteur) + 16 + 224 (identité, son `flex-basis`) + 16 + 180
+   (l'arrêt, libellé compris) = 512 px de contenu ; la carte en offre `largeur de fenêtre − 71`
+   (20 + 20 de page, 16 + 16 de carte). D'où 584 px, mesuré et non choisi.
+   En dessous, `flex-wrap` faisait tomber l'arrêt sur une troisième ligne et le collait au bord —
+   au bord gauche depuis qu'il n'a plus de marge automatique, au bord droit avant, jamais sous le
+   titre. Or il qualifie la machine, pas l'interrupteur : sa colonne est celle de l'identité. */
+@media (max-width: 583px) {
+  .machineHead {
+    display: grid; grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--s-4); row-gap: var(--s-3); align-items: center;
+  }
+  .machineHead > .switch { grid-area: 1 / 1; }
+  .machineHead > .machineIdent { grid-area: 1 / 2; }
+  /* La rangée entière, pas la colonne du titre : le libellé complet demande 225 px, et la colonne
+     du titre n'en offre que « largeur de fenêtre − 163 » — soit 227 px à 390 px et 109 à 320. Deux
+     pixels de marge à la taille la plus courante ne sont pas une décision, c'est un hasard ; en
+     pleine largeur la commande a de 272 à 512 px et tient sur une ligne partout. Elle reprend alors
+     le bord de contenu de la carte, celui de l'interrupteur : la carte garde un seul alignement, et
+     le seul bloc décalé reste l'identité, parce qu'une commande la précède. */
+  .machineHead > .actions { grid-area: 2 / 1 / 3 / -1; }
+}
+/* Les pastilles d'état : serrées entre elles (4 px) et proches de la ligne d'état qu'elles
+   précisent (2 px). L'échelle sert ici son extrémité basse — un groupe se lit comme un objet. */
+.etats { gap: var(--s-1); margin-top: var(--s-1); }
+
+/* ═══ Progression d'une préparation ═══════════════════════════════════════════════════════════
+   Montée en permanence et vide au repos : une région `role="status"` créée en même temps que son
+   contenu n'est pas annoncée. `:empty` la retire de la mise en page, exactement comme `.enLigne`.
+   Elle occupe TOUTE la largeur de la carte, sous la rangée de tête : la barre décrit la machine,
+   pas son bloc d'identité, et confinée dans la colonne du titre elle mesurait 224 px pour dire un
+   pourcentage — la seule chose de cette page qui bouge de seconde en seconde. */
+.progression { margin-top: var(--s-3); display: flex; flex-direction: column; gap: var(--s-1); }
+.progression:empty { display: none; }
+.progLigne { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); }
+.progEtape { font-weight: 600; }
+/* La piste garde sa hauteur même à 0 % : pendant toute la mouture le pourcentage RESTE à 0
+   (relevé sur la machine), et une barre qui n'apparaîtrait qu'au premier pour cent donnerait
+   l'impression que rien ne commence. */
+/* Une jauge d'appareil est un bargraphe en creux, pas une pilule. Elle est VERTE et non ambre :
+   une préparation en cours est la marche de la machine, pas un choix — c'est la loi des trois
+   couleurs, et l'ancienne barre ambre la contredisait. */
+.jauge {
+  height: 10px; border-radius: var(--r-creux); overflow: hidden;
+  background: var(--creux); width: 100%;
+  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
+}
+.jaugeBarre {
+  display: block; height: 100%; width: 100%; border-radius: 0;
+  background: var(--vert);
+  /* La barre occupe toute la piste et c'est son ÉCHELLE qui porte le pourcentage : animer
+     `width` refaisait la mise en page à chaque image, pendant la seule minute où cette page
+     bouge de seconde en seconde. L'origine à gauche est ce qui fait qu'elle grandit depuis le
+     début de la piste et non depuis son centre. */
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 400ms ease-out;
+}
+/* Le pourcentage n'arrive que toutes les 1 à 3 s : sans transition la barre saute de 28 à 68 en
+   un seul cadre. Qui a refusé le mouvement la voit sauter — c'est dit une seule fois, dans le bloc
+   de réduction de mouvement de globals.css, avec les quatre autres. */
+
+/* Interrupteur principal. 76 × 42 au lieu de 52 × 28, soit 3 192 px² : il cesse d'être la plus
+   petite chose de la carte la plus importante. La géométrie est recalculée, pas mise à l'échelle —
+   4 px de jeu, une poignée de 34, un déplacement de 34, et le compte tombe juste. */
+.switch.grand { width: 76px; height: 42px; }
+.switch.grand .knob { top: 4px; left: 4px; width: 34px; height: 34px; }
+.switch.grand input:checked + .track .knob { transform: translateX(34px); }
+
+/* Bouton en contour : la couleur du rôle, sans le poids du remplissage. Sert à une action qui
+   existe mais n'est pas ce qu'on vient faire — et **une action destructrice n'est jamais l'objet le
+   plus lourd de son conteneur.** Elles l'étaient toutes : « Tout effacer » avait exactement le
+   poids de « Configurer » au sommet de la carte machine, la suppression d'un profil de grains
+   celui de son enregistrement. Le rouge plein est réservé au moment où l'action devient urgente —
+   arrêter une préparation qui coule.
+
+   ⚠️ **Ce contour n'existait pas.** La règle disait `border-color: var(--danger-edge)` — sur une
+   touche dont la règle de base pose `border: 0` depuis la bascule vers le monde de la façade. Une
+   couleur de bordure sur une bordure de zéro pixel ne peint rien, et rien ne le signale : ni le
+   `tsc`, ni le lint, ni le navigateur. Ce qui rendait était une boîte transparente portant le
+   biseau NEUTRE hérité, du texte rouge, et aucune arête — c'est-à-dire un lien, et c'était le
+   bouton qui arrête l'eau chaude, dans l'état où il passe le plus clair de son temps.
+
+   Le contour est donc dessiné par une ombre interne, comme toutes les arêtes de ce monde, et il
+   prend `currentColor` : la couleur du rôle est déjà sur `color`, donc il n'y a plus deux
+   valeurs à garder d'accord et la variante rouge n'a plus rien à déclarer.
+
+   Mesuré contre la plaque : `--rouge-encre` #f0827a → 4,52:1 en graphite, `--rouge` #8e2019 →
+   5,84:1 en aluminium. Un contour est un élément non textuel (seuil 3:1) mais il porte ici la même
+   teinte que son texte, qui, lui, doit passer 4,5:1 — c'est cette valeur-là qui décide. */
+button.discret {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--trait) currentColor;
+}
+/* Enfoncée, une touche en contour ne peut pas inverser un biseau qu'elle n'a pas : elle épaissit
+   son trait. C'est le même geste — la commande répond au doigt — dans la matière qui est la sienne. */
+button.discret:active {
+  box-shadow: inset 0 0 0 var(--trait-fort) currentColor;
+}
+button.danger.discret { color: var(--danger-text); }
+
+/* ── Tableau de bord en panneaux ──────────────────────────────────────────────────────────────
+   `/pilotage` était sept bandes pleine largeur, séparées par des titres identiques, dont
+   **quatre ne contenaient qu'une seule phrase** (« Aucun monitor reçu », « Aucune commande en
+   attente »). Une carte de 1 150 px de large pour vingt caractères : la topologie ne décrivait pas
+   le contenu, elle répétait un gabarit. Sur un desktop — appareil de premier ordre pour cette page
+   — la moitié droite de l'écran ne portait rien.
+
+   En panneaux, l'état voisine les commandes, les deux lectures du monitor se lisent d'un coup, et
+   le journal — le seul bloc réellement dense, donc le seul qui gagne à être large — prend la
+   rangée entière. L'ordre du DOM est l'ordre visuel : la lecture au clavier et au lecteur d'écran
+   suit la même route, colonne de gauche puis de droite, rangée par rangée. */
+/* **Colonnes coulees, et non une grille de deux colonnes.** La grille apparie les panneaux DEUX A
+   DEUX, rangee par rangee : deux blocs de hauteurs differentes laissent donc un trou de la
+   difference, et un nombre impair laisse une cellule entiere vide. Mesure sur /pilotage a 1 194 px,
+   la ou la page est censee gagner sa deuxieme colonne :
+
+     Liaison 309   |  Commandes machine 127   -> 182 px de vide
+     Alarmes 105   |  Capteurs 105            -> juste
+     Boissons 161  |  Confirmations 527       -> 366 px de vide
+     File 105      |  (rien)                  -> 558 x 105 px de vide
+     Journal 1 140 (rangee entiere)
+
+   Soit ~1 200 px de contenu etale sur 1 698 px de page, et trois blocs qui flottent au-dessus du
+   vide laisse par leur voisin. La cause n'est pas le reglage de la grille : c'est que ces panneaux
+   n'ont AUCUNE raison d'etre apparies. Ce sont des blocs independants de hauteurs libres — le cas
+   pour lequel le multi-colonnes existe. Il equilibre les deux colonnes sur la hauteur totale, ce
+   qui supprime les trous par construction, et il coule dans l'ordre du DOM : colonne de gauche de
+   haut en bas, puis colonne de droite. L'ordre de lecture, du clavier et du lecteur d'ecran reste
+   celui du document — c'est meme plus vrai qu'en grille, ou la lecture visuelle zigzaguait.
+
+   `break-inside: avoid` garde un panneau entier ; `column-span: all` rend au journal sa largeur
+   pleine — c'est le seul bloc reellement dense, donc le seul qui gagne a etre large.
+
+   En dessous du seuil, une seule colonne : plus de grille, donc le rythme vertical passe par la
+   marge des sections. */
+.panneaux > section > h2 { margin: 0 0 var(--s-3); }
+.panneaux > section { margin-bottom: var(--s-6); }
+.panneaux > section:last-child { margin-bottom: 0; }
+@media (min-width: 1120px) {
+  .panneaux { columns: 2; column-gap: var(--s-5); }
+  .panneaux > section { break-inside: avoid; }
+  .panneaux > section.pleine { column-span: all; }
+}
+
+/* Sélecteur de thème : **constat gardé, correctif retiré.** C'est bien le seul objet plein de la
+   barre, isolé à droite par une marge automatique, et il pèse 134 × 46 = 6 164 px² contre 130 × 22
+   pour la marque : au plissement des yeux, le regard va à une préférence avant d'aller à la
+   navigation. J'avais réduit les segments à 38 px de large ; mesuré, ça ne rendait que 13 % de
+   l'aire et faisait passer la cible sous les 44 px sur un axe. Le mauvais échange : ce qui rend ce
+   groupe bruyant n'est pas sa taille, c'est le remplissage du segment actif — donc un poids de
+   couleur, et ça appartient à la passe couleur, pas à celle-ci. Les 44 px sont rétablis. */
+
+/* **Un ingrédient d'une recette perso : sa case, puis ses réglages en retrait.**
+   Le filet à gauche relie visuellement les réglages à la case qui les a ouverts — sans lui, cocher
+   « Lait » fait apparaître trois lignes qui flottent au même niveau que celles du café. Le retrait
+   seul ne suffit pas : les lignes de réglage ont déjà leur propre gouttière. */
+.blocIngredient { margin: var(--s-3) 0; }
+.blocIngredient > .caseLibelle { font-weight: 600; }
+.blocIngredient > .paramRow { margin-left: var(--s-4); border-left: 2px solid var(--arete-ctl); padding-left: var(--s-3); }
+/* **Un groupe dont la composition n'est pas offerte** — une boisson du catalogue. La case reste
+   VISIBLE et cochee, inerte : elle dit que le modele declare cet ingredient, et son infobulle dit
+   qu'il ne se retire pas. La cacher aurait obtenu la meme interdiction en supprimant l'information,
+   ce que ce projet refuse ailleurs sous le nom de « refuser en disant pourquoi ». */
+.blocIngredient.fixe > .caseLibelle { cursor: default; color: var(--encre-douce); }
+.blocIngredient.fixe > .caseLibelle > input { cursor: default; }
+/* **Un ingredient que ce modele ne porte pas pour cette boisson.** Une ligne, pas une boite vide :
+   « Lait — non declare » distingue « cette boisson n'en a pas » de « on n'a pas regarde », et une
+   boite vide aurait coute sa hauteur sur les douze boissons sans lait. */
+.groupeAbsent {
+  margin: var(--s-3) 0;
+  color: var(--encre-douce);
+  font-size: var(--t-petit);
+  /* Aligne sur le libelle d'un groupe present : les trois lignes se lisent comme une liste. */
+  min-height: var(--h-ctl);
+  display: flex;
+  align-items: center;
+}
+/* Ce qu'aucun groupe ne couvre — « 2 tasses ». Nommer ce tas est ce qui l'empeche d'etre lu comme
+   un oubli du groupement ; le poids reste celui d'une legende, pas d'un titre : ce n'est pas un
+   ingredient de plus. */
+.etiquetteGroupe {
+  margin: var(--s-4) 0 var(--s-2);
+  color: var(--encre-douce);
+  font-size: var(--t-petit);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* **La vignette de tete de carte, quand elle est le bouton qui ouvre la grille des dessins.**
+   Elle n'avait aucun style : le declencheur d'avant etait un `<button>` au chrome par defaut, d'ou
+   la boite bordee nue. Ici on ne veut pas de chrome — l'image EST le bouton — mais il faut une
+   preuve qu'elle se clique, donc un contour au survol et un vrai anneau de focus. */
+.vignetteBouton {
+  display: inline-flex;
+  padding: 2px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: var(--r-touche);
+  cursor: pointer;
+  min-height: 0;
+}
+.vignetteBouton:hover { border-color: var(--accent-edge); }
+.vignetteBouton.ouvert { border-color: var(--ambre-plein); }
+.vignetteBouton:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+
+/* ==========================================================================================
+   **La photo d'une configuration de grains** (`PhotoGrains`), sur /beans.
+
+   Le rapport 15:17 n'est écrit nulle part ici : la vignette est bornée en largeur et laisse sa
+   hauteur suivre l'image, qui arrive déjà au format commun (300 × 340, produit par le canvas).
+   Le figer en CSS ferait une deuxième déclaration du format, à faire diverger le jour où
+   `FORMAT_IMAGE` bouge. */
+.photoGrains { display: flex; flex-direction: column; gap: var(--s-3); margin-top: var(--s-3); }
+.photoApercu { display: flex; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; }
+/* « Retirer la photo » se cale sous l'image plutôt qu'à côté : à côté, il partageait la rangée
+   avec elle et se retrouvait centré verticalement sur 7 rem de vide. `align-self` le remonte, et
+   la largeur reste celle de son texte — un rouge pleine largeur pour l'action la plus rare de la
+   carte serait la plus voyante. */
+.photoRetirer { align-self: flex-start; }
+.photoVignette {
+  width: 6.5rem; height: auto; border-radius: var(--radius);
+  border: 1px solid var(--edge); background: var(--raise);
+}
+/* Le vide occupe la place de la vignette : sans lui, ajouter une photo ferait sauter la carte
+   d'une centaine de pixels, et la rangée de boutons se déplacerait sous le curseur. */
+.photoVide {
+  width: 6.5rem; height: 7.35rem; border-radius: var(--radius);
+  border: 1px dashed var(--edge); background: var(--panel);
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: var(--s-2); font-size: var(--t-mini);
+}
+/* **Hauteur imposée, et c'est structurel.** `react-easy-crop` se positionne en absolu dans son
+   parent : sans hauteur explicite, le conteneur s'effondre à zéro et le cadreur devient invisible
+   — sans erreur, ce qui est le pire cas. */
+.photoZone {
+  position: relative; height: 18rem; width: 100%;
+  border-radius: var(--radius); overflow: hidden; background: var(--bg);
+}
+/* Le champ de fichier : invisible, mais **rendu**. Voir le commentaire de `PhotoGrains` — un
+   `display: none` est ce qui rend l'ouverture par script la moins fiable selon les navigateurs.
+   `pointer-events: none` n'empêche pas le clic programmatique, seulement le clic accidentel. */
+/* Sélecteur redondant à dessein : la règle générique `input:not([type="range"])…` est plus
+   spécifique qu'une simple classe et rendait ce champ à 22 × 44 px (invisible, mais pas de la
+   taille annoncée). Trois niveaux ici pour l'égaler — elle vaut (0,3,1) à cause de ses trois
+   `:not([type=…])` — et, à égalité, c'est la dernière déclarée qui gagne. */
+.photoGrains .photoApercu input.photoInput {
+  position: absolute; width: 1px; height: 1px; min-height: 0;
+  padding: 0; border: 0; margin: 0;
+  opacity: 0; pointer-events: none;
+}
+.photoZoom { display: flex; align-items: center; gap: var(--s-3); }
+.photoZoom > input[type="range"] { flex: 1 1 8rem; }

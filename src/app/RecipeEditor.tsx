@@ -54,6 +54,7 @@ export default function RecipeEditor({
   onDispense,
   onWrite,
   actions,
+  panneau,
 }: {
   bev: Beverage;
   profile: number;
@@ -88,6 +89,18 @@ export default function RecipeEditor({
    * répare.
    */
   actions?: (params: RecipeParam[]) => React.ReactNode;
+  /**
+   * **Le contenu que ces boutons dépliés, chez l'hôte, veulent afficher — et qui a besoin de la
+   * charge utile VIVANTE.** Même raison que `actions`, un cran plus loin : « Infos techniques »
+   * montre la trame `0x83` que « Préparer avec ces valeurs » enverrait, et elle doit se réécrire à
+   * chaque cran de curseur. Remonter les valeurs à l'hôte pour cela aurait demandé un second état,
+   * un `useEffect` pour le synchroniser, et rendu possible qu'on affiche une trame d'un rendu de
+   * retard — sur un panneau dont le seul intérêt est d'être exact.
+   *
+   * Rendu en DERNIER, après le pli « Avancé » : le panneau appartient à l'hôte, il apparaissait
+   * déjà là, et un dépliant qui déplace ce qui l'entoure est un dépliant qu'on n'ose plus ouvrir.
+   */
+  panneau?: (params: RecipeParam[]) => React.ReactNode;
 }) {
   const t = useTranslations("editor");
   const tc = useTranslations("common");
@@ -354,13 +367,39 @@ export default function RecipeEditor({
     );
   };
 
+  /**
+   * **Les crans que la commande imprime, et la seule condition pour qu'elle en imprime.**
+   *
+   * La graduation sérigraphiée autour d'une commande est la pièce qui rend ce monde visuel propre
+   * à ce produit : ses crans ne sont pas décoratifs, ce sont les valeurs que la MACHINE autorise
+   * pour ce paramètre. D'où la condition — une déclaration `calculee` est assemblée ici, pas lue
+   * sur l'appareil (c'est le cas d'une composition libre de `/recipes`), et graduer une piste avec
+   * des crans qu'aucune lecture ne fonde reviendrait à afficher comme lu ce qui ne l'a pas été.
+   * Sans crans, la piste reste un creux nu : elle dit qu'on ne connaît pas les bornes.
+   *
+   * Le plafond à 40 n'est pas une limite de dessin mais de lisibilité : au-delà, des traits d'un
+   * pixel espacés de moins de trois se fondent en une bande grise, qui ne porte plus rien. On
+   * retombe alors sur un cran tous les dix pas, ce qui reste vrai.
+   */
+  const cransDe = (b: Param): number | null => {
+    if (bev.bounds?.calculee) return null;
+    const min = b.min ?? 0;
+    const max = b.max ?? 0;
+    const etendue = max - min;
+    if (etendue < 2) return null;
+    return etendue <= 40 ? etendue : Math.max(Math.round(etendue / 10), 1);
+  };
+
   const slider = (b: Param) => (
     <div className="paramRow" key={b.id}>
       <span className="nom">
         {paramLabel(b)}
         {b.unit ? ` (${unitLabel(b.unit)})` : ""}
       </span>
-      <div className="ctl">
+      <div
+        className="ctl"
+        style={cransDe(b) !== null ? ({ "--crans": cransDe(b) } as React.CSSProperties) : undefined}
+      >
         <span className="sub mono">
           {b.min}
         </span>
@@ -583,6 +622,8 @@ export default function RecipeEditor({
           {advanced.map(reglage)}
         </div>
       )}
+
+      {panneau?.(params)}
     </div>
   );
 }

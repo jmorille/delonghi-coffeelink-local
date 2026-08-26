@@ -180,7 +180,7 @@ export default function Reglages() {
                 ) : (
                   <>
                     <div className="titreLigne">
-                      <span className="chiffre">{r.value ?? tc("dash")}</span>
+                      <span className="valeur">{r.value ?? tc("dash")}</span>
                       {echelle(r.cle, r.value) && <span className="sub">{echelle(r.cle, r.value)}</span>}
                       {r.value == null && <span className="pill off">{t("notRead")}</span>}
                     </div>

@@ -196,7 +196,19 @@ export default function PhotoGrains({
               // `<img>` et non `next/image`, même raison qu'ailleurs dans ce dépôt : la source est
               // soit une data URL, soit une route de ce serveur qui rend des octets bruts déjà au
               // format voulu — l'optimiseur n'a rien à y gagner, et il refuse les data URL.
-              <img src={visible} alt="" className="photoVignette" />
+              //
+              // `width`/`height` tirés de `FORMAT_IMAGE` : la CSS impose `width: 6.5rem` et
+              // `height: auto`, donc sans rapport d'aspect connu la boîte fait ZÉRO tant que
+              // l'octet n'est pas arrivé, et la carte saute de 118 px — la chose même que le vide
+              // à côté existe pour éviter. Le rapport n'est pas figé dans la feuille (ce serait
+              // une deuxième déclaration du format, elle le dit) : il vient d'ici, d'une seule.
+              <img
+                src={visible}
+                alt=""
+                className="photoVignette"
+                width={FORMAT_IMAGE.largeur}
+                height={FORMAT_IMAGE.hauteur}
+              />
             ) : (
               <div className="photoVide sub">{t("photoNone")}</div>
             )}

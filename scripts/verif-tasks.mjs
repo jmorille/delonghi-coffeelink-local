@@ -249,5 +249,48 @@ test("un monitor SPONTANÉ ne valide pas un pas qui attend autre chose", () => {
   eq(reponse(f, { reponse: true }, 3000)?.label, "Statistiques", "un data_response non qualifié apparie encore");
 });
 
+console.log("\n— la réponse à 0xBA arrive en poussée de d(250+n)_beansystem_n —");
+
+test("un pas 0xBA n'est PAS apparié par le nom de la propriété qui le satisfait", () => {
+  // Le défaut, mesuré le 2026-08-26. Le pas d'un balayage de grains est un pas de TRAME, donc de
+  // type « reponse » ; la machine, elle, répond en poussant une PROPRIÉTÉ. Le serveur appariait
+  // sur ce nom de propriété — ce qui ne peut coller à aucun pas de trame. Résultat : les quatre
+  // grains rangés en base, noms et réglages corrects, et la tâche échouée en « 6 sans réponse ».
+  const f = nouvelleFile();
+  const scan = tache({ label: "Balayage des grains", rang: RANG.LECTURE, genre: "lecture",
+    pas: [pasTrame("Bean System 1", "AAA=", { attente: "reponse", cmd: 0xba })] });
+  enfiler(f, scan, 1000);
+  aServir(f, 1000);
+  eq(reponse(f, { prop: "d251_beansystem_1" }, 2000), null, "le nom de propriété n'apparie rien");
+  eq(scan.faits, 0, "pas intact");
+  eq(reponse(f, { reponse: true, cmd: 0xba }, 2100)?.label, "Balayage des grains", "la commande 0xBA apparie");
+  eq(scan.faits, 1, "pas fait");
+});
+
+test("une poussée 0xBA ne valide pas un pas qui attend une autre commande", () => {
+  // La machine pousse aussi ces propriétés d'elle-même après une écriture 0xBB : apparier
+  // largement validerait le pas d'une lecture qui attendait tout autre chose.
+  const f = nouvelleFile();
+  const st = tache({ label: "Statistiques", rang: RANG.LECTURE_BASSE, genre: "lecture",
+    pas: [pasTrame("Paramètres 3001", "AAA=", { attente: "reponse", cmd: 0xa2 })] });
+  enfiler(f, st, 1000);
+  aServir(f, 1000);
+  eq(reponse(f, { reponse: true, cmd: 0xba }, 2000), null, "0xBA n'apparie pas le pas 0xA2");
+  eq(st.faits, 0, "pas intact");
+});
+
+test("un pas de trame construit sans `cmd` reste hors de portée d'un appariement étroit", () => {
+  // L'autre moitié du même défaut, côté serveur : `scanBeans` bâtissait ses pas avec `pasTrame` en
+  // laissant `cmd` à null, donc même l'appariement par commande n'avait rien à quoi se raccrocher.
+  // La règle « nature + commande » ne vit qu'à un endroit, `pasPourTrame` ; voici pourquoi.
+  const f = nouvelleFile();
+  const scan = tache({ label: "Balayage sans cmd", rang: RANG.LECTURE, genre: "lecture",
+    pas: [pasTrame("Bean System 1", "AAA=", { attente: "reponse" })] });
+  enfiler(f, scan, 1000);
+  aServir(f, 1000);
+  eq(reponse(f, { reponse: true, cmd: 0xba }, 2000), null, "cmd null n'apparie aucune commande");
+  eq(scan.faits, 0, "pas intact");
+});
+
 console.log(ko ? `\n${ko} ÉCHEC(S)\n` : "\nTout passe.\n");
 process.exit(ko ? 1 : 0);

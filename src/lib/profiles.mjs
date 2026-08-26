@@ -256,3 +256,88 @@ export function decodeBeanSystem(b64) {
     hex: buf.subarray(0, len).toString("hex").replace(/(..)/g, "$1 ").trim(),
   };
 }
+
+
+/**
+ * **Le grain sélectionné, en UNE lecture de propriété** — `d260_beansystem_sync_par`.
+ *
+ * Le drapeau de l'octet 50 de `0xBA` dit lui aussi quel grain est actif, mais il ne le dit
+ * qu'index par index : il faut balayer les six configurations pour trouver celle qui le porte, ce
+ * qui coûte six trames et une cinquantaine de secondes avec les reprises. Cette propriété-ci porte
+ * la réponse directement, en une seconde.
+ *
+ * Forme : trame `0xA1 0x0F` du **paramètre 500**, exactement celle du numéro de série (paramètre
+ * 205), sauf que la charge utile est une suite de mots de 32 bits gros-boutiens et non du texte.
+ *
+ *   0      0xD0
+ *   1      len = taille totale − 1
+ *   2      0xA1
+ *   3      0x0F
+ *   4..5   identifiant de paramètre, big-endian (500 = 0x01F4)
+ *   6..    mots de 32 bits big-endian — dix sur cette machine
+ *   −2..   CRC16
+ *
+ * **Seul le mot 4 est établi : c'est l'index du grain sélectionné.** Mesuré le 2026-08-26 par
+ * contraste, en changeant le grain sur l'écran de la machine puis en relisant :
+ *
+ * ```
+ * grain 3 « Borbone »  …  00 00 24 54 | 00 00 00 03 | 00 00 00 07 | 0 0 0 0
+ * grain 2 « Sakura »   …  00 00 24 54 | 00 00 00 02 | 00 00 00 00 | 0 0 0 0
+ *                          mot 3        mot 4 ←       mot 5
+ * ```
+ *
+ * Le mot 4 a suivi la sélection, et **rien d'autre n'a bougé** hormis le mot 5, tombé de 7 à 0 au
+ * même instant — vraisemblablement les tasses tirées avec le grain courant, remises à zéro à la
+ * sélection, mais c'est une seule observation et ça reste une lecture, pas un fait.
+ *
+ * Les autres mots ne sont **pas** nommés, délibérément — et une quatrième lecture, une heure plus
+ * tard, montre bien pourquoi. Sur trois relevés les mots 0 à 3 semblaient avoir chacun un sens :
+ *
+ * ```
+ * 07:11  42, 6513, 9312,  9300, 3, 6      le 0 monte, les 1 et 2 descendent,
+ * 08:27  44, 6363, 9058,  9300, 3, 7      le 3 ne bouge jamais
+ * 08:40  44, 6363, 9058,  9300, 2, 0      ← sélection de « Sakura »
+ * 09:36  41, 6630, 9558, 10200, 2, 2      les quatre repartent dans l'AUTRE sens
+ * ```
+ *
+ * Le mot 0 a baissé, les mots 1 et 2 ont monté, et le mot 3 — le seul qu'on croyait figé — a pris
+ * 900. Aucune direction n'est donc tenable, et trois relevés concordants n'auraient pas suffi à en
+ * conclure une. Seul le mot 4 a tenu sur les quatre lectures. Les mots 6 à 9 sont restés nuls.
+ * Nommer les autres produirait exactement ce que ce projet cherche à éviter : une valeur plausible
+ * et fausse. Ils voyagent donc bruts, dans `mots`.
+ *
+ * Le mot 5, lui, reste cohérent avec « tasses tirées depuis la sélection » : 0 juste après le
+ * changement de grain, 2 une heure plus tard. Cohérent ne veut pas dire établi.
+ *
+ * ⚠️ Ne pas confondre avec le paramètre 3009, qui vaut 3 lui aussi : il n'a **pas** suivi le
+ * changement de grain (toujours 3 avec « Sakura » sélectionné). C'était une coïncidence de valeur,
+ * et c'est précisément pourquoi cette fonction existe plutôt qu'une lecture de statistique.
+ */
+export const BEAN_SYNC_PROP = "d260_beansystem_sync_par";
+export const BEAN_SYNC_PARAM = 500;
+/** Rang du mot portant l'index du grain sélectionné. Le seul champ nommé de la charge utile. */
+const BEAN_SYNC_MOT_GRAIN = 4;
+
+export function decodeBeanSync(b64) {
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 8) throw new Error(`trame trop courte (${buf.length} octets)`);
+  if (buf[2] !== 0xa1) throw new Error(`commande inattendue 0x${buf[2].toString(16)}`);
+  const param = (buf[4] << 8) | buf[5];
+  if (param !== BEAN_SYNC_PARAM) throw new Error(`paramètre ${param} au lieu de ${BEAN_SYNC_PARAM}`);
+  const len = buf[1] + 1;
+  const fin = len - 2; // début du CRC
+  const charge = fin - 6;
+  // Exiger que le mot du grain soit ENTIÈREMENT présent, et pas seulement commencé : une trame
+  // tronquée juste après l'en-tête rendrait `selected: undefined`, donc un grain « sélectionné »
+  // qu'aucun index ne porte — le genre de valeur qui traverse l'interface sans lever un mot.
+  if (charge < 4 * (BEAN_SYNC_MOT_GRAIN + 1)) throw new Error(`charge utile trop courte (${charge} octets)`);
+  if (charge % 4 !== 0) throw new Error(`charge utile de ${charge} octets, non multiple de 4`);
+  const mots = [];
+  for (let i = 6; i + 4 <= fin; i += 4) mots.push(buf.readUInt32BE(i));
+  return {
+    param,
+    selected: mots[BEAN_SYNC_MOT_GRAIN],
+    mots,
+    hex: buf.subarray(0, len).toString("hex").replace(/(..)/g, "$1 ").trim(),
+  };
+}

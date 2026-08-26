@@ -64,9 +64,19 @@ interface Rapport {
  * Le point median est deja le separateur de cette page — la ligne du modele et le journal
  * l'emploient — et il n'imbrique rien.
  */
+/**
+ * **La provenance se TRACE.** Discipline retenue de la direction « tenségrité » : un filet part de
+ * la valeur et rejoint sa source, au lieu de laisser une teinte le sous-entendre. C'est le
+ * pendant du principe produit n° 2 — dire l'état réel, y compris l'ignorance : une adresse lue sur
+ * l'appareil, une adresse reprise d'un cache et une adresse imposée par l'environnement se
+ * ressemblaient à l'écran, et seule la lecture du texte les séparait.
+ *
+ * Le point médian disparaît : c'est le tracé de `.rappel` qui fait la liaison, et garder les deux
+ * aurait doublé le même signe.
+ */
 function provenance(connu: boolean, source: string) {
   if (!connu) return null;
-  return <span className="sub"> · {source}</span>;
+  return <span className="rappel sub">{source}</span>;
 }
 
 interface Payload {
@@ -514,9 +524,16 @@ export default function Machines() {
                     disparait quand le titre le repete deja : en fin de chaine de repli, le nom
                     derive EST l'identifiant, et la carte affichait « m1 m1 ». */}
                 {m.id !== m.label && <span className="mono sub">{m.id}</span>}
-                {m.id === courante && <span className="pill on">{t("current")}</span>}
+                {/* **« affichée » est un CHOIX, pas une marche.** C'est la machine que ce
+                    navigateur regarde — donc de l'ambre, qui veut dire « choisi ou configuré », et
+                    non du vert, qui est réservé à ce que l'appareil fait. Un témoin vert ici
+                    diluait la seule couleur qui doit se lire d'un coup d'œil. */}
+                {m.id === courante && <span className="pill info">{t("current")}</span>}
                 {m.id === d.defaultId && <span className="pill">{t("isDefault")}</span>}
-                <span className={`pill ${m.ready ? "on" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
+                {/* « pilotable » est une CAPACITÉ : ni une marche, ni un défaut. Elle n'allume donc
+                    aucun témoin quand elle est acquise. Son absence, en revanche, bloque tout geste
+                    sur l'appareil — c'est à ce titre qu'elle prend le rouge. */}
+                <span className={`pill ${m.ready ? "" : "off"}`}>{m.ready ? t("ready") : t("notReady")}</span>
                 {m.sessionActive && <span className="pill on">{t("session")}</span>}
                 {m.reading && (
                   <span className="pill on">{t("readingNow", { remaining: m.reading.remaining })}</span>
