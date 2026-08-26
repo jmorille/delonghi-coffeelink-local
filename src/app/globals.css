@@ -249,6 +249,28 @@
     --al-perce: #b4b4af;
     --al-perce-levre: #c4c4bf;
 
+    /* ── Le fraisage d'une touche : deux rôles, et ils S'INVERSENT d'une finition à l'autre ──
+       Une touche encastrée se lit à ses quatre arêtes sous une lumière qui vient d'en haut à
+       gauche : ombre en haut et à gauche, reflet en bas et à droite. C'est l'inverse exact du
+       relief d'une plaque, et c'est ce qui distingue un creux d'une saillie sans changer une
+       seule couleur de fond.
+
+       ⚠️ **Aucune valeur n'entre ici : ce sont des alias.** Ces deux rôles existent parce que le
+       gris qui fait l'ombre en aluminium fait le REFLET en graphite. Écrire `--gravure` en haut
+       et `--arete-haute` en bas donnerait un creux correct en sombre et un creux à l'envers en
+       clair — la lumière viendrait d'en bas. Un rôle par fonction physique, donc, pas par valeur.
+
+       **Et c'est ce qui rend la limite mesurable.** Contre le panneau (`--boitier`), le seuil
+       d'un élément non textuel est 3:1 (WCAG 1.4.11) :
+
+         graphite  — reflet #8c9091 sur #26282a → 4,53:1 ✓  (l'ombre #0d0f11 plafonne à 1,30:1 :
+                     AUCUN gris ne peut atteindre 3:1 en descendant sous #26282a, le panneau est
+                     déjà trop sombre — c'est le reflet qui porte la limite dans cette finition) ;
+         aluminium — ombre  #585a54 sur #bcbcb7 → 3,59:1 ✓  (le reflet #f7f7f2 plafonne à 1,72:1,
+                     par la même impossibilité, dans l'autre sens).
+
+       Chaque finition a donc UNE arête porteuse et une arête d'accompagnement, et ce n'est pas la
+       même. Mesuré par `scripts/verif-surfaces.mjs` au navigateur, dans les deux finitions. */
     /* ── Rôles — graphite par défaut ─────────────────────────────────────────────────────────
        Le sombre n'est pas « le mode nuit » : c'est la finition d'origine de cet appareil. */
     color-scheme: dark;
@@ -258,6 +280,8 @@
     --arete-haute: var(--gr-arete-haute);
     --arete-basse: var(--gr-arete-basse);
     --arete-commande: var(--gr-arete-commande);
+    --fraisage-ombre: var(--gr-gravure);
+    --fraisage-jour: var(--gr-arete-commande);
     --encre: var(--gr-encre);
     --encre-faible: var(--gr-encre-faible);
     --aluminium: var(--gr-aluminium);
@@ -334,6 +358,8 @@
     --arete-haute: var(--al-arete-haute);
     --arete-basse: var(--al-arete-basse);
     --arete-commande: var(--al-arete-commande);
+    --fraisage-ombre: var(--al-arete-commande);
+    --fraisage-jour: var(--al-arete-haute);
     --encre: var(--al-encre);
     --encre-faible: var(--al-encre-faible);
     --aluminium: var(--al-aluminium);
@@ -359,6 +385,8 @@
       --arete-haute: var(--al-arete-haute);
       --arete-basse: var(--al-arete-basse);
       --arete-commande: var(--al-arete-commande);
+      --fraisage-ombre: var(--al-arete-commande);
+      --fraisage-jour: var(--al-arete-haute);
       --encre: var(--al-encre);
       --encre-faible: var(--al-encre-faible);
       --aluminium: var(--al-aluminium);
@@ -727,6 +755,8 @@
   --color-arete-haute: var(--arete-haute);
   --color-arete-basse: var(--arete-basse);
   --color-arete-commande: var(--arete-commande);
+  --color-fraisage-ombre: var(--fraisage-ombre);
+  --color-fraisage-jour: var(--fraisage-jour);
   --color-encre: var(--encre);
   --color-encre-faible: var(--encre-faible);
   --color-gravure: var(--gravure);

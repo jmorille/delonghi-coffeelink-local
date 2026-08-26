@@ -37,10 +37,21 @@ import { cn } from "@/ui/cn"
  * sans que rien ne le signale. Elles deviennent donc des variantes, sur le seul objet qui décide.
  *
  * - `plaque` — la carte ordinaire, décrite ci-dessus ;
- * - `touche` — **la carte fermée EST la touche.** Fraisage d'un pixel tout autour (l'ouverture dans
- *   la tôle) puis le biseau inversé, sombre en haut et clair en bas : une surface enfoncée. Ouverte,
- *   la carte reprend `plaque`, et c'est le contraste qu'on veut — fermée elle est un élément du
- *   clavier, ouverte elle est le sujet de la page ;
+ * - `touche` — **la carte fermée EST la touche.** Le trait de coupe dans la tôle, puis le fraisage
+ *   sur ses QUATRE arêtes : ombre en haut et à gauche, reflet en bas et à droite, sous une lumière
+ *   qui vient d'en haut à gauche. Ouverte, la carte reprend `plaque`, et c'est le contraste qu'on
+ *   veut — fermée elle est un élément du clavier, ouverte elle est le sujet de la page ;
+ *
+ *   ⚠️ **Elle n'en portait que deux, et elle ne se voyait pas.** Un biseau haut/bas seul dessine un
+ *   ruban, pas un creux : les côtés restaient nus, la limite entre deux touches voisines tombait à
+ *   1,30:1 en graphite et 1,45:1 en aluminium, et les 28 boissons se lisaient comme une seule dalle
+ *   grise. Signalé à l'œil avant d'être mesuré. Les quatre arêtes la portent maintenant à 4,53:1 et
+ *   3,59:1 — au-dessus du seuil de 3:1 d'un élément non textuel (WCAG 1.4.11).
+ *
+ *   Les deux rôles employés ici, `--fraisage-ombre` et `--fraisage-jour`, **s'inversent d'une
+ *   finition à l'autre** : le gris qui fait l'ombre en aluminium fait le reflet en graphite. Voir
+ *   `globals.css`, qui porte le calcul et l'impossibilité qui l'a imposé — sous un panneau aussi
+ *   sombre que `#26282a`, aucun gris ne peut atteindre 3:1 en DESCENDANT ;
  * - `machine` — l'état de l'appareil n'est pas un élément de la liste des boissons. Il se distingue
  *   par sa SURFACE, pas par sa position : un simple trait à 1,26:1 le rendait indiscernable de la
  *   carte de boisson n°0.
@@ -64,9 +75,17 @@ const cardVariants = cva(
         plaque:
           "bg-releve rounded-plaque p-[var(--s-4)] court:p-[var(--s-3)] mb-[var(--s-3)] " +
           "shadow-[inset_0_var(--trait)_0_0_var(--color-arete-haute),inset_0_calc(-1*var(--trait))_0_0_var(--color-arete-basse),0_1px_2px_-1px_color-mix(in_srgb,var(--color-arete-basse)_70%,transparent)]",
+        /* L'ordre compte : une ombre déclarée avant une autre passe DESSUS. L'ombre est donc
+           écrite avant le reflet, ce qui la fait envelopper les deux coins qu'ils partagent —
+           haut-droit et bas-gauche. C'est ce que fait la lumière sur un vrai creux fraisé ; deux
+           coins nets à angle vif donneraient un cadre, pas une profondeur. */
         touche:
           "bg-[var(--panel-2)] rounded-touche p-[var(--s-3)] mb-0 " +
-          "shadow-[0_0_0_var(--trait)_var(--rule),inset_0_var(--trait)_0_0_var(--color-arete-basse),inset_0_calc(-1*var(--trait))_0_0_var(--color-arete-haute)]",
+          /* ⚠️ Sur UNE seule chaîne, coupée par personne : Tailwind lit le TEXTE SOURCE. Une
+             classe répartie sur deux littéraux réunis par `+` n'est un candidat complet dans
+             aucun des deux, l'utilitaire n'est jamais généré, et la carte perd ses arêtes sans
+             qu'aucun outil ne dise rien — tsc compile, ESLint passe, la page s'affiche. */
+          "shadow-[0_0_0_var(--trait)_var(--rule),inset_0_var(--trait)_0_0_var(--color-fraisage-ombre),inset_var(--trait)_0_0_0_var(--color-fraisage-ombre),inset_0_calc(-1*var(--trait))_0_0_var(--color-fraisage-jour),inset_calc(-1*var(--trait))_0_0_0_var(--color-fraisage-jour)]",
         machine:
           "bg-[var(--raise)] rounded-plaque p-[var(--s-4)] court:p-[var(--s-3)] mb-[var(--s-3)] " +
           "shadow-[inset_0_1px_0_0_var(--color-arete-haute),inset_0_-1px_0_0_var(--color-arete-basse),0_2px_6px_-3px_var(--color-arete-basse)]",

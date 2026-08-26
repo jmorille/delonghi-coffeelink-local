@@ -424,6 +424,83 @@ try {
     vrai(focusable, "le choix du profil n'est pas atteignable au clavier");
     await page.close();
   });
+
+  /**
+   * ── LA LIMITE D'UNE TOUCHE DE BOISSON ──────────────────────────────────────────────────────
+   *
+   * **Ce script est resté vert pendant que la limite valait 1,30:1.** Il vérifiait que la page
+   * s'affiche, pas qu'on distingue une boisson de sa voisine — et les 28 touches du clavier se
+   * lisaient comme une seule dalle grise. Le défaut a été vu à l'œil, pas attrapé ici. C'est la
+   * raison d'être de ce bloc : une limite qui SÉPARE deux commandes est de l'information, et son
+   * seuil est 3:1 (WCAG 1.4.11, élément non textuel).
+   *
+   * Il se mesure **dans les deux finitions**, parce que la parité clair/sombre est une contrainte
+   * de produit et que les deux arêtes s'y INVERSENT : en graphite c'est le reflet du bas qui porte
+   * la limite, en aluminium c'est l'ombre du haut. Une seule finition mesurée aurait laissé
+   * l'autre partir à 1,45:1 sans rien dire.
+   */
+  console.log("\nLa touche de boisson — une limite qu'on voit");
+
+  /** Luminance relative WCAG d'un `rgb(...)` rendu par le navigateur. */
+  const luminance = (rgb) => {
+    const [r, v, b] = rgb.match(/[\d.]+/g).slice(0, 3).map(Number);
+    const c = (x) => (x / 255 <= 0.04045 ? x / 255 / 12.92 : ((x / 255 + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * c(r) + 0.7152 * c(v) + 0.0722 * c(b);
+  };
+  const contraste = (a, b) => {
+    const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+  };
+
+  for (const finition of ["dark", "light"]) {
+    await test(`${finition === "dark" ? "graphite" : "aluminium"} — la touche fermée se détache du panneau`, async () => {
+      const page = await navigateur.newPage();
+      await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: finition }]);
+      await page.goto(BASE + "/", { waitUntil: "networkidle2", timeout: 30000 });
+      const m = await page.evaluate(() => {
+        const el = document.querySelector('.cards.clavier > [data-slot="card"]');
+        if (!el) return null;
+        const style = getComputedStyle(el);
+        // `box-shadow` calculé : une couche par virgule HORS parenthèses — les `rgb(...)` en
+        // contiennent, donc on ne peut pas découper naïvement sur la virgule.
+        const couches = [];
+        let prof = 0, courant = "";
+        for (const ch of style.boxShadow) {
+          if (ch === "(") prof++;
+          else if (ch === ")") prof--;
+          if (ch === "," && prof === 0) { couches.push(courant.trim()); courant = ""; } else courant += ch;
+        }
+        couches.push(courant.trim());
+        return {
+          panneau: getComputedStyle(document.body).backgroundColor,
+          couches: couches.filter((c) => !/^rgba\(0, 0, 0, 0\)/.test(c)),
+        };
+      });
+      vrai(m, "aucune touche de boisson sur la page d'accueil");
+
+      // Les quatre arêtes, plus le trait de coupe : cinq couches. Deux seulement, c'est le ruban
+      // haut/bas d'avant — un creux sans ses côtés.
+      vrai(
+        m.couches.length >= 5,
+        `${m.couches.length} couche(s) d'ombre au lieu de 5 : le fraisage n'a pas ses quatre arêtes`,
+      );
+      vrai(
+        m.couches.filter((c) => /inset/.test(c)).length === 4,
+        "le fraisage doit porter exactement quatre arêtes intérieures",
+      );
+
+      // La limite est portée par l'arête la PLUS contrastée : c'est elle qu'on voit, et elle
+      // change de côté selon la finition. Exiger les deux serait impossible — sous un panneau
+      // aussi sombre que #26282a, aucun gris ne peut atteindre 3:1 en descendant.
+      const couleurs = m.couches.map((c) => c.match(/rgba?\([^)]*\)/)?.[0]).filter(Boolean);
+      const meilleur = Math.max(...couleurs.map((c) => contraste(c, m.panneau)));
+      vrai(
+        meilleur >= 3,
+        `la limite de la touche plafonne à ${meilleur.toFixed(2)}:1 contre le panneau, sous le seuil de 3:1`,
+      );
+      await page.close();
+    });
+  }
 } finally {
   if (navigateur) await navigateur.close().catch(() => {});
   serveur.enfant.kill();
