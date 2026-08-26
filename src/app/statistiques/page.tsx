@@ -5,6 +5,9 @@ import { mfetch } from "../machine";
 import Icone from "../icons";
 import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 /** Compteur dont la signification est établie (voir `STAT_MEANINGS` côté serveur). */
 interface Known {
@@ -179,12 +182,12 @@ export default function Statistiques() {
       {pending && <p className="sub">{t("pushWaiting")}</p>}
       {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card warn">
+      <Card className="warn">
         <TitreAlerte>{t("categoryWarningTitle")}</TitreAlerte>
         <div className="legende">
           {t("categoryWarning")}
         </div>
-      </div>
+      </Card>
 
       <div className="row barreActions">
         {/* **Le meme glyphe sur les deux, et c'est exact.** Les deux boutons font la meme chose —
@@ -192,16 +195,16 @@ export default function Statistiques() {
             pour les dix compteurs identifies, huit pour l'espace complet. Inventer un second dessin
             aurait affirme une difference de nature qui n'existe pas ; la difference d'echelle est
             deja portee par `.mini`, qui rend le second en 13 px estompes a cote d'un 16 px plein. */}
-        <button className="iconBtn" disabled={busy || scanning || !plages.known.length} onClick={() => read(plages.known, t("scopeKnown"))}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || scanning || !plages.known.length} onClick={() => read(plages.known, t("scopeKnown"))}>
           <Icone nom="lire" />
           <span className="lbl">{t("readKnown")}</span>
-        </button>
-        <button className="mini iconBtn" disabled={busy || scanning || !plages.all.length} onClick={() => read(plages.all, t("scopeAll"))} title={t("readAllTitle")}>
+        </Button>
+        <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy || scanning || !plages.all.length} onClick={() => read(plages.all, t("scopeAll"))} title={t("readAllTitle")}>
           <Icone nom="lire" taille={14} />
           <span className="lbl">{t("readAll")}</span>
-        </button>
+        </Button>
         {d?.scan && (
-          <span className="pill on">{t("scanning", { remaining: d.scan.remaining })}</span>
+          <Badge variant="marche">{t("scanning", { remaining: d.scan.remaining })}</Badge>
         )}
       </div>
       {/* Le compte rendu sort de la barre : `.barreActions` est une rangee de commandes centrees,
@@ -210,13 +213,13 @@ export default function Statistiques() {
       {msg && <p className="legende">{msg}</p>}
 
       {!d || d.count === 0 ? (
-        <div className="card">
+        <Card>
           <p className="sub">{t("nothingYet")}</p>
-        </div>
+        </Card>
       ) : (
         <>
           {derived && derived.total !== undefined && (
-            <div className="card">
+            <Card>
               <div className="kv">
                 <span className="k">{t("totalBeverages")}</span>
                 <span className="valeur">
@@ -226,11 +229,11 @@ export default function Statistiques() {
               <p className="legende">
                 {derived.complete ? t("totalNote") : t("totalPartial")}
               </p>
-            </div>
+            </Card>
           )}
 
           <h2>{t("knownHeading")}</h2>
-          <div className="card">
+          <Card>
             {d.known.length === 0 ? (
               <p className="sub">{t("noKnownYet")}</p>
             ) : (
@@ -260,10 +263,10 @@ export default function Statistiques() {
                 {t("hotMilkSum", { total: fmt(derived.hot) })}
               </p>
             )}
-          </div>
+          </Card>
 
           <h2>{t("unknownHeading")}</h2>
-          <div className="card">
+          <Card>
             <p className="chapeau">{t("unknownNote")}</p>
             {unknownIds.length === 0 ? (
               <p className="sub">{t("unknownEmpty")}</p>
@@ -281,7 +284,7 @@ export default function Statistiques() {
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
           <p className="sub">{t("protocolNote", { count: d.count })}</p>
         </>

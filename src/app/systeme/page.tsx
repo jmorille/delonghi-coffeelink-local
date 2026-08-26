@@ -4,6 +4,10 @@ import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import Alerte, { TitreAlerte } from "../Alerte";
 import Icone from "../icons";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 interface Finding {
   level: "warn" | "info";
@@ -197,10 +201,10 @@ export default function Systeme() {
             machine et relit l'etat local. La fleche circulaire aurait ete le reflexe, mais c'est le
             dessin de « revenir aux valeurs enregistrees » dans l'editeur — deux sens pour un
             glyphe. Ici la valeur descend de l'appareil, comme partout ailleurs. */}
-        <button className="primary iconBtn" disabled={busy} onClick={load}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={load}>
           <Icone nom="lire" />
           <span className="lbl">{busy ? t("refreshing") : tc("refresh")}</span>
-        </button>
+        </Button>
       </div>
 
       {/* **Neuf sujets independants, et ils etaient neuf bandes de 1 140 px.** Mesure a
@@ -216,7 +220,7 @@ export default function Systeme() {
       <div className="panneaux">
         <section>
           <h2>{t("firmware")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("fullVersion")}</span>
               <span className="mono">{String(fw.sw_version)}</span>
@@ -245,11 +249,11 @@ export default function Systeme() {
                 {String(fw.module_updated_at).slice(0, 10)} {fw.neverUpdated ? t("neverUpdated") : ""}
               </span>
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("ota")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("otaRequests")}</span>
               <span className="num">{d.ota.lanRequests.length === 0 ? tc("none") : d.ota.lanRequests.length}</span>
@@ -259,26 +263,26 @@ export default function Systeme() {
             </p>
             {d.ota.lanRequests.length > 0 && (
               <div className="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("otaWhen")}</th>
-                    <th>{t("otaRequest")}</th>
-                    <th>{t("otaFrom")}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("otaWhen")}</TableHead>
+                    <TableHead>{t("otaRequest")}</TableHead>
+                    <TableHead>{t("otaFrom")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {d.ota.lanRequests.map((r, i) => (
-                    <tr key={i}>
-                      <td className="num">{new Date(r.at).toLocaleString("fr-FR")}</td>
-                      <td className="mono">
+                    <TableRow key={i}>
+                      <TableCell className="num">{new Date(r.at).toLocaleString("fr-FR")}</TableCell>
+                      <TableCell className="mono">
                         {r.method} {r.url}
-                      </td>
-                      <td className="mono">{r.from}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="mono">{r.from}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               </div>
             )}
     {/* Une seule ligne. L'ancienne version affichait « désactivée », puis une phrase qui se
@@ -292,7 +296,7 @@ export default function Systeme() {
                   <span className="sub">{t("cloudNever")}</span>
                 ) : d.ota.cloud.last.updateAvailable ? (
                   <>
-                    <span className="pill off">{t("cloudAvailable")}</span>{" "}
+                    <Badge variant="arret">{t("cloudAvailable")}</Badge>{" "}
                     <span className="sub">
                       {d.ota.cloud.last.version ?? ""} · {new Date(d.ota.cloud.last.at).toLocaleString("fr-FR")}
                     </span>
@@ -305,19 +309,19 @@ export default function Systeme() {
                 )}
               </span>
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("wifiModule")}</h2>
-          <div className="card">
+          <Card>
             <p className="sub">
               {t("liveNote", { others: "status.json, wifi_status.json, time.json, module_info.json, ota.json, wifi_scan.json" })}
             </p>
             <div className="kv">
               <span className="k">{t("reachable")}</span>
-              <span className={d.local.reachable ? "pill on" : "pill off"}>
+              <Badge variant={d.local.reachable ? "marche" : "arret"}>
                 {d.local.reachable ? t("reachableYes", { status: d.local.status ?? 0 }) : t("reachableNo", { error: d.local.error ?? "" })}
-              </span>
+              </Badge>
             </div>
             {d.local.regtoken &&
               Object.entries(d.local.regtoken).map(([k, v]) => (
@@ -329,20 +333,20 @@ export default function Systeme() {
             <div className="blocSuite">
               <Rows obj={d.deviceSheet.hardware} />
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("aylaPlatform")}</h2>
-          <div className="card">
+          <Card>
             <Rows obj={d.deviceSheet.platform} />
             <div className="blocSuite">
               <Rows obj={d.deviceSheet.lifecycle} />
             </div>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("machineModel")}</h2>
-          <div className="card">
+          <Card>
             <Rows
               obj={{
                 type: d.model.type,
@@ -369,11 +373,11 @@ export default function Systeme() {
                 {t("modelFallback", { detected: d.model.detectedKey ?? "?", type: String(d.model.type ?? "?") })}
               </Alerte>
             )}
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("identification")}</h2>
-          <div className={d.identification.matchesCatalog === false ? "card warn" : "card"}>
+          <Card className={d.identification.matchesCatalog === false ? "warn" : undefined}>
             {d.identification.matchesCatalog === false && (
               <p className="chapeau">
                 <TitreAlerte>
@@ -411,10 +415,10 @@ export default function Systeme() {
               </p>
             )}
             <div className="blocSuite">
-              <button className="iconBtn" onClick={readModel} disabled={busy}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" onClick={readModel} disabled={busy}>
                 <Icone nom="lire" />
                 <span className="lbl">{d.identification.key ? t("idReread") : t("idRead")}</span>
-              </button>
+              </Button>
               {idMsg && (
                 <span className="sub">
                   {idMsg}
@@ -427,11 +431,11 @@ export default function Systeme() {
             <p className="legende">
               {t("idScopeNote")}
             </p>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("machineState")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("monitor")}</span>
               <span className="mono">
@@ -463,14 +467,14 @@ export default function Systeme() {
             <h3 className="titreBloc">{t("probesHeading")}</h3>
             <p className="legende">{t("probesNote")}</p>
             <div className="row">
-              <button className="iconBtn" disabled={busy} onClick={() => sonder(0)} title={t("probeTitle", { cmd: "0x60" })}>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => sonder(0)} title={t("probeTitle", { cmd: "0x60" })}>
                 <Icone nom="oeil" />
                 <span className="lbl">{t("probe", { cmd: "0x60" })}</span>
-              </button>
-              <button className="iconBtn" disabled={busy} onClick={() => sonder(1)} title={t("probeTitle", { cmd: "0x70" })}>
+              </Button>
+              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => sonder(1)} title={t("probeTitle", { cmd: "0x70" })}>
                 <Icone nom="oeil" />
                 <span className="lbl">{t("probe", { cmd: "0x70" })}</span>
-              </button>
+              </Button>
             </div>
             {sondeMsg && <p className="status ok" role="status">{sondeMsg}</p>}
             {d.machineState.checksums && (
@@ -491,11 +495,11 @@ export default function Systeme() {
                 </div>
               </>
             )}
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("storage")}</h2>
-          <div className="card">
+          <Card>
             <div className="kv">
               <span className="k">{t("storageEngine")}</span>
               <span className="mono">
@@ -522,16 +526,16 @@ export default function Systeme() {
               </span>
             </div>
             <p className="note">{t("storageNote")}</p>
-          </div>
+          </Card>
         </section>
         <section>
           <h2>{t("protocolNetwork")}</h2>
-          <div className="card">
+          <Card>
             <Rows obj={d.protocol} />
             <div className="blocSuite">
               <Rows obj={d.network} />
             </div>
-          </div>
+          </Card>
         </section>
         {/* Les constats se rangent en grille : onze cartes de 70 a 113 px de haut, homogenes,
             faites pour etre balayees — une bande de 1 140 px par constat les rendait plus longs a
@@ -545,14 +549,14 @@ export default function Systeme() {
           <h2>{t("findings")}</h2>
           <div className="cards dense">
             {d.deviceSheet.findings.map((f, i) => (
-              <div className={f.level === "warn" ? "card warn" : "card"} key={i}>
+              <Card className={f.level === "warn" ? "warn" : undefined} key={i}>
                 {/* Onze constats, dont quatre en avertissement : le pictogramme est ce qui les distingue
                     en balayant la liste, et il est maintenant dessiné comme les autres. */}
                 {f.level === "warn" ? <TitreAlerte>{f.title}</TitreAlerte> : <strong>{f.title}</strong>}
                 <div className="legende">
                   {f.detail}
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         </section>

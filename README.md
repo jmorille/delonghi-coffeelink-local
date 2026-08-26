@@ -153,6 +153,11 @@ dépôt.
   délègue à Next.js que les pages. Le client HTTP de l'ESP32 est rudimentaire et rejette le
   *framing* des réponses de Next.
 - **Interface** : Next.js 16 (App Router), React 19, TypeScript, `next-intl` (français).
+- **Habillage** : Tailwind 4 et shadcn/ui, sur une façade écrite à la main — le thème sombre est
+  le défaut, le clair est une finition. Les composants de `src/ui` reprennent le vocabulaire de
+  shadcn et le rebranchent sur celui d'un boîtier d'appareil : une commande y a le relief d'une
+  touche, et sa couleur dit sa fonction (elle démarre, elle arrête, elle est choisie) et non son
+  importance.
 - **Stockage** : un fichier SQLite via `node:sqlite`, en WAL et écritures synchrones. Chaque table
   porte la machine à laquelle sa ligne appartient. Il contient les clés LAN et des données de vos
   machines : **traitez `data/` comme un fichier de mots de passe**. Le répertoire est gitignoré.

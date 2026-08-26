@@ -43,6 +43,33 @@
    rail, c'est-à-dire exactement là où il n'y a que des doigts.
    La variante répond à la même question, dans la même couche que ce qu'elle corrige. */
 @custom-variant tactile (@media (pointer: coarse));
+/* **L'écran bas, pas l'écran étroit.** 480 px de HAUTEUR : c'est le téléphone tenu en paysage
+   devant la machine, où la page perd sa place verticale sans rien perdre en largeur. Une variante
+   plutôt qu'une `@media` dans `surfaces.css`, parce qu'un rembourrage posé en utilitaire ne peut
+   plus être repris par la feuille — les couches, pas la spécificité, décident. */
+@custom-variant court (@media (max-height: 480px));
+
+/* **`dark:` doit vouloir dire « le graphite », et le graphite est le DÉFAUT ici.**
+
+   Les composants shadcn arrivent avec des classes `dark:` — anneaux de validation, opacités. Sans
+   cette déclaration, Tailwind 4 les résout sur `prefers-color-scheme: dark` tout seul, ce qui est
+   FAUX pour ce produit : la finition ne se lit pas dans la préférence du système mais dans
+   `data-theme`, et le système ne sert que de défaut. Une personne ayant choisi le boîtier clair sur
+   un système sombre aurait reçu les deux à la fois — la palette claire par les tokens, les anneaux
+   sombres par les utilitaires. Le défaut est silencieux et ne casse rien de visible tant qu'on ne
+   regarde pas le bon écran dans la bonne configuration.
+
+   La variante recopie donc exactement les deux blocs de la finition plus bas — attribut explicite,
+   puis préférence système corrigée par l'attribut inverse. Deux `@slot` parce que CSS ne permet pas
+   de réunir une media query et un sélecteur d'attribut dans une même règle, la raison même pour
+   laquelle le bloc de la finition est écrit deux fois. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) { @slot; }
+  }
+}
+
 @import "./surfaces.css" layer(surfaces);
 @import "tailwindcss";
 
@@ -619,17 +646,22 @@
    bonne : elle fait qu'un composant ajouté par la CLI arrive déjà dans le monde, et qu'il suit le
    changement de finition sans une ligne de plus.
 
-   ⚠️ **Aucun composant shadcn n'est monté aujourd'hui, et il faut le dire.** Neuf primitives ont
-   été installées par la CLI puis retirées : à chaque fois, l'élément natif gagnait pour une raison
-   écrite — le `<select>` natif ouvre le sélecteur du système sous le pouce, le `<dialog>` natif
-   donne le piège de focus, Échap et l'inertie du fond sans une ligne, l'`<input type="range">`
-   natif porte l'échelle imprimée par `--crans`. Les garder « au cas où » aurait laissé neuf
-   composants que personne ne monte et trois paquets qui ne servaient qu'à eux.
+   **Seize composants sont montés** (`src/ui`) : `alert`, `badge`, `button`, `card`, `checkbox`,
+   `dialog`, `input`, `label`, `progress`, `radio-group`, `select`, `sheet`, `slider`, `switch`,
+   `table`, `tooltip`. Les douze surfaces sont passées dessus le 2026-08-26.
 
-   Ce qui reste est la FONDATION, et elle est réelle : Tailwind 4, `components.json`, `cn()`, et
-   ce pont. Un `shadcn add` demain produit un composant déjà dans le monde. Ce contrat-ci n'a donc
-   pas été élagué de ses tokens inemployés — il est le vocabulaire que la CLI attend, pas une liste
-   de ce qu'on utilise ; les rôles de la façade, eux, ne sont exportés que s'ils servent.
+   ⚠️ **Trois décisions écrites ont été REPRISES ce jour-là, et il faut garder leur trace.** Ces
+   mêmes primitives avaient été installées puis retirées, parce qu'à chaque fois l'élément natif
+   gagnait pour une raison réelle : le `<select>` natif ouvre le sélecteur du système sous le
+   pouce, le `<dialog>` natif donne le piège de focus, Échap et l'inertie du fond sans une ligne,
+   l'`<input type="range">` natif porte l'échelle imprimée par `--crans`. Ces raisons n'ont pas
+   cessé d'être vraies — elles sont devenues une DETTE que le composant doit rembourrer, et
+   `scripts/verif-surfaces.mjs` va vérifier les cinq au navigateur à chaque exécution. C'est
+   l'uniformité payée comptant, pas une raison annulée.
+
+   Ce contrat-ci n'a pas été élagué de ses tokens inemployés — il est le vocabulaire que la CLI
+   attend, pas une liste de ce qu'on utilise, et un `shadcn add` demain doit arriver dans un monde
+   complet. Les rôles de la façade, eux, ne sont exportés que s'ils servent.
 
    Deux remappages méritent leur justification, parce qu'ils ne sont pas mécaniques :
 
@@ -705,6 +737,9 @@
   --color-rouge: var(--rouge);
   --color-rouge-encre: var(--rouge-encre);
   --color-rouge-verre: var(--rouge-verre);
+  /* Exporté depuis que le patin du curseur est un composant : la règle de ce bloc est qu'un rôle
+     de la façade n'est exposé que s'il sert, et celui-ci sert maintenant (`slider.tsx`). */
+  --color-aluminium: var(--aluminium);
 
   --radius-plaque: var(--r-plaque);
   --radius-touche: var(--r-touche);

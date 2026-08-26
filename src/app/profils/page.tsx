@@ -6,6 +6,12 @@ import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
 import { useBeverageLabel } from "../../i18n/labels";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
+import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 interface OrderEntry {
   id: number;
@@ -74,7 +80,7 @@ function Editeur({
       <div className="row">
         <div className="champBloc">
           <label htmlFor={`nom-${edition.kind}-${edition.index}`}>{t("renameLabel")}</label>
-          <input
+          <Input
             id={`nom-${edition.kind}-${edition.index}`}
             className="champ"
             value={edition.name}
@@ -87,7 +93,7 @@ function Editeur({
             que nous saurions dessiner : on montre le nombre, et on dit d'où il vient. */}
         <div className="champBloc">
           <label htmlFor={`icone-${edition.kind}-${edition.index}`}>{t("iconLabel")}</label>
-          <input
+          <Input
             id={`icone-${edition.kind}-${edition.index}`}
             className="champ"
             type="number"
@@ -99,11 +105,11 @@ function Editeur({
         </div>
       </div>
       <div className="row">
-        <button className="iconBtn" disabled={busy || !edition.name.trim()} onClick={onEcrire}>
+        <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || !edition.name.trim()} onClick={onEcrire}>
           <Icone nom="ecrire" />
           <span className="lbl">{t("renameWrite")}</span>
-        </button>
-        <button className="mini discret" disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</button>
+        </Button>
+        <Button type="button" variant="discret" size="coquille"  disabled={busy} onClick={() => setEdition(null)}>{tc("cancel")}</Button>
       </div>
       <p className="legende">{t("renameNote")}</p>
     </div>
@@ -273,35 +279,38 @@ export default function Profils() {
       {pending && <p className="sub">{t("pushWaiting")}</p>}
       {!live && <p className="sub">{tc("pushOff")}</p>}
 
-      <div className="card">
+      <Card>
         <h2>{t("importHeading")}</h2>
         <p className="chapeau">{t("importNote")}</p>
         <div className="row">
           <div>
             <label htmlFor="scope">{t("whatToRead")}</label>
-            <select id="scope" value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
-              {SCOPES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {t(s.key)}
-                </option>
-              ))}
-            </select>
+            <Select value={scope} onValueChange={(v) => setScope(v as Scope)}>
+              <SelectTrigger id="scope" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SCOPES.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {t(s.key)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {/* Importer, c'est LIRE sur la machine : le glyphe est celui que /machines et l'accueil
               emploient deja pour ca — une valeur qui descend de l'appareil vers nous. */}
-          <button className="primary iconBtn" disabled={busy || data?.import?.active} onClick={startImport}>
+          <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || data?.import?.active} onClick={startImport}>
             <Icone nom="lire" />
             <span className="lbl">{data?.import?.active ? t("importing") : t("import")}</span>
-          </button>
+          </Button>
           {/* Le chevron ne change pas de dessin, il pivote : `.iconBtn.ouvert` s'en charge. Un
               second glyphe pour l'etat ouvert aurait ete deux formes pour une seule bascule. */}
-          <button className={"iconBtn" + (showProps ? " ouvert" : "")} onClick={() => setShowProps(!showProps)}>
+          <Button type="button" variant="neutre" size="commande" className={"iconBtn" + (showProps ? " ouvert" : "")} onClick={() => setShowProps(!showProps)}>
             <Icone nom="chevron" />
             <span className="lbl">
               {showProps ? tc("hide") : t("propsButton")} (
               {absentCount ? t("propsCountAbsent", { read: readCount, absent: absentCount }) : t("propsCount", { read: readCount })})
             </span>
-          </button>
+          </Button>
         </div>
         {data?.import && (
           <div className="kv blocSuite">
@@ -318,22 +327,22 @@ export default function Profils() {
         </p>
         {showProps && data && (
           <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("propAyla")}</th>
-                <th>{t("propRole")}</th>
-                <th>{t("propStride")}</th>
-                <th>{t("propState")}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("propAyla")}</TableHead>
+                <TableHead>{t("propRole")}</TableHead>
+                <TableHead>{t("propStride")}</TableHead>
+                <TableHead>{t("propState")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {data.props.map((p) => (
-                <tr key={p.prop}>
-                  <td className="mono">{p.prop}</td>
-                  <td>{p.kind === "profileNames" ? t("roleProfileNames") : p.kind === "customNames" ? t("roleCustomNames") : p.kind === "priority" ? t("rolePriority") : p.kind}</td>
-                  <td className="num">{p.stride ?? "—"}</td>
-                  <td>
+                <TableRow key={p.prop}>
+                  <TableCell className="mono">{p.prop}</TableCell>
+                  <TableCell>{p.kind === "profileNames" ? t("roleProfileNames") : p.kind === "customNames" ? t("roleCustomNames") : p.kind === "priority" ? t("rolePriority") : p.kind}</TableCell>
+                  <TableCell className="num">{p.stride ?? "—"}</TableCell>
+                  <TableCell>
                     {p.state === "read" ? (
                       t("stateRead")
                     ) : p.state === "absent" ? (
@@ -343,14 +352,14 @@ export default function Profils() {
                     ) : (
                       tc("dash")
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           </div>
         )}
-      </div>
+      </Card>
 
       {!data ? (
         <p className="sub">{tc("loading")}</p>
@@ -366,7 +375,7 @@ export default function Profils() {
               quatre lignes, ce qui rendrait les cartes plus hautes qu'elles ne sont larges. */}
           <div className="cards">
           {data.profiles.map((p) => (
-            <div className="card" key={p.id}>
+            <Card key={p.id}>
               <div className="cardHead">
                 <div>
                   {/* Le nom, sa pastille et son numéro d'icône forment UNE ligne de titre. Ils
@@ -380,9 +389,9 @@ export default function Profils() {
                       {p.name ? ` — ${p.name}` : ""}
                     </h3>
                     {!p.name && (
-                      <span className="pill off">
+                      <Badge variant="arret">
                         {t("nameNotRead")}
-                      </span>
+                      </Badge>
                     )}
                     {/* « icône 12 » est une phrase avec un nombre, pas un identifiant : le monospace
                         n'y avait rien à faire. */}
@@ -404,23 +413,22 @@ export default function Profils() {
                   )}
                 </div>
                 <div className="row">
-                  <button className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
+                  <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={() => selectProfile(p.id)} title={t("activateTitle")}>
                     <Icone nom="choisir" />
                     <span className="lbl">{t("activate")}</span>
-                  </button>
+                  </Button>
                   {/* **Renommer n'est proposé que si le modèle le permet.** `profileNamesCustomizable`
                       vient du catalogue extrait de l'APK : sur un modèle qui dit non, la trame
                       partirait quand même et on ne sait pas ce qu'elle y ferait. */}
                   {data.model.namesCustomizable !== false && (
-                    <button
-                      className="discret iconBtn"
+                    <Button type="button" variant="discret" size="commande"
+                      className="iconBtn"
                       disabled={busy}
                       onClick={() => setEdition(edition?.kind === "profile" && edition.index === p.id ? null : { kind: "profile", index: p.id, name: p.name ?? "", icon: String(p.icon ?? 0) })}
-                      title={t("renameTitle")}
-                    >
+                      title={t("renameTitle")}>
                       <Icone nom="modifier" />
                       <span className="lbl">{t("rename")}</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -447,15 +455,14 @@ export default function Profils() {
                   écrire un ordre inventé sur la machine. */}
               {p.order && p.order.length > 0 && (
                 <>
-                  <button
-                    className="discret iconBtn"
+                  <Button type="button" variant="discret" size="commande"
+                    className="iconBtn"
                     disabled={busy}
                     onClick={() => setFavoris(favoris?.profileId === p.id ? null : { profileId: p.id, ids: p.order!.map((o) => o.id) })}
-                    title={t("favoritesTitle")}
-                  >
+                    title={t("favoritesTitle")}>
                     <Icone nom="etoile" />
                     <span className="lbl">{t("favorites")}</span>
-                  </button>
+                  </Button>
                   {favoris?.profileId === p.id && (
                     <div className="note">
                       <ol className="listeFavoris">
@@ -463,14 +470,14 @@ export default function Profils() {
                           <li key={`${id}-${i}`}>
                             <span>{(() => { const o = p.order!.find((x) => x.id === id); return o ? nomBoisson(o) : `#${id}`; })()}</span>
                             <span className="row">
-                              <button className="mini discret" disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</button>
-                              <button className="mini discret" disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</button>
+                              <Button type="button" variant="discret" size="coquille"  disabled={busy || i === 0} onClick={() => bouger(i, -1)} aria-label={t("moveUp")}>↑</Button>
+                              <Button type="button" variant="discret" size="coquille"  disabled={busy || i === favoris.ids.length - 1} onClick={() => bouger(i, 1)} aria-label={t("moveDown")}>↓</Button>
                             </span>
                           </li>
                         ))}
                       </ol>
                       <div className="row">
-                        <button
+                        <Button type="button" variant="neutre" size="commande"
                           className="iconBtn"
                           disabled={busy}
                           onClick={() =>
@@ -479,53 +486,51 @@ export default function Profils() {
                               detail: t("confirmRenameDetail"),
                               onConfirm: () => void ecrireFavoris(),
                             })
-                          }
-                        >
+                          }>
                           <Icone nom="ecrire" />
                           <span className="lbl">{t("favoritesWrite")}</span>
-                        </button>
-                        <button className="mini discret" disabled={busy} onClick={() => setFavoris({ profileId: p.id, ids: p.order!.map((o) => o.id) })}>
+                        </Button>
+                        <Button type="button" variant="discret" size="coquille"  disabled={busy} onClick={() => setFavoris({ profileId: p.id, ids: p.order!.map((o) => o.id) })}>
                           {t("favoritesReset")}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )}
                 </>
               )}
-            </div>
+            </Card>
           ))}
           </div>
 
           <h2>{t("customsHeading", { count: data.model.nCustomRecipes })}</h2>
-          <div className="card">
+          <Card>
             <div className="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("slot")}</th>
-                  <th>{t("machineName")}</th>
-                  <th>{t("iconColumn")}</th>
-                  <th>{t("beverageId")}</th>
-                  <th><span className="sr-only">{t("rename")}</span></th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("slot")}</TableHead>
+                  <TableHead>{t("machineName")}</TableHead>
+                  <TableHead>{t("iconColumn")}</TableHead>
+                  <TableHead>{t("beverageId")}</TableHead>
+                  <TableHead><span className="sr-only">{t("rename")}</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.customs.map((c) => (
-                  <tr key={c.slot}>
-                    <td>{t("customSlot", { n: c.slot })}</td>
-                    <td>{c.name ?? <span className="sub">{t("unnamed")}</span>}</td>
-                    <td className="num">{c.icon ?? tc("dash")}</td>
-                    <td className="num">{c.beverageId}</td>
-                    <td className="titreLigne">
-                      <button
-                        className="discret iconBtn iconSeul"
+                  <TableRow key={c.slot}>
+                    <TableCell>{t("customSlot", { n: c.slot })}</TableCell>
+                    <TableCell>{c.name ?? <span className="sub">{t("unnamed")}</span>}</TableCell>
+                    <TableCell className="num">{c.icon ?? tc("dash")}</TableCell>
+                    <TableCell className="num">{c.beverageId}</TableCell>
+                    <TableCell className="titreLigne">
+                      <Button type="button" variant="discret" size="commande"
+                        className="iconBtn iconSeul"
                         disabled={busy}
                         onClick={() => setEdition(edition?.kind === "custom" && edition.index === c.slot ? null : { kind: "custom", index: c.slot, name: c.name ?? "", icon: String(c.icon ?? 0) })}
                         aria-label={t("rename")}
-                        title={t("renameTitle")}
-                      >
+                        title={t("renameTitle")}>
                         <Icone nom="modifier" />
-                      </button>
+                      </Button>
                       {/* **Le nom se change ici, la RECETTE se change sur `/`.** Un emplacement perso
                           est une boisson du catalogue (id 229+n) : son éditeur borné par le modèle,
                           avec les valeurs enregistrées du profil, « Préparer » et « Écrire dans le
@@ -543,11 +548,11 @@ export default function Profils() {
                       >
                         <Icone nom="reglages" />
                       </a>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             </div>
             {edition?.kind === "custom" && (
               <Editeur
@@ -568,7 +573,7 @@ export default function Profils() {
             <p className="note">
               {t("customsNote")}
             </p>
-          </div>
+          </Card>
         </>
       )}
       {dialogue}

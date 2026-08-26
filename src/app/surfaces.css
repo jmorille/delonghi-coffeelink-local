@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════════════════════
-   LES SURFACES — la structure des neuf pages, rendue dans la façade
+   LES SURFACES — la structure des douze pages, rendue dans la façade
    ═══════════════════════════════════════════════════════════════════════════════════════════
 
    **Ce fichier a changé de nature, pas de contenu.** Il portait autrefois un monde visuel complet —
@@ -29,6 +29,17 @@
    de Tailwind, donc de rang le plus bas. Conséquence voulue : la base de la façade (corps, titres,
    focus, sélection) et ses matières l'emportent toujours, sans avoir à surenchérir en spécificité,
    et un utilitaire Tailwind l'emporte sur les deux. Une page migrée n'a rien à défaire ici.
+
+   ⚠️ **Et c'est aussi le piège de ce fichier.** `utilities` bat `surfaces` PAR LA COUCHE : aucune
+   spécificité, ici, ne reprend un `bg-*`, un `p-*` ou un `shadow-*` posé sur un composant de
+   `src/ui`. Un sélecteur qui essaie ne casse rien de visible — il ne s'applique simplement pas, et
+   la mauvaise couleur part en production. Payé une fois par `.confirm` (57 lignes mortes), une
+   fois par trois modificateurs de carte, une fois par une `@media` de rembourrage.
+
+   **La règle qui en découle : la MATIÈRE d'un composant s'écrit sur le composant.** Ce qui a le
+   droit de rester ici est ce qu'aucun utilitaire n'exprime — une graduation conditionnée par la
+   PRÉSENCE d'une variable (`[style*="--crans"]`), la disposition d'une grille, un seuil de repli,
+   une règle qui dépend d'un ancêtre que le composant ne connaît pas.
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -186,7 +197,7 @@ h2 {
    liste de onze constats, les quatre en avertissement faisaient 66ch de large et les sept autres
    toute la largeur — deux gabarits dans une même liste, sans raison lisible. Le texte reste borné :
    les paragraphes internes (`.legende`, `.note`) portent la mesure eux-mêmes. */
-.card.warn { max-width: none; }
+[data-slot="card"].warn { max-width: none; }
 .chapeau:has(> .kv), .note:has(> .kv), .legende:has(> .kv) { max-width: none; }
 /* **Aucune exception, et c'est une correction.** J'avais dispensé la cellule de tableau et la
    valeur d'une ligne clé/valeur, en pensant qu'on n'y trouve que des fragments. Mesuré : une
@@ -260,15 +271,16 @@ h2 {
    **Le libelle bascule, la note explique.** Elles etaient dans le meme `<label>` : le nom
    accessible de la case faisait 130 caracteres, et sa zone cliquable 317 x 99 px sur telephone
    — pour le seul reglage de la page qui ecrive un secret de compte sur le disque. Le pouce qui
-   fait defiler la page la cochait. */
+   fait defiler la page la cochait.
+
+   Depuis que la case est celle de Radix — un bouton, que `<label>` ne nomme pas — c'est
+   `aria-labelledby` qui la relie a son texte, et ce texte ne bascule plus au clic. La cible
+   redevient la case seule : 18 px de dessin dans les 44 px que le composant se reserve. */
 .caseLibelle {
   display: inline-flex; align-items: center; gap: var(--s-2);
-  cursor: pointer; min-height: var(--h-ctl);
-  /* La cible reste confortable sans etre une bande : le libelle est court, la note reste dehors. */
+  min-height: var(--h-ctl);
   padding-inline-end: var(--s-2);
 }
-.caseLibelle > input { flex: none; width: 18px; height: 18px; margin: 0; }
-.caseLibelle:has(input:focus-visible) { outline: 2px solid var(--accent-edge); outline-offset: 2px; border-radius: var(--r-touche); }
 
 /* Liste de contraintes : des puces, pas des `<br>`. Le retrait suit l'echelle d'espacement plutot
    que le defaut du navigateur, qui est en `px` et ne suit aucun de nos rythmes. */
@@ -294,45 +306,34 @@ h2 {
      plutôt que la carte. */
   overflow-wrap: anywhere;
 }
-/* **Une carte n'a pas de contour : elle a des arêtes.** C'était le dernier reste de la grammaire
-   que la thèse refuse — une boîte remplie, cerclée d'un pixel, à coins arrondis. Un boîtier
-   d'appareil ne connaît pas ce trait : il connaît une plaque vissée dessus, dont le relief vient
-   d'un biseau — arête haute claire en haut, arête basse sombre en bas — et d'une ombre COURTE.
-   La même matière que `.plaque` dans globals.css ; écrite ici parce que c'est `.card` que les neuf
-   pages emploient, et qu'un alias de plus n'aurait servi qu'à ce que les deux divergent. */
-.card {
-  background: var(--panel); border: 0;
-  border-radius: var(--radius); padding: var(--s-4); margin-bottom: var(--s-3);
-  box-shadow:
-    inset 0 var(--trait) 0 0 var(--arete-haute),
-    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-basse),
-    0 1px 2px -1px color-mix(in srgb, var(--arete-basse) 70%, transparent);
-}
-/* **Chaque carte s'interroge elle-même.** Une carte dans une grille fait ~320 px de large que la
-   fenêtre en fasse 800 ou 1400 : c'est SA largeur qui décide si un libellé de bouton tient, pas
-   celle de la fenêtre. D'où une container query et non une media query — voir `.iconBtn`. */
-.card { container-type: inline-size; container-name: carte; }
-/* Le premier et le dernier enfant d'une carte ne debordent pas de son rembourrage. Sans ces deux
-   règles, chaque site devait le dire lui-même : `<h2 style={{ marginTop: 0 }}>` six fois,
-   `marginBottom: 0` autant. Une carte sait où elle commence. */
-.card > :first-child { margin-top: 0; }
-.card > :last-child { margin-bottom: 0; }
-/* La carte de la machine n'est pas un élément de la liste des boissons : c'est l'état de
-   l'appareil. Elle se distingue par sa surface et son contour, pas par sa position — un simple
-   trait à 1,26:1 la rendait indiscernable de la carte de boisson n°0. */
-.card.machine {
-  background: var(--raise);
-  border-color: transparent;
-  box-shadow:
-    inset 0 1px 0 0 var(--arete-haute),
-    inset 0 -1px 0 0 var(--arete-basse),
-    0 2px 6px -3px var(--arete-basse);
-}
+/* **La matière de la carte a émigré dans `src/ui/card.tsx`** — plaque, biseau, rembourrage,
+   requête de conteneur, marges du premier et du dernier enfant. Les utilitaires l'emportent sur
+   cette feuille dans la cascade en couches : la peindre ici l'aurait laissée perdre contre le
+   `bg-card` du composant, en silence. Ne restent ici que les modificateurs qui ne touchent PAS à
+   la matière : `.warn` (la mesure), `.open` (la place dans la grille), `.log` (la police). Les
+   trois qui la touchaient — la plaque, la touche du clavier, la carte de machine — sont devenus
+   les variantes de `src/ui/card.tsx`, seul endroit où elles peuvent encore gagner. */
 /* **Tout bouton est une touche encastrée.** C'est la règle qui fait basculer les neuf surfaces
    d'un coup : le relief vient d'un biseau — arête haute claire, arête basse sombre, plus une ombre
    COURTE et décalée — et l'appui enfonce réellement la touche d'un pixel en inversant ce biseau.
-   Pas de bordure d'un pixel sur toute la boîte : un boîtier n'a pas de contour, il a des arêtes. */
-button {
+   Pas de bordure d'un pixel sur toute la boîte : un boîtier n'a pas de contour, il a des arêtes.
+
+   ⚠️ **`:not([data-slot])` écarte les composants shadcn, et ce n'est pas une précaution : c'est un
+   défaut constaté.** Radix rend beaucoup de choses en `<button>` qui n'en sont pas une au sens de
+   cette règle — une case à cocher, un déclencheur de liste, une poignée de curseur. La case « ne
+   plus me demander » du dialogue de confirmation mesurait 30 × 44 px au lieu de 18 × 18 : elle
+   héritait du rembourrage de 10/14 px et du plancher `--h-ctl` d'une COMMANDE. Rien n'était
+   « faux » — la règle faisait exactement ce qu'elle dit, sur un élément qu'elle n'avait jamais eu
+   à décrire.
+
+   `data-slot` est posé par tous les composants de `src/ui/`, et par eux seuls. Leur habillage vit
+   dans leurs variantes (voir `button.tsx`, qui porte ce même relief), donc l'exclusion ne leur
+   retire rien — elle empêche seulement une feuille de style écrite pour les surfaces de décider de
+   la taille d'une primitive.
+
+   Cette règle est **temporaire par construction** : quand les vingt surfaces seront passées à
+   `<Button>`, il n'y aura plus de `<button>` nu à habiller et le bloc entier disparaîtra. */
+button:not([data-slot]) {
   font: inherit; font-weight: 600; cursor: pointer; color: var(--text);
   background: var(--releve); border: 0;
   border-radius: var(--r-touche); padding: 10px 14px;
@@ -344,20 +345,20 @@ button {
     0 1px 2px -1px var(--arete-basse);
   transition: transform .075s, box-shadow .075s, background .075s;
 }
-button:active:not(:disabled) {
+button:not([data-slot]):active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
 }
 /* La puce de réglage est la seule commande volontairement plus courte que les autres — son
    encombrement visuel est minimal et sa cible tactile est portée par un pseudo-élément (plus bas). */
-button:not(.mini), input:not([type="range"]):not([type="radio"]):not([type="checkbox"]), select {
+button:not(.mini):not([data-slot]), input:not([type="range"]):not([type="radio"]):not([type="checkbox"]):not([data-slot]), select:not([data-slot]) {
   min-height: var(--h-ctl);
 }
 /* **Le survol est mis sous condition, partout.** Sur un écran tactile il n'existe pas, mais le
    navigateur le simule après le tap : le bouton reste « survolé » jusqu'au tap suivant, ce qui
    laisse un bouton éclairci qu'on croit sélectionné. `hover: hover` écarte ce faux état. */
 @media (hover: hover) {
-  button:hover:not(:disabled) { background: color-mix(in srgb, var(--releve) 86%, var(--arete-haute)); }
+  button:not([data-slot]):hover:not(:disabled) { background: color-mix(in srgb, var(--releve) 86%, var(--arete-haute)); }
   }
 /* Bouton en ligne dans une ligne de réglage (« défaut : 40 ») : même style, encombrement minimal. */
 /* La puce garde SA hauteur : `--lead-ctl` la ramenait à 21,8 px, un pixel de trop en moins par
@@ -492,42 +493,33 @@ h2 .sub, h1 .sub { font-weight: 400; letter-spacing: 0; }
    variantes qui rapportent un état de l'appareil portent EN PLUS une lampe, dessinée en
    pseudo-élément — c'est ce qui sépare « ce que la machine dit » d'une simple catégorie, et c'est
    la raison pour laquelle `.pill` nue n'en reçoit aucune. */
-.pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 8px; border-radius: var(--r-plaque);
-  font-size: var(--t-mini); font-weight: 650; line-height: var(--lead-dense);
-  letter-spacing: var(--suivi-legende); text-transform: uppercase;
-  background: var(--creux); color: var(--encre-douce); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-.pill.on::before, .pill.off::before, .pill.info::before {
-  content: ""; inline-size: 7px; block-size: 7px; border-radius: 999px; flex: none;
-  background: currentColor; box-shadow: 0 0 6px -1px currentColor;
-}
-/* Ce que la machine rapporte. Le vert et le rouge ne servent qu'à ça. */
-.pill.on { background: var(--vert-verre); color: var(--vert); }
-.pill.off { background: var(--rouge-verre); color: var(--rouge-encre); }
-/* Ce que nous avons choisi ou lu : profil de grain, provenance d'une valeur. Distinct du vert
-   parce que ce n'est pas un état de l'appareil — « Bean Adapt : Grain A » décrit une
-   configuration, pas une machine prête. */
-.pill.info { background: var(--ambre-verre); color: var(--ambre); }
-/* **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un
+/* **La plaquette est passée au composant** (`src/ui/badge.tsx`), lampe comprise. La règle qui
+   comptait est écrite là-bas : le témoin est posé sur la plaquette qui porte déjà le NOM de
+   l'état, jamais à côté — c'est ce qui a condamné le composant `Etat` de l'ancienne façade.
+
+   **Une alerte doit mener à son détail.** « alarme signalée » ne disait quelle alarme que dans un
    attribut `title` — donc nulle part sur la tablette et le téléphone, les deux appareils que
-   PRODUCT.md met au premier rang. La pastille est maintenant un lien vers la page qui les nomme.
-   Elle garde exactement l'apparence de la pastille correspondante : c'est un lien parce qu'elle
-   mène quelque part, pas pour se distinguer de ses voisines. */
-a.pill { text-decoration: none; }
-a.pill:hover { text-decoration: underline; text-underline-offset: 2px; }
-a.pill:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
-input, select {
-  font: inherit; color: var(--text); background: var(--panel-2);
-  border: 1px solid var(--arete-ctl); border-radius: var(--r-touche); padding: 8px 10px;
-  line-height: var(--lead-ctl);
+   PRODUCT.md met au premier rang. La pastille est donc un LIEN vers la page qui les nomme, et elle
+   garde exactement l'apparence de la plaquette correspondante : elle est un lien parce qu'elle
+   mène quelque part, pas pour se distinguer de ses voisines. C'est ce que fait `asChild`. */
+
+/* **Le champ de saisie est passé au composant** (`src/ui/input.tsx`), qui porte le creux, l'arête
+   de commande et la hauteur `--h-ctl`. Il ne restait ici qu'une règle de balise, et elle perdait
+   de toute façon : les classes de base d'un composant shadcn vivent dans `utilities`, qui bat
+   `surfaces`. Le déclencheur d'une liste déclarative suit la même règle et se peint sur place. */
+[data-slot="select-trigger"] {
+  background: var(--panel-2);
+  border-color: var(--arete-ctl);
+  border-radius: var(--r-touche);
 }
-input::placeholder { color: var(--encre-douce); opacity: 1; }
 label { display: block; font-size: var(--t-petit); color: var(--encre-douce); margin-bottom: 4px; }
-table { width: 100%; border-collapse: collapse; font-size: var(--t-petit); line-height: var(--lead-dense); }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+/* **Les tableaux sont passés au composant** (`src/ui/table.tsx`), qui apporte aussi le conteneur à
+   défilement horizontal que `.tableWrap` fabriquait à la main. Ne reste ici que le rythme du
+   produit — corps réduit, interligne dense, filets de la finition — posé sur les emplacements du
+   composant plutôt que sur les balises : un `<table>` nu n'existe plus dans les surfaces. */
+[data-slot="table"] { font-size: var(--t-petit); line-height: var(--lead-dense); }
+[data-slot="table-head"], [data-slot="table-cell"] { padding: 6px 8px; text-align: left; }
+[data-slot="table-row"] { border-bottom: 1px solid var(--rule); }
 .log { font-family: var(--pile-mono); font-size: var(--t-mini); line-height: var(--lead-dense); max-height: 260px; overflow: auto; }
 /* Les lignes du journal portent maintenant la trame ECAM : sans repli, une trame de 52 octets
    obligerait a faire defiler horizontalement pour lire une seule ligne. */
@@ -587,48 +579,11 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
 .alerte > svg { flex: none; margin-top: .18em; color: var(--accent-text); }
 .alerte > * { min-width: 0; }
 
-/* Interrupteur (marche/arrêt machine) */
-.switch { position: relative; display: inline-block; width: 52px; height: 28px; flex: none; }
-.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.switch .track {
-  position: absolute; inset: 0; border-radius: var(--r-touche);
-  background: var(--creux); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-  transition: background .18s;
-}
-.switch .knob {
-  position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
-  border-radius: var(--r-touche);
-  background: var(--aluminium);
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-  transition: transform .18s, background .18s;
-}
-.switch input:checked + .track { background: var(--vert-verre); }
-.switch input:checked + .track .knob { transform: translateX(24px); background: var(--vert); }
-/* **La position inconnue.** Ni allumé ni éteint : la poignée quitte ses deux extrémités, se
-   centre, et la piste prend la hachure d'attente — la matière que ce monde emploie partout pour
-   « la machine n'a rien dit ». C'est un état à part entière, pas un état désactivé qu'on aurait
-   grisé : le `opacity: .45` du désactivé dirait « cette commande ne vous est pas offerte », alors
-   que ce qu'il faut dire est « nous ne savons pas ce qu'elle vaut ». */
-.switch.inconnu .track {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    color-mix(in srgb, var(--encre-douce) 22%, transparent) 0 1px,
-    transparent 1px 6px
-  );
-}
-.switch.inconnu .knob {
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--encre-douce);
-}
-/* La règle de la poignée allumée porte une transformation : sans ce rappel, une machine dont
-   l'état devient inconnu PENDANT qu'elle est allumée garderait sa poignée à droite. */
-.switch.inconnu input:checked + .track .knob { transform: translateX(-50%); }
-.switch.inconnu input:disabled + .track { opacity: 1; }
-.switch input:disabled { cursor: not-allowed; }
-.switch input:disabled + .track { opacity: .45; }
-.switch input:focus-visible + .track { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+/* **L'interrupteur est passé au composant** (`src/ui/switch.tsx`), y compris sa TROISIÈME position
+   — ni allumé ni éteint, quand la machine n'a rien poussé. C'était le seul endroit du produit où
+   un état « inconnu » avait un dessin à lui, et il l'a gardé : poignée centrée, piste hachurée,
+   opacité pleine. La reconstruire ici en CSS aurait laissé la règle et le composant à tenir
+   d'accord, alors que le composant sait déjà tout ce qu'il faut pour la dessiner. */
 
 /* Ligne de réglage : un interrupteur et ce qu'il fait. Volontairement PAS un `.kv` — sa première
    colonne fait 13 rem, ce qui aurait laissé 150 px de vide entre un interrupteur de 52 px et son
@@ -641,7 +596,7 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule
   cursor: pointer;
 }
 .ligneReglage:last-of-type { border-bottom: none; }
-.ligneReglage > .switch { margin-top: 2px; }
+.ligneReglage > [data-slot="switch"] { margin-top: 2px; }
 .texteReglage { display: grid; gap: var(--s-hair); min-width: 0; }
 
 /* Compte rendu d'une action, rendu DANS la carte qui l'a déclenchée.
@@ -685,55 +640,23 @@ button.mini::after {
   height: 44px; transform: translateY(-50%);
 }
 
-/* Confirmation d'une action physique ou persistante.
-   `window.confirm()` ne convenait pas : non stylable, il affichait les valeurs en texte brut sans
-   pouvoir mettre le rinçage en évidence, et il renvoie `false` dans une iframe en bac à sable —
-   donc tous les boutons devenaient silencieusement inertes dans une carte de tableau de bord.
-   `<dialog>` + `showModal()` apporte le piège de focus et la touche Échap sans code. */
-dialog.confirm {
-  max-width: min(30rem, calc(100vw - 32px));
-  padding: 0; border: 1px solid var(--edge); border-radius: var(--radius);
-  background: var(--raise); color: var(--text);
-  /* Un panneau de boîtier ne flotte pas dans un halo de 48 px : il est posé, avec une ombre
-     courte et franchement décalée, et son relief vient de ses arêtes. */
-  box-shadow:
-    inset 0 1px 0 0 var(--arete-haute),
-    inset 0 -1px 0 0 var(--arete-basse),
-    0 8px 20px -10px var(--arete-basse);
-}
-dialog.confirm::backdrop { background: rgba(6, 7, 9, .62); }
-dialog.confirm .body { padding: 18px 20px 16px; }
-dialog.confirm h2 { margin: 0 0 10px; font-size: var(--t-section); line-height: var(--lead-section); }
-/* La provenance des valeurs : une ligne, sous la liste, sans fond. Elle répond à « lesquelles ? »
-   quand `detail` répond à « quoi ? », et elle ne doit pas peser autant que la mise en garde. */
-dialog.confirm .source {
-  margin: var(--s-2) 0 0; font-size: var(--t-petit); line-height: var(--lead-corps);
-  color: var(--encre-douce);
-}
-dialog.confirm .detail {
-  margin: 0; padding: 10px 12px; border-radius: var(--r-touche);
-  background: var(--panel-2); color: var(--encre-douce);
-  font-size: var(--t-petit); overflow-wrap: anywhere;
-}
-dialog.confirm .warn { margin: 12px 0 0; font-size: var(--t-petit); }
-/* Renoncer à la question, depuis la question elle-même. Séparée par un filet et non par une simple
-   marge : elle ne décrit pas l'action en cours — c'est un réglage durable posé dans un dialogue qui,
-   lui, ne concerne qu'un geste. Sans la coupure, elle se lisait comme une quatrième ligne de détail.
-   La cible tient 44 px de haut au doigt : la case seule en fait 16, et c'est le libellé entier qui
-   est cliquable puisque le `<label>` enveloppe les deux. */
-dialog.confirm .renoncer {
-  display: flex; align-items: flex-start; gap: var(--s-3);
-  margin: var(--s-4) 0 0; padding: var(--s-3) 0 0; border-top: 1px solid var(--rule);
-  font-size: var(--t-petit); line-height: var(--lead-corps); cursor: pointer;
-  min-height: 44px;
-}
-dialog.confirm .renoncer input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-text); }
-dialog.confirm .renoncer > span { display: grid; gap: var(--s-hair); min-width: 0; }
-dialog.confirm .renoncer .sub { font-size: var(--t-petit); }
-dialog.confirm .actions {
-  display: flex; justify-content: flex-end; gap: 10px;
-  padding: 14px 20px; border-top: 1px solid var(--rule); background: var(--panel-2);
-}
+/* **La confirmation d'une action physique n'a plus de CSS ici — elle est passée aux utilitaires.**
+
+   Ce n'est pas un rangement, c'est une contrainte de CASCADE. Le contenu du dialogue est un
+   composant shadcn, donc ses classes de base (`bg-background`, `p-6`, `rounded-lg`) vivent dans la
+   couche `utilities`, qui bat `surfaces` — l'ordre est figé en haut de `globals.css`. Un
+   `.confirm { background: … }` écrit ici perdait donc en silence contre `bg-background`, et le
+   panneau de boîtier serait revenu à la feuille blanche de shadcn sans qu'aucune règle ne soit
+   « fausse ».
+
+   La matière est donc posée sur le composant lui-même (`confirm.tsx`), où `tailwind-merge` la fait
+   gagner contre les classes de base au lieu de lutter contre une couche. C'est le motif de toute
+   la migration : ce qu'un composant shadcn habille se peint en utilitaires, ce qu'aucun utilitaire
+   n'exprime reste dans cette feuille.
+
+   Le voile, lui, reste ici : c'est un nœud sans composant à habiller, et il n'appartient à aucune
+   surface en particulier. */
+[data-slot="dialog-overlay"] { background: rgba(6, 7, 9, .62); }
 
 /* ── Sélecteur de thème ────────────────────────────────────────────────────────────────────────
    Trois radios natives déguisées en segments. L'entrée reste dans le flux (masquée par
@@ -826,12 +749,12 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
 /* `align-items: start` : sans lui une carte courte s'étire à la hauteur de la plus grande de sa
    rangée, ce qui laisse des blancs et fait croire à une donnée manquante. */
 /* La gouttière remplace la marge : sinon les deux s'additionnent entre les rangs. */
-.cards > .card { margin-bottom: 0; }
+.cards > [data-slot="card"] { margin-bottom: 0; }
 /* **La carte ouverte prend toute la rangée.** L'éditeur de recette a besoin de largeur — un
    curseur, ses bornes, un champ et une puce de défaut ne tiennent pas dans 19 rem — et l'écraser
    dans une colonne aurait rendu la grille responsable d'un formulaire illisible. Ouverte, la carte
    cesse d'être un élément de liste et devient le sujet de la page. */
-.cards > .card.open { grid-column: 1 / -1; }
+.cards > [data-slot="card"].open { grid-column: 1 / -1; }
 
 /* ── Le catalogue n'est pas une grille de tuiles : c'est un clavier ───────────────────────────
    ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -894,35 +817,20 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
     12 px   le rembourrage de la touche     — puis 12 px de gouttière : la frontière est double
    ────────────────────────────────────────────────────────────────────────────────────── */
 .cards.clavier { row-gap: var(--s-3); }
-/* **La carte fermée EST la touche.** Fraisage d'un pixel tout autour — l'ouverture dans la tôle —
-   puis le biseau inversé : sombre en haut, clair en bas, c'est-à-dire une surface enfoncée. C'est
-   exactement la géométrie que portait la seule ligne de titre ; elle a changé d'échelle, pas de
-   nature.
-
-   `background` et `box-shadow` sont réécrits plutôt qu'hérités : `.card` déclare la PLAQUE — relief
-   en saillie, ombre courte vers le bas — et une plaque n'est pas une touche. La carte OUVERTE la
-   reprend telle quelle, et c'est le contraste qu'on veut : fermée elle est un élément du clavier,
-   ouverte elle est le sujet de la page. */
-.cards.clavier > .card:not(.open) {
-  background: var(--panel-2);
-  border-radius: var(--r-touche);
-  padding: var(--s-3);
-  box-shadow:
-    0 0 0 var(--trait) var(--rule),
-    inset 0 var(--trait) 0 0 var(--arete-basse),
-    inset 0 calc(-1 * var(--trait)) 0 0 var(--arete-haute);
-}
-.cards.clavier > .card:not(.open) > .cardHead { flex-direction: column; align-items: stretch; }
+/* **La carte fermée EST la touche** — matière dans la variante `touche` de `src/ui/card.tsx`.
+   Ne reste ici que ce que la variante ne peut pas savoir : la mise en colonne de son en-tête,
+   qui dépend de la grille où elle est posée. */
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead { flex-direction: column; align-items: stretch; }
 /* `.cardHead > :first-child { flex: 1 1 12rem }` visait la rangée ; en colonne il ferait grandir la
    face pour remplir la hauteur de la piste, et les 28 touches n'auraient plus la même taille. */
-.cards.clavier > .card:not(.open) > .cardHead > .toucheBev { flex: 0 0 auto; }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .toucheBev { flex: 0 0 auto; }
 
 /* **Le creux a déménagé d'un cran vers l'extérieur : il n'en reste donc aucun ici.**
    `.toucheBev` portait le fraisage et le biseau inversé tant que la face n'était que la ligne de
    titre. C'est la carte qui les porte maintenant, et un second creux dedans ferait un creux dans un
    creux — la faute exacte de la carte imbriquée, en matière plutôt qu'en boîte. Ne reste que la
    disposition, qui n'a jamais été décorative. */
-.cards.clavier > .card:not(.open) > .cardHead > .toucheBev {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .toucheBev {
   display: flex; flex-direction: column; gap: var(--s-1);
 }
 /* La légende, sous la touche. Le retrait latéral l'aligne sur le NOM de la boisson et non sur le
@@ -942,20 +850,20 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    L'interligne, lui, reste dit ici : sous une touche, cette ligne fait deux à trois lignes dans une
    colonne de 19 rem, et l'interligne de prose y ouvre un blanc qui la détache de la touche qu'elle
    nomme. `--lead-dense` est le pas prévu pour ça. */
-.cards.clavier > .card:not(.open) > .cardHead > .legende {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .legende {
   margin-top: var(--s-1);
   padding-inline: var(--s-1);
   line-height: var(--lead-dense);
 }
-.cards.clavier > .card:not(.open) > .cardHead > .actions { margin-top: var(--s-2); }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead > .actions { margin-top: var(--s-2); }
 
 /* La tête « affiche » suit le même pas : la vignette et son nom sont collés (4 px), et les
    commandes prennent leurs 8 px — le total sous le nom est le même que sous une légende de touche,
    donc les deux formes de carte ont un rythme identique bien qu'elles n'aient pas la même tête. */
-.cards.clavier > .card:not(.open) > .cardHead.compacte { gap: var(--s-1); }
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead.compacte { gap: var(--s-1); }
 /* La contenance qualifie le nom : 2 px, pas 4. La gouttiere de la colonne en pose deja 4, d'ou le
    retrait negatif plutot qu'un `gap` a part. */
-.cards.clavier > .card:not(.open) > .cardHead.compacte > .sub {
+.cards.clavier > [data-slot="card"]:not(.open) > .cardHead.compacte > .sub {
   margin-top: calc(var(--s-hair) - var(--s-1));
 }
 
@@ -977,7 +885,7 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    élément de la ligne de titre, donc elle n'a besoin d'aucun positionnement absolu. Elle est
    décorative au sens strict : l'`aria-expanded` du chevron porte déjà l'état pour qui ne la voit
    pas, donc un `content: ""` est ici la bonne réponse et non un raccourci. */
-.cards.clavier > .card.open > .cardHead > .toucheBev > .titreLigne::before {
+.cards.clavier > [data-slot="card"].open > .cardHead > .toucheBev > .titreLigne::before {
   content: "";
   flex: none;
   inline-size: 8px; block-size: 8px;
@@ -1029,39 +937,43 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    lui, `display: none → block` saute l'animation d'entrée et le panneau surgit d'un coup. C'est le
    détail que presque personne n'écrit, et c'est lui qui fait toute la différence ici.
    ═════════════════════════════════════════════════════════════════════════════════════════════ */
-dialog.drawer {
-  position: fixed; inset: 0 auto 0 0; margin: 0;
-  width: min(20rem, 86vw); max-width: none;
+/* **Le panneau de navigation — le seul mouvement authored du produit.**
+
+   Il était porté par `<dialog>` : `[open]`, `@starting-style` et `::backdrop`. Depuis le passage à
+   `Sheet` (Radix), les mêmes règles s'écrivent sur `data-state`, et le voile est un nœud à part au
+   lieu d'un pseudo-élément. La MATIÈRE, elle, ne bouge pas — c'est elle qui vaut d'être ici.
+
+   La sortie est plus rapide que l'entrée, comme tout mouvement qui a un sens : on arrive posément,
+   on s'efface vite. 240 ms à l'ouverture contre 160 à la fermeture, sur une courbe qui décélère
+   fortement — un panneau lourd qui arrive en butée.
+
+   ⚠️ **Les durées et la géométrie doivent battre celles de `Sheet`**, qui pose les siennes en
+   utilitaires (`duration-500`, `w-3/4`, `sm:max-w-sm`). D'où `!important` — l'exception assumée de
+   cette feuille : la couche `utilities` bat `surfaces`, et c'est ici la seule règle du produit qui
+   doit gagner contre un composant plutôt que se poser sur lui. Ailleurs, la matière passe par le
+   `className` du composant ; ici elle décrit un mouvement, qui ne se dit pas en utilitaires. */
+[data-slot="sheet-content"].drawer {
+  width: min(20rem, 86vw) !important;
+  max-width: none !important;
   /* `dvh` et non `vh` : la barre d'adresse mobile se rétracte, et en `vh` le panneau dépassait
      alors du bas d'un écran de téléphone. */
   height: 100dvh; max-height: 100dvh;
-  padding: 0; border: 0; border-right: var(--trait) solid var(--rule); border-radius: 0;
+  padding: 0; gap: 0;
+  border: 0; border-right: var(--trait) solid var(--rule); border-radius: 0;
   /* Le boîtier, pas une plaque : le panneau est une TRANCHE de l'appareil qu'on ouvre, et il porte
      la même grille perforée que le fond (posée par `Nav.tsx`, qui compose). */
   background: var(--bg); color: var(--text);
-  display: flex; flex-direction: column;
-  translate: -100% 0;
-  /* **La sortie est plus rapide que l'entrée**, comme tout mouvement qui a un sens : on arrive
-     posément, on s'efface vite. 160 ms ici, qui est la durée de FERMETURE — c'est l'état fermé qui
-     porte la base — contre 240 ms sur `[open]`, la durée d'ouverture.
-     La courbe décélère fortement (`.22, .82, .26, 1`) : un panneau lourd qui arrive en butée. */
-  transition: translate .16s cubic-bezier(.22, .82, .26, 1),
-              overlay .16s allow-discrete, display .16s allow-discrete;
+  animation-duration: .24s !important;
+  animation-timing-function: cubic-bezier(.22, .82, .26, 1) !important;
 }
-dialog.drawer[open] {
-  translate: 0 0;
-  transition-duration: .24s;
+[data-slot="sheet-content"].drawer[data-state="closed"] {
+  animation-duration: .16s !important;
 }
-@starting-style { dialog.drawer[open] { translate: -100% 0; } }
-dialog.drawer::backdrop {
-  /* `--gravure` est la marque la plus sombre de CHAQUE finition : un voile qui suit le boîtier au
-     lieu d'un noir écrit en dur, qui posait une nuit sur l'aluminium clair. */
+/* `--gravure` est la marque la plus sombre de CHAQUE finition : un voile qui suit le boîtier au
+   lieu d'un noir écrit en dur, qui posait une nuit sur l'aluminium clair. */
+[data-slot="sheet-overlay"] {
   background: color-mix(in srgb, var(--gravure) 72%, transparent);
-  opacity: 0;
-  transition: opacity .16s, overlay .16s allow-discrete, display .16s allow-discrete;
 }
-dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
-@starting-style { dialog.drawer[open]::backdrop { opacity: 0; } }
 
 /* ── Boutons à icône ─────────────────────────────────────────────────────────────────────────
    Le libellé se replie quand la CARTE est étroite, pas quand la fenêtre l'est : à 1 400 px de
@@ -1163,7 +1075,7 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
 /* **La vignette d'affiche suit la largeur de SA carte, pas un chiffre fixe.** 6,5 rem étaient
    justes dans une colonne de 19 rem et petits dans les 350 px qu'une tablette 11" en paysage donne
    à chacune de ses trois colonnes — or c'est l'appareil de pilotage. `cqi` mesure la carte
-   elle-même (`container-name: carte`, déjà déclaré sur `.card`), donc le dessin grandit avec la
+   elle-même (`container-name: carte`, déjà déclaré sur `[data-slot="card"]`), donc le dessin grandit avec la
    piste : 95 px dans une colonne étroite de téléphone, 111 px sur la tablette, plafonné à 128 px
    pour qu'une carte ouverte-puis-refermée en pleine largeur ne devienne pas une affiche de cinéma.
 
@@ -1199,7 +1111,7 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
    nature est SÉRIGRAPHIÉE, pas encapsulée. Elle garde donc les capitales espacées et l'encre
    faible de `.pill`, et perd le contenant. Les pastilles d'ÉTAT (`.on`, `.off`, `.info`) gardent
    le leur : leur teinte porte l'information, et « désaligné » doit rester une anomalie visible. */
-.marques > .pill:not(.on):not(.off):not(.info) {
+.marques > [data-slot="badge"][data-variant="plaque"] {
   background: none;
   box-shadow: none;
   padding-inline: 0;
@@ -1387,7 +1299,7 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
 /* Panneau de l'éditeur de recette. Il était le seul bloc de la page écrit en style inline —
    `borderRadius: 10, padding: 12` en dur, alors que `--radius` et l'échelle d'espacement
    existent. Une carte imbriquée dans une carte reste une carte imbriquée : on garde donc le
-   fond de second plan et le filet, sans reprendre `.card`, qui porterait une deuxième ombre et
+   fond de second plan et le filet, sans reprendre `[data-slot="card"]`, qui porterait une deuxième ombre et
    une deuxième marge de bas de carte. */
 .blocEditeur {
   background: var(--panel-2); border: 1px solid var(--rule);
@@ -1429,9 +1341,13 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
 /* `.ctl` vit aussi hors d'une `.paramRow` — /recipes le pose dans une cellule de tableau. */
 .ctl { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
 .paramRow > .ctl { flex: 1 1 15rem; }
-.ctl input[type="range"] { flex: 1 1 5rem; min-width: 0; }
+.ctl [data-slot="slider"] { flex: 1 1 5rem; min-width: 0; }
 /* Champ numérique : assez large pour trois chiffres, jamais plus, et il ne s'étire pas. */
-.numField { width: 4.6rem; flex: none; text-align: right; }
+/* `.numField` a disparu : le champ est un composant, et sa classe de base porte `w-full` dans la
+   couche `utilities` — une largeur écrite ici perdait en silence, et le champ mangeait toute la
+   ligne en écrasant le curseur à côté. La largeur se pose donc au point d'appel, en utilitaires,
+   où `tailwind-merge` la fait gagner. Défaut constaté au navigateur juste après la conversion des
+   boutons : rien n'était rouge, la ligne de réglage était simplement devenue inutilisable. */
 
 /* ── Tableaux ────────────────────────────────────────────────────────────────────────────────
    Un tableau garde ses colonnes et défile dans SA boîte ; la page, jamais. Les six colonnes de
@@ -1439,65 +1355,35 @@ dialog.drawer[open]::backdrop { opacity: 1; transition-duration: .24s; }
    356 px donnaient des en-têtes sur quatre lignes et des chiffres illisibles : le tableau tenait,
    mais on ne pouvait plus le lire. `/recipes` est une page de bureau selon PRODUCT.md, et c'est
    justement pourquoi elle a besoin de ça : elle reste consultable ailleurs sans être refondue. */
-.tableWrap { overflow-x: auto; }
-/* En dessous, les colonnes cessent de se comprimer et le défilement prend le relais. */
-.tableWrap > table { min-width: 34rem; }
+/* Le conteneur à défilement vient maintenant du composant ; ne reste que le plancher de largeur,
+   qui est le vrai réglage — c'est lui qui décide QUAND les colonnes cessent de se comprimer et où
+   le défilement prend le relais. `.tableWrap` reste le nom posé par les surfaces sur le bloc. */
+.tableWrap [data-slot="table-container"] { overflow-x: auto; }
+.tableWrap [data-slot="table"] { min-width: 34rem; }
 
-/* ── Curseur ──────────────────────────────────────────────────────────────────────────────────
-   Le curseur natif est la commande la plus utilisée de l'éditeur de recette et la seule qui
-   n'appartenait pas au thème : piste bleu système, poignée de 14 px. 14 px, c'est sous le
-   plancher de 24 px des cibles, sur l'appareil tactile qui sert à piloter. */
-/* **C'est ici que la façade devient propre à ce produit.** La piste n'est pas une gouttière :
-   c'est un CREUX fraisé dans le boîtier, et la graduation y est sérigraphiée. Les crans ne sont
-   pas décoratifs — leur nombre vient de `--crans`, posé par l'éditeur de recette à partir des
-   bornes que la MACHINE publie pour ce paramètre (voir `RecipeEditor`).
+/* ── Curseur : ce qu'aucun utilitaire n'exprime ───────────────────────────────────────────────
 
-   **Sans `--crans`, aucune graduation n'est imprimée.** Une piste vide dit « je ne connais pas
-   les bornes de ce réglage » ; une piste graduée au hasard dirait « voici ce que la machine
-   autorise », et ce serait faux. C'est la même règle que partout ailleurs dans ce produit : ne
-   jamais afficher comme lu ce qui ne l'a pas été.
+   Le dessin du curseur est passé au composant (`src/ui/slider.tsx`) : le creux fraisé, le patin
+   d'aluminium, le relief. Ne reste ici que **la graduation**, et pour une raison précise — elle est
+   conditionnée par la PRÉSENCE d'une variable, pas par sa valeur. `[style*="--crans"]` n'a pas
+   d'équivalent en utilitaire, et c'est exactement le critère qui décide ce qui reste dans cette
+   feuille.
 
-   La poignée n'est pas ronde. Une poignée de commande d'appareil est un patin usiné : rectangle
-   à arête haute claire, hauteur pleine, 22 px de large — au-dessus du plancher de 24 px de cible
-   une fois la piste comptée, sur l'appareil tactile qui sert à piloter. */
-input[type="range"] {
-  -webkit-appearance: none; appearance: none;
-  height: 28px; background: transparent; border: 0; padding: 0; margin: 0;
-  cursor: pointer;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 12px; border-radius: var(--r-creux);
-  background: var(--creux);
-  background-image: var(--graduation, none);
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 14px; height: 24px; margin-top: -6px; border-radius: var(--r-touche);
-  background: var(--aluminium); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-}
-input[type="range"]::-moz-range-track {
-  height: 12px; border-radius: var(--r-creux);
-  background: var(--creux);
-  background-image: var(--graduation, none);
-  box-shadow: inset 0 1px 0 0 var(--arete-basse), inset 0 -1px 0 0 var(--arete-haute);
-}
-input[type="range"]::-moz-range-thumb {
-  width: 14px; height: 24px; border-radius: var(--r-touche);
-  background: var(--aluminium); border: 0;
-  box-shadow: inset 0 1px 0 0 var(--arete-haute), 0 1px 2px -1px var(--arete-basse);
-}
-/* La graduation elle-même. Elle n'existe que lorsque `--crans` a été posé — donc lorsque les
-   bornes ont réellement été lues sur l'appareil. */
-[style*="--crans"] input[type="range"] {
-  --graduation: repeating-linear-gradient(
+   Les crans ne sont pas décoratifs : leur nombre vient des bornes que la MACHINE publie pour ce
+   paramètre (voir `cransDe` dans `RecipeEditor`). **Sans `--crans`, aucune graduation n'est
+   imprimée** — une piste nue dit « je ne connais pas les bornes de ce réglage », une piste graduée
+   au hasard dirait « voici ce que la machine autorise », et ce serait faux.
+
+   Le sélecteur a suivi le nœud : `input[type="range"]` est devenu la piste de Radix. C'est la
+   seule chose qui change ici, et c'est ce que `verif-surfaces.mjs` vérifie — il cherche la
+   propriété, jamais le sélecteur qui la portait hier. */
+[style*="--crans"] [data-slot="slider-track"] {
+  background-image: repeating-linear-gradient(
     90deg,
     var(--gravure) 0 1px,
     transparent 1px calc(100% / var(--crans))
   );
 }
-input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 
 /* ── Pointeur grossier ───────────────────────────────────────────────────────────────────────
    `pointer: coarse` est la bonne question, pas la largeur : un portable à écran tactile de
@@ -1516,8 +1402,8 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
      agrandit la zone de contact, pas le dessin. 23 + 2 × 11 = 45 px. Le débordement recouvre des
      pastilles voisines qui ne sont pas cliquables : un doigt imprécis atteint l'alarme au lieu de
      rien, ce qui est le bon échec. */
-  a.pill { position: relative; }
-  a.pill::after { content: ""; position: absolute; inset: -11px -8px; }
+  a[data-slot="badge"] { position: relative; }
+  a[data-slot="badge"]::after { content: ""; position: absolute; inset: -11px -8px; }
   /* Les commandes de la COQUILLE — sélecteur de finition, ouverture et fermeture du panneau,
      sélecteur de machine — sont écrites en utilitaires Tailwind, donc dans la couche `utilities`,
      qui bat celle-ci quoi qu'on y mette. Elles portent leur propre agrandissement au doigt, par la
@@ -1526,21 +1412,18 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
      cherchera, et c'est là-bas que ça vit. */
 
   /* La poignée grossit, la piste aussi : viser 6 px de haut au doigt ne marche pas. */
-  input[type="range"] { height: 44px; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 8px; }
-  /* Piste 8 + 2 de bordure = 10 ; poignée 30 + 2 = 32 ; (10 − 32) / 2 = −11. */
-  input[type="range"]::-webkit-slider-thumb { width: 30px; height: 30px; margin-top: -11px; }
-  input[type="range"]::-moz-range-track { height: 8px; }
-  input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; }
-  /* L'interrupteur de la machine est la commande la plus conséquente de l'interface — elle
-     déclenche un rinçage à l'eau chaude — et c'était la plus petite : 52 × 28. */
-  .switch { width: 64px; height: 36px; }
-  .switch .knob { width: 28px; height: 28px; }
-  .switch input:checked + .track .knob { transform: translateX(28px); }
-  /* 36 px de dessin, 44 px de cible : la case débordera la piste de 4 px en haut et en bas. Grossir
-     le dessin jusqu'à 44 aurait donné un interrupteur de tableau de bord d'automobile ; c'est la
-     zone de contact qu'il faut, pas le trait. */
-  .switch input { top: -4px; bottom: -4px; height: auto; }
+  /* Le curseur et l'interrupteur sont des composants : la cible se règle sur leurs emplacements,
+     pas sur les pseudo-éléments du natif — qui n'existent plus. */
+  [data-slot="slider"] { height: 44px; }
+  [data-slot="slider-track"] { height: 8px; }
+  [data-slot="slider-thumb"] { width: 30px; height: 30px; }
+  /* L'interrupteur d'un RÉGLAGE grossit au doigt. Celui de l'alimentation, lui, porte déjà sa
+     taille de commande principale (76 × 42) et n'a rien à gagner. */
+  [data-slot="switch"][data-size="sm"] { width: 64px; height: 36px; }
+  [data-slot="switch"][data-size="sm"] > [data-slot="switch-thumb"] { width: 28px; height: 28px; }
+  [data-slot="switch"][data-size="sm"][data-state="checked"] > [data-slot="switch-thumb"] {
+    transform: translateX(28px);
+  }
   /* Deux commandes voisines à 10 px l'une de l'autre se touchent par erreur au pouce. */
   .row { gap: var(--s-3); }
 }
@@ -1552,7 +1435,7 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 @media (max-height: 480px) {
   h1 { font-size: var(--t-section); }
   h2 { margin: var(--s-4) 0 var(--s-2); }
-  .card { padding: var(--s-3); margin-bottom: var(--s-3); }
+  /* Le rembourrage de la carte est passé dans la variante `court:` — voir `src/ui/card.tsx`. */
 }
 
 
@@ -1573,7 +1456,7 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 
    Ce que ce bloc rétablit, dans l'ordre :
 
-   1. **l'interrupteur est la commande principale**, donc il en a la taille (`.switch.grand`) ;
+   1. **l'interrupteur est la commande principale**, donc il en a la taille (`size="default"`) ;
    2. **les pastilles d'état rejoignent l'état**, collées sous le nom qu'elles qualifient — c'est
       de la proximité, pas un conteneur de plus, et le vide de 413 px disparaît sans être « rempli » ;
    3. **l'arrêt ne prend son poids que quand il peut agir.** Une préparation tourne : le rouge plein
@@ -1603,7 +1486,7 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
     display: grid; grid-template-columns: auto minmax(0, 1fr);
     column-gap: var(--s-4); row-gap: var(--s-3); align-items: center;
   }
-  .machineHead > .switch { grid-area: 1 / 1; }
+  .machineHead > [data-slot="switch"] { grid-area: 1 / 1; }
   .machineHead > .machineIdent { grid-area: 1 / 2; }
   /* La rangée entière, pas la colonne du titre : le libellé complet demande 225 px, et la colonne
      du titre n'en offre que « largeur de fenêtre − 163 » — soit 227 px à 390 px et 109 à 320. Deux
@@ -1656,9 +1539,6 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 /* Interrupteur principal. 76 × 42 au lieu de 52 × 28, soit 3 192 px² : il cesse d'être la plus
    petite chose de la carte la plus importante. La géométrie est recalculée, pas mise à l'échelle —
    4 px de jeu, une poignée de 34, un déplacement de 34, et le compte tombe juste. */
-.switch.grand { width: 76px; height: 42px; }
-.switch.grand .knob { top: 4px; left: 4px; width: 34px; height: 34px; }
-.switch.grand input:checked + .track .knob { transform: translateX(34px); }
 
 /* Bouton en contour : la couleur du rôle, sans le poids du remplissage. Sert à une action qui
    existe mais n'est pas ce qu'on vient faire — et **une action destructrice n'est jamais l'objet le
@@ -1755,8 +1635,7 @@ button.danger.discret { color: var(--danger-text); }
    VISIBLE et cochee, inerte : elle dit que le modele declare cet ingredient, et son infobulle dit
    qu'il ne se retire pas. La cacher aurait obtenu la meme interdiction en supprimant l'information,
    ce que ce projet refuse ailleurs sous le nom de « refuser en disant pourquoi ». */
-.blocIngredient.fixe > .caseLibelle { cursor: default; color: var(--encre-douce); }
-.blocIngredient.fixe > .caseLibelle > input { cursor: default; }
+.blocIngredient.fixe > .caseLibelle { color: var(--encre-douce); }
 /* **Un ingredient que ce modele ne porte pas pour cette boisson.** Une ligne, pas une boite vide :
    « Lait — non declare » distingue « cette boisson n'en a pas » de « on n'a pas regarde », et une
    boite vide aurait coute sa hauteur sur les douze boissons sans lait. */
@@ -1842,4 +1721,4 @@ button.danger.discret { color: var(--danger-text); }
   opacity: 0; pointer-events: none;
 }
 .photoZoom { display: flex; align-items: center; gap: var(--s-3); }
-.photoZoom > input[type="range"] { flex: 1 1 8rem; }
+.photoZoom > [data-slot="slider"] { flex: 1 1 8rem; }

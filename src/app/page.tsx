@@ -18,11 +18,16 @@ import {
 import { mfetch } from "./machine";
 import { useMachinePush } from "./events";
 import Icone from "./icons";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import Alerte from "./Alerte";
 import { useConfirm } from "./confirm";
 import { cleAnnonce, echecAnnonce } from "./register";
 // Le libelle d etat de la machine est partage avec /pilotage : voir machineState.ts.
 import { AGE_PERIME, AGE_PROGRESSION, fmtAge, sensorLabel, splitSensors, stateLabel, stepLabel, type HasTranslator, type Translator } from "./machineState";
+import { Switch } from "@/ui/switch";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Card } from "@/ui/card";
 
 // Les types de `/api/beverages` et les règles de valeur vivent dans `./beverage` : `/recipes`
 interface Status {
@@ -653,10 +658,10 @@ export default function Boissons() {
       {serveurMuet && (
         <Alerte>
           {tc("serverDown")}{" "}
-          <button className="mini iconBtn" onClick={reessayer}>
+          <Button type="button" variant="neutre" size="coquille" className="iconBtn" onClick={reessayer}>
             <Icone nom="reinitialiser" taille={14} />
             <span className="lbl">{tc("retry")}</span>
-          </button>
+          </Button>
         </Alerte>
       )}
       {!live && !serveurMuet && <p className="sub">{tc("pushOff")}</p>}
@@ -704,10 +709,10 @@ export default function Boissons() {
           serveurMuet ? null : (
             <Alerte>
               {t("catalogFailed", { reason: erreurCatalogue })}{" "}
-              <button className="mini iconBtn" onClick={reessayer}>
+              <Button type="button" variant="neutre" size="coquille" className="iconBtn" onClick={reessayer}>
                 <Icone nom="reinitialiser" taille={14} />
                 <span className="lbl">{tc("retry")}</span>
-              </button>
+              </Button>
             </Alerte>
           )
         ) : (
@@ -766,31 +771,29 @@ export default function Boissons() {
                    maintenant la ou vivent deja les gestes qui se meritent l'ouverture — et la
                    rangee de l'affiche n'a plus qu'un voisin a 8 px de l'action physique. */
                 actions={({ nom }) => (
-                  <button
-                    className="good iconBtn"
+                  <Button type="button" variant="marche" size="commande"
+                    className="iconBtn"
                     disabled={busy}
                     aria-busy={pending === bevScope(b.id) || undefined}
                     aria-label={t("prepareFor", { beverage: nom })}
-                    onClick={() => dispense(b)}
-                  >
+                    onClick={() => dispense(b)}>
                     <Icone nom="preparer" />
                     <span className="lbl">{tc("prepare")}</span>
-                  </button>
+                  </Button>
                 )}
                 /* La barre d'actions de l'EDITEUR, apres « Infos techniques ». La charge utile ne
                    sert pas ici : relire interroge la machine, elle n'envoie pas de reglages. */
                 editorActions={() => (
-                  <button
+                  <Button type="button" variant="neutre" size="commande"
                     className="iconBtn"
                     disabled={busy}
                     aria-busy={pending === bevScope(b.id) || undefined}
                     aria-label={t("readFor", { beverage: bevLabel(b) })}
                     onClick={() => startImport("all", [b.id])}
-                    title={t("readTitle")}
-                  >
+                    title={t("readTitle")}>
                     <Icone nom="lire" />
                     <span className="lbl">{tc("read")}</span>
-                  </button>
+                  </Button>
                 )}
                 /* **La ligne de l'affiche : la contenance, deux valeurs au plus.** Voir
                    `resumeContenance`. La legende complete — nom d'usine, nombre de parametres,
@@ -817,15 +820,15 @@ export default function Boissons() {
                    est un attribut a lire quand on regle, pas quand on choisit. */
                 marques={
                   <>
-                    {b.milk && <span className="pill">{t("milk")}</span>}
+                    {b.milk && <Badge variant="plaque">{t("milk")}</Badge>}
                     {(() => {
                       const lu = b.bounds ?? b.values;
                       if (!lu) return null;
                       if (!lu.exact) {
                         return (
-                          <span className="pill off aDroite" title={t("misalignedHint")}>
+                          <Badge variant="arret" className="aDroite" title={t("misalignedHint")}>
                             {t("misaligned")}
-                          </span>
+                          </Badge>
                         );
                       }
                       return (
@@ -1015,7 +1018,7 @@ function PowerCard({
   else label = stateLabel(mon.stateByte, t);
 
   return (
-    <div className="card machine">
+    <Card variant="machine">
       {/* **L'interrupteur mène, l'arrêt suit.** La rangée était en `space-between` : le nom de la
           machine d'un côté, ses pastilles d'état de l'autre, 413 px de vide entre les deux dans une
           carte de 1 140 px — et un bouton rouge plein six fois plus grand que l'interrupteur dont
@@ -1037,9 +1040,9 @@ function PowerCard({
                 : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
           }
         >
-          <input
-            type="checkbox"
+          <Switch
             checked={alimentationConnue && isOn}
+            inconnu={!alimentationConnue}
             disabled={busy || running || !alimentationConnue}
             aria-label={
               alimentationConnue
@@ -1050,11 +1053,8 @@ function PowerCard({
                   ? t("powerUnknown")
                   : t("powerStale", { age: fmtAge(ageSec ?? 0, t) })
             }
-            onChange={(e) => onToggle(e.target.checked)}
+            onCheckedChange={onToggle}
           />
-          <span className="track">
-            <span className="knob" />
-          </span>
         </label>
         <div className="machineIdent">
           {/* La machine est NOMMÉE. Le sélecteur de la barre de navigation est masqué en
@@ -1072,38 +1072,41 @@ function PowerCard({
                 et un témoin rouge « hors session », deux sens opposés au même instant, sans qu'on
                 puisse savoir lequel primait. */}
             {running && (
-              <span
-                className={status?.session?.active ? "pill on" : "pill attente"}
+              /* Hors session, la plaquette prend la hachure d'attente plutôt que le vert : une
+                 commande partie et pas encore acquittée n'est pas une commande qui marche. */
+              <Badge
+                variant={status?.session?.active ? "marche" : "plaque"}
+                className={status?.session?.active ? undefined : "attente"}
                 title={status?.session?.active ? undefined : t("staleBadgeHint")}
               >
                 {t("programBadge", { counter: status?.program?.counter ?? 0 })}
-              </span>
+              </Badge>
             )}
             {stale && !running && (
-              <span className="pill off" title={t("staleBadgeHint")}>
+              <Badge variant="arret" title={t("staleBadgeHint")}>
                 {t("staleBadge")}
-              </span>
+              </Badge>
             )}
             {/* **Ce que la machine RÉCLAME n'est pas ce qu'elle rapporte.** Les treize capteurs
                 arrivaient dans une seule pastille verte : « niveau d'eau bas · carafe à lait » en
                 couleur de marche, à côté d'une alarme en rouge. Le produit annonçait en vert la
                 seule chose qui empêchait de faire un café. Voir `splitSensors`. */}
             {capteurs.attention.length > 0 && (
-              <span className="pill off" title={t("sensorsAttention")}>
+              <Badge variant="arret" title={t("sensorsAttention")}>
                 {capteurs.attention.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
-              </span>
+              </Badge>
             )}
             {capteurs.presents.length > 0 && (
-              <span className="pill" title={t("switchesHint")}>
+              <Badge variant="plaque" title={t("switchesHint")}>
                 {capteurs.presents.map((sw) => sensorLabel(sw, tsens)).join(" · ")}
-              </span>
+              </Badge>
             )}
             {/* Un lien, pas une pastille inerte : la seule route vers « quelle alarme ? » était un
                 attribut `title`, donc rien sur la tablette et le téléphone. */}
             {mon?.alarmBits ? (
-              <a className="pill off" href="/pilotage#alarmes" title={t("alarmsHint")}>
+              <Badge asChild variant="arret"><a href="/pilotage#alarmes" title={t("alarmsHint")}>
                 {t("alarms")}
-              </a>
+              </a></Badge>
             ) : null}
             {/* **Le grain sélectionné.** Un lien, pas une pastille inerte, et pour la même raison
                 que les alarmes juste au-dessus : la seule route vers « lequel, et pourquoi
@@ -1116,8 +1119,8 @@ function PowerCard({
                 sait le NOMMER qu'après un balayage `0xBA`. Afficher « Grain n° 2 » est alors
                 exact ; inventer un nom, ou masquer la pastille, le serait moins. */}
             {bean && (
-              <a
-                className="pill"
+              <Badge asChild variant="plaque"><a
+               
                 href="/beans"
                 title={
                   bean.name
@@ -1126,24 +1129,24 @@ function PowerCard({
                 }
               >
                 {bean.name ? t("bean", { name: bean.name }) : t("beanIndex", { index: bean.index })}
-              </a>
+              </a></Badge>
             )}
             {/* **Un désaccord est DIT, jamais arbitré.** Le serveur rend les deux index parce qu'il
                 refuse de trancher (voir `activeBeanSystem`) ; s'il le disait et que l'interface le
                 taisait, ce refus ne servirait à rien — l'écran montrerait l'un des deux comme s'il
                 n'y avait jamais eu de doute. */}
             {bean?.disagree && (
-              <a
-                className="pill off"
+              <Badge asChild variant="arret"><a
+               
                 href="/beans"
                 title={t("beanDisagreeHint", { sync: bean.disagree.sync, flag: bean.disagree.flag })}
               >
                 {t("beanDisagree")}
-              </a>
+              </a></Badge>
             )}
-            <span className={status?.session?.active ? "pill on" : "pill off"}>
+            <Badge variant={status?.session?.active ? "marche" : "arret"}>
               {status?.session?.active ? t("lanSession") : t("noSession")}
-            </span>
+            </Badge>
           </div>
         </div>
         {/*
@@ -1159,8 +1162,13 @@ function PowerCard({
           indisponible dominait la carte sans rien pouvoir faire.
         */}
         <div className="garde actions">
-          <button
-            className={"danger iconBtn" + (running ? "" : " discret")}
+          {/* Pleine au repos serait une invitation ; en contour tant que rien ne coule, elle dit
+              qu'il n'y a rien à arrêter sans pour autant disparaître. */}
+          <Button
+            type="button"
+            variant={running ? "arret" : "discret-arret"}
+            size="commande"
+            className="iconBtn"
             disabled={busy || !stopAvailable}
             aria-busy={working || undefined}
             aria-label={t("stop")}
@@ -1169,7 +1177,7 @@ function PowerCard({
           >
             <Icone nom="arreter" />
             <span className="lbl">{t("stop")}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1238,26 +1246,37 @@ function PowerCard({
             L'ordre part en differe (`DELAI_PROFIL`) : parcourir la liste aux fleches emet un
             `change` par valeur traversee, et sans report chacune serait une trame 0xA9 vers
             l'appareil. */}
-        <select
-          id="profil-actif"
-          value={profile}
+        {/* ⚠️ **Ce n'était pas un `<select>` par hasard, et ce n'en est plus un — régression assumée.**
+
+            Le `<select>` natif ouvre le sélecteur du SYSTÈME : sur téléphone, la molette sous le
+            pouce, en bas de l'écran. Radix ouvre une liste dans la page. C'est un recul mesurable
+            sur l'appareil le plus utilisé debout devant la machine, et il est pris en connaissance
+            de cause : garder `<select>` sous `pointer: coarse` aurait donné DEUX implémentations du
+            même choix, à tenir d'accord — le défaut que ce dépôt a déjà payé sur l'éditeur de
+            recette et la carte de boisson, deux fois de suite. Une seule liste, dite dans la doc. */}
+        <Select
+          value={String(profile)}
           disabled={busy}
-          onChange={(e) => onSelectProfile(Number(e.target.value))}
-          title={t("profileSelectHint")}
+          onValueChange={(v) => onSelectProfile(Number(v))}
         >
-          {/* Le profil en cours d'affichage peut ne pas figurer dans la liste : elle ne montre que
-              les profils renommes, et la machine peut tres bien etre sur un autre. L'omettre ferait
-              afficher au `select` une valeur qui n'est pas celle utilisee — on l'ajoute plutot que
-              de mentir sur le profil courant. */}
-          {(shownProfiles.some((p) => p.id === profile)
-            ? shownProfiles
-            : [{ id: profile, name: null, renamed: false }, ...shownProfiles]
-          ).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name ?? tc("profileNumbered", { id: p.id })}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id="profil-actif" className="w-full" title={t("profileSelectHint")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {/* Le profil en cours d'affichage peut ne pas figurer dans la liste : elle ne montre que
+                les profils renommes, et la machine peut tres bien etre sur un autre. L'omettre ferait
+                afficher a la liste une valeur qui n'est pas celle utilisee — on l'ajoute plutot que
+                de mentir sur le profil courant. */}
+            {(shownProfiles.some((p) => p.id === profile)
+              ? shownProfiles
+              : [{ id: profile, name: null, renamed: false }, ...shownProfiles]
+            ).map((p) => (
+              <SelectItem key={p.id} value={String(p.id)}>
+                {p.name ?? tc("profileNumbered", { id: p.id })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {fallbackReason && <p className="legende">{fallbackReason}</p>}
       </div>
 
@@ -1272,7 +1291,7 @@ function PowerCard({
       <p className={"status " + (report?.kind === "err" ? "err" : "ok")} role="status">
         {report?.text ?? (busy && !working ? tc("busyReason") : "")}
       </p>
-    </div>
+    </Card>
   );
 }
 

@@ -6,6 +6,12 @@ import { CROISES, INGREDIENTS, composable, croiseDe, groupeDe, presenceInitiale,
 import { beverageParams, defautModele, valeurDepart, type Beverage, type Param, type RecipeParam } from "./beverage";
 import Icone from "./icons";
 import Alerte from "./Alerte";
+import { Slider } from "@/ui/slider";
+import { Input } from "@/ui/input";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Checkbox } from "@/ui/checkbox";
+import { Switch } from "@/ui/switch";
 
 /**
  * **L'éditeur de recette, un seul pour tout le produit.**
@@ -337,26 +343,20 @@ export default function RecipeEditor({
           {b.unit ? ` (${unitLabel(b.unit)})` : ""}
         </span>
         <div className="ctl">
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={v === 1}
-              aria-label={paramLabel(b)}
-              onChange={(e) => set(b, e.target.checked ? 1 : 0)}
-            />
-            <span className="track" aria-hidden="true">
-              <span className="knob" />
-            </span>
-          </label>
+          <Switch
+            size="sm"
+            checked={v === 1}
+            aria-label={paramLabel(b)}
+            onCheckedChange={(c) => set(b, c ? 1 : 0)}
+          />
           {defOf(b) !== null ? (
-            <button
-              className="mini"
+            <Button type="button" variant="neutre" size="coquille"
+              
               disabled={v === defOf(b)}
               onClick={() => set(b, defOf(b) as number)}
-              title={t("paramDefaultHint")}
-            >
+              title={t("paramDefaultHint")}>
               {t("paramDefaultBool", { on: defOf(b) === 1 ? 1 : 0 })}
-            </button>
+            </Button>
           ) : (
             <span className="sub" title={t("noParamDefaultHint")}>
               {t("noParamDefault")}
@@ -403,19 +403,20 @@ export default function RecipeEditor({
         <span className="sub mono">
           {b.min}
         </span>
-        <input
-          type="range"
+        {/* La valeur est un tableau : Radix accepte plusieurs poignées, ce curseur n'en a qu'une.
+            `?? seedFor(b)` reste la même règle qu'avant — pas de valeur, on repart du défaut. */}
+        <Slider
           min={b.min}
           max={b.max}
-          value={vals[b.id] ?? seedFor(b)}
+          value={[vals[b.id] ?? seedFor(b)]}
           aria-label={`${paramLabel(b)} (${b.min}–${b.max})`}
-          onChange={(e) => set(b, Number(e.target.value))}
+          onValueChange={([v]) => set(b, v)}
         />
         <span className="sub mono">
           {b.max}
         </span>
-        <input
-          className="numField"
+        <Input
+          className="w-[4.6rem] flex-none text-right"
           type="number"
           min={b.min}
           max={b.max}
@@ -428,14 +429,13 @@ export default function RecipeEditor({
              — et le bouton global juste au-dessus porte deja le rembobinage pour la meme action.
              Le glyphe serait repete jusqu'a sept fois par carte, sur vingt-huit cartes, en
              elargissant chaque fois une ligne qui contient deja un curseur et un champ. */
-          <button
-            className="mini"
+          <Button type="button" variant="neutre" size="coquille"
+            
             disabled={(vals[b.id] ?? seedFor(b)) === defOf(b)}
             onClick={() => set(b, defOf(b) as number)}
-            title={t("paramDefaultHint")}
-          >
+            title={t("paramDefaultHint")}>
             {t("paramDefault", { value: defOf(b) as number })}
-          </button>
+          </Button>
         ) : (
           <span className="sub" title={t("noParamDefaultHint")}>
             {t("noParamDefault")}
@@ -460,32 +460,30 @@ export default function RecipeEditor({
         <h4 className="cardTitle">{t("heading", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</h4>
         <div className="row">
           {!bev.values && (
-            <span className="pill off" title={t("valuesNotReadHint")}>
+            <Badge variant="arret" title={t("valuesNotReadHint")}>
               {t("valuesNotRead")}
-            </span>
+            </Badge>
           )}
           {dirty && (
-            <button
+            <Button type="button" variant="neutre" size="commande"
               className="iconBtn"
               onClick={() => {
                 setVals(seed);
                 setPresents(presence());
               }}
-              title={t("resetTitle")}
-            >
+              title={t("resetTitle")}>
               <Icone nom="reinitialiser" />
               <span className="lbl">{tc("reset")}</span>
-            </button>
+            </Button>
           )}
-          <button
-            className="mini iconBtn"
+          <Button type="button" variant="neutre" size="coquille"
+            className="iconBtn"
             disabled={atDefaults}
             onClick={applyDefaults}
-            title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}
-          >
+            title={noDefault ? t("defaultsPartialTitle", { count: noDefault }) : t("defaultsTitle")}>
             <Icone nom="defauts" taille={15} />
             <span className="lbl">{t("defaults")}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -515,17 +513,17 @@ export default function RecipeEditor({
               </p>
             ) : (
               <div className={"blocIngredient" + (parIngredients ? "" : " fixe")} key={g.cle}>
-                <label className="caseLibelle" title={parIngredients ? undefined : t("groupFixedHint")}>
-                  <input
-                    type="checkbox"
+                <span className="caseLibelle" title={parIngredients ? undefined : t("groupFixedHint")}>
+                  <Checkbox
                     checked={coche(g.cle)}
+                    aria-label={nomGroupe(g.cle)}
                     // Inerte hors d'un emplacement perso : les ingrédients y sont fixés par le
                     // modèle, seules leurs quantités se règlent.
                     disabled={!parIngredients}
-                    onChange={(e) => basculerIngredient(g, e.target.checked)}
+                    onCheckedChange={(v) => basculerIngredient(g, v === true)}
                   />
                   <span>{nomGroupe(g.cle)}</span>
-                </label>
+                </span>
                 {coche(g.cle) && (
                   <>
                     {reglage(qte)}
@@ -590,29 +588,28 @@ export default function RecipeEditor({
         {advanced.length > 0 && (
           /* Meme bascule que « Proprietes » sur /profils, donc meme chevron : il pivote au lieu
              de changer de dessin. */
-          <button className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
+          <Button type="button" variant="neutre" size="commande" className={"iconBtn" + (showAdvanced ? " ouvert" : "")} onClick={() => setShowAdvanced(!showAdvanced)} aria-expanded={showAdvanced}>
             <Icone nom="chevron" />
             <span className="lbl">{showAdvanced ? tc("hide") : t("advanced")} ({advanced.length})</span>
-          </button>
+          </Button>
         )}
         {actions?.(params)}
         {onDispense && (
-          <button className="good iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
+          <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={busy} aria-busy={working || undefined} onClick={() => onDispense(params)}>
             <Icone nom="preparer" />
             <span className="lbl">{t("prepareWith")}</span>
-          </button>
+          </Button>
         )}
         {onWrite && (
-          <button
-            className="primary iconBtn"
+          <Button type="button" variant="neutre" size="commande"
+            className="iconBtn"
             disabled={busy}
             aria-busy={working || undefined}
             onClick={() => onWrite(params)}
-            title={t("writeTitle")}
-          >
+            title={t("writeTitle")}>
             <Icone nom="machine" />
             <span className="lbl">{t("writeTo", { profile: profileName ?? tc("profileFallback", { id: profile }) })}</span>
-          </button>
+          </Button>
         )}
       </div>
 

@@ -1,15 +1,16 @@
 "use client";
 import { useTranslations } from "next-intl";
+import { RadioGroup, RadioGroupCran } from "@/ui/radio-group";
 import { Theme, useTheme } from "./theme";
 
 /**
  * Sélecteur de thème : trois positions dans la barre.
  *
- * **Des radios natives, pas trois boutons.** Le choix est exclusif, et `role="radiogroup"` à la
- * main aurait demandé de recoder la navigation aux flèches, le groupement et le nom accessible —
- * trois choses que `<input type="radio">` fait déjà correctement. Les entrées sont masquées
- * visuellement (jamais `display: none`, qui les retirerait de l'ordre de tabulation) et c'est le
- * `<label>` qui porte l'icône.
+ * **Un groupe de radios, pas trois boutons.** Le choix est exclusif, et `role="radiogroup"` écrit
+ * à la main aurait demandé de recoder la navigation aux flèches, le groupement et le nom
+ * accessible. Les `<input type="radio">` natifs les donnaient et c'est pour ça qu'ils étaient là ;
+ * `RadioGroup` de Radix les donne aussi, sans la case masquée sous une étiquette — un montage qui
+ * n'était plus le geste du reste du produit, et dont la cible tactile tenait à un `inset-0`.
  *
  * **Des icônes dessinées.** Pas ☀️/🌙 : un emoji change de dessin selon la plateforme, ne suit pas
  * la couleur du texte et n'a pas de graisse de trait commune avec le reste. Les trois glyphes
@@ -77,48 +78,29 @@ export default function ThemeToggle() {
    * couleur lisible d'un coup d'œil.
    */
   return (
-    <span
-      className="creuset flex flex-none items-center gap-0.5 p-0.5"
-      role="group"
+    <RadioGroup
+      className="creuset flex flex-none flex-row items-center gap-0.5 p-0.5"
       aria-label={t("groupLabel")}
+      value={theme}
+      onValueChange={(v) => setTheme(v as Theme)}
     >
-      {POSITIONS.map((v) => {
-        const engagee = theme === v;
-        return (
-          <label
-            key={v}
-            title={t(v)}
-            className={
-              // 32 px à la souris — ce groupe est déjà le seul objet plein de la barre, et le
-              // grossir partout le ferait peser plus que la navigation. 44 px au doigt, où il
-              // n'existe qu'en dessous du seuil du rail, donc uniquement sur téléphone et
-              // tablette. C'est l'arbitrage que ce fichier avait déjà rendu une fois, et que la
-              // bascule vers les utilitaires avait défait sans le dire.
-              "relative grid size-8 tactile:size-11 cursor-pointer place-items-center rounded-touche transition-colors " +
-              "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ambre " +
-              (engagee
-                ? "bg-releve text-encre shadow-[inset_0_1px_0_0_var(--color-arete-haute),inset_0_-1px_0_0_var(--color-arete-basse)]"
-                : "text-encre-faible hover:text-encre")
-            }
-          >
-            {/* Masquée visuellement, jamais `display:none` — qui la retirerait de l'ordre de
-                tabulation et ferait perdre la navigation aux flèches du groupe de radios.
-                `inset-0` plutôt qu'une taille d'un pixel : la case couvre alors toute l'étiquette,
-                donc la cible tactile est celle qu'on voit et non un point au milieu. */}
-            <input
-              type="radio"
-              name="theme"
-              value={v}
-              checked={engagee}
-              onChange={() => setTheme(v)}
-              className="absolute inset-0 m-0 cursor-pointer appearance-none opacity-0"
-            />
-            <Icone pour={v} />
-            {/* Le nom accessible du choix : l'icône est décorative, ce texte est ce qui est annoncé. */}
-            <span className="sr-only">{t(v)}</span>
-          </label>
-        );
-      })}
-    </span>
+      {POSITIONS.map((v) => (
+        <RadioGroupCran
+          key={v}
+          value={v}
+          title={t(v)}
+          /* 32 px à la souris — ce groupe est déjà le seul objet plein de la barre, et le
+             grossir partout le ferait peser plus que la navigation. 44 px au doigt, où il
+             n'existe qu'en dessous du seuil du rail, donc uniquement sur téléphone et
+             tablette. C'est l'arbitrage que ce fichier avait déjà rendu une fois, et que la
+             bascule vers les utilitaires avait défait sans le dire. */
+          className="size-8 tactile:size-11"
+        >
+          <Icone pour={v} />
+          {/* Le nom accessible du choix : l'icône est décorative, ce texte est ce qui est annoncé. */}
+          <span className="sr-only">{t(v)}</span>
+        </RadioGroupCran>
+      ))}
+    </RadioGroup>
   );
 }

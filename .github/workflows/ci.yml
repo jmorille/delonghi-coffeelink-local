@@ -147,6 +147,17 @@ jobs:
       - name: Vérifier les contrastes des deux finitions
         run: node scripts/verif-contraste.mjs
 
+      # Les surfaces, dans un vrai navigateur — la seule chose que ni tsc, ni ESLint, ni les onze
+      # vérifications pures ne regardent. Il existe pour la migration vers shadcn : le piège de
+      # focus d'un <dialog>, la fermeture par Échap et l'échelle imprimée d'un curseur étaient des
+      # propriétés de la PLATEFORME et deviennent du code, donc des choses à prouver.
+      #
+      # `puppeteer-core` se branche sur le Chrome déjà présent sur le runner (pnpm-workspace.yaml
+      # refuse par principe les scripts d'installation tiers, et le paquet complet en télécharge
+      # 150 Mo). Sans Chrome, le script SAUTE en le disant plutôt que d'échouer.
+      - name: Vérifier les surfaces dans un navigateur
+        run: node scripts/verif-surfaces.mjs
+
       # L'empreinte des visuels lie quatre pièces — l'extracteur qui l'écrit, la table qui la
       # porte, la vignette qui la pose sur son URL, la configuration qui accorde `immutable` à
       # cette valeur et à elle seule. Chacune de ces ruptures est muette : le produit s'affiche à

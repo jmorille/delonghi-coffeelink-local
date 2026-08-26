@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/ui/alert";
+import { cn } from "@/ui/cn";
 import Icone from "./icons";
 
 /**
@@ -18,13 +20,20 @@ import Icone from "./icons";
  *
  * `className` reçoit les modificateurs de rythme du site (`chapeau`, `note`) : c'est la page qui
  * sait si son bandeau introduit un bloc ou le commente.
+ *
+ * ── Depuis shadcn ────────────────────────────────────────────────────────────────────────────
+ *
+ * Le bandeau est un `Alert` en variante `garde` — le creux hachuré, décrit dans `alert.tsx`. Deux
+ * choses viennent du composant et n'étaient pas là avant : `role="alert"`, qui fait annoncer la
+ * mise en garde quand elle APPARAÎT (une clé LAN qui tombe, un modèle qui désaccorde), et la grille
+ * à deux colonnes qui tient le pictogramme hors du flux du texte au lieu d'un `flex` maison.
  */
 export default function Alerte({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={"warn alerte" + (className ? " " + className : "")}>
+    <Alert variant="garde" className={cn("warn", className)}>
       <Icone nom="alerte" />
-      <div>{children}</div>
-    </div>
+      <AlertDescription className="text-encre">{children}</AlertDescription>
+    </Alert>
   );
 }
 
@@ -34,12 +43,16 @@ export default function Alerte({ children, className }: { children: ReactNode; c
  * Trois endroits sont dans ce cas (`/statistiques`, les constats de `/systeme`, le désaccord de
  * modèle) : la carte entière est en `.warn`, donc un second bandeau à l'intérieur teinterait du
  * teinté. Seul le titre prend le pictogramme, aligné sur sa première ligne.
+ *
+ * Ce n'est PAS un `Alert` : ce n'est pas un bandeau, c'est un titre qui en porte le signe. Le
+ * rendre avec le composant aurait mis un `role="alert"` sur un `<strong>`, donc fait annoncer une
+ * alerte pour un mot.
  */
 export function TitreAlerte({ children }: { children: ReactNode }) {
   return (
-    <strong className="alerte">
+    <strong className="flex items-start gap-2 [&>svg]:mt-[0.18em] [&>svg]:flex-none [&>svg]:text-ambre">
       <Icone nom="alerte" />
-      <span>{children}</span>
+      <span className="min-w-0">{children}</span>
     </strong>
   );
 }
