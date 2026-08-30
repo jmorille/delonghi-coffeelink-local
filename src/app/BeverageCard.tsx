@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { IMAGES_PERSO, Monogramme, VignetteBoisson, useImageLabel } from "./BeverageImage";
 import RecipeEditor from "./RecipeEditor";
-import { beverageParams, isSet, type Beverage, type Param, type RecipeParam } from "./beverage";
+import { beverageParams, valeurSure, type Beverage, type Decoded, type Param, type RecipeParam } from "./beverage";
 // **Le constructeur de trame de PRODUCTION, celui que `server.mjs` appelle.** Pur et sans
 // `Buffer`, donc importable ici — c'est sa raison d'être. Recopier l'assemblage dans la page
 // aurait donné une ligne « Trame » qui ressemble à ce qui part sans en être la preuve.
@@ -49,14 +49,31 @@ export interface Report {
   kind: "ok" | "err";
 }
 
+/**
+ * ⚠️ **Ce résumé lit la valeur du PROFIL d'abord, le défaut du modèle seulement à défaut.** Il
+ * affichait `p.def` filtré par `isSet`, c'est-à-dire le défaut d'usine et rien d'autre — ce qui
+ * marche sur les vingt-deux boissons du catalogue, dont chaque quantité en porte un, et **efface
+ * exactement les six emplacements perso**, dont aucune n'en porte : sur « Lacteso » (café 20-180
+ * défaut 0, lait 50-1080 défaut 0, lait enregistré 100 ml) la ligne ne disait ni le café ni le
+ * lait, et sortait « Ordre lait/café 0 · Accessoire 0 » — les deux seuls réglages dont le défaut
+ * tombe par hasard dans ses bornes. Une carte qui annonce la taille de la tasse taisait le seul
+ * ingrédient qu'il y a dedans.
+ *
+ * `valeurSure` est la règle déjà écrite pour cette question (profil, sinon modèle, sinon rien) et
+ * c'est celle que l'éditeur applique deux lignes plus bas : la carte fermée et la carte ouverte
+ * disent désormais le même volume. Elle rejette au passage les marqueurs d'absence de la machine —
+ * `TASTE = 255` et un café à 0 sous un minimum de 20 tombent hors bornes, donc hors de la ligne.
+ */
 function summary(
+  bev: Beverage,
   users: Param[],
   paramLabel: (p: Param) => string,
   unitLabel: (u: string) => string,
 ): string {
   return users
-    .filter(isSet)
-    .map((p) => `${paramLabel(p)} ${p.def}${p.unit ? " " + unitLabel(p.unit) : ""}`)
+    .map((p) => ({ p, v: valeurSure(bev, p) }))
+    .filter((x): x is { p: Param; v: { value: number; from: "profil" | "modele" } } => x.v !== null)
+    .map(({ p, v }) => `${paramLabel(p)} ${v.value}${p.unit ? " " + unitLabel(p.unit) : ""}`)
     .join(" · ");
 }
 
@@ -81,16 +98,22 @@ function summary(
  * affiche « Café 40 ml » et rien d'autre, plutôt que d'aller compléter avec un arôme qui ne dit
  * pas la taille. Ordre / accessoire ne remontent dans aucun des deux cas — ce sont des réglages,
  * pas une contenance, et leur place est l'éditeur.
+ *
+ * ⚠️ **Et ce repli ne suffisait PAS.** Il se lisait sur le défaut du modèle, comme `summary` : sur
+ * un emplacement perso l'arôme vaut 255 (le marqueur « sans objet »), donc hors bornes, donc les
+ * six cartes perso étaient muettes — la donnée manquante que ce paragraphe existait pour éviter.
+ * Ce qu'il fallait n'était pas un troisième registre mais la bonne valeur : celle du profil.
  */
 export function resumeContenance(
+  bev: Beverage,
   users: Param[],
   paramLabel: (p: Param) => string,
   unitLabel: (u: string) => string,
 ): string {
-  const poses = users.filter(isSet);
+  const poses = users.filter((p) => valeurSure(bev, p) !== null);
   const volumes = poses.filter((p) => p.unit === "ml");
   const retenus = (volumes.length ? volumes : poses.filter((p) => p.unit === "niveau")).slice(0, 2);
-  return summary(retenus, paramLabel, unitLabel);
+  return summary(bev, retenus, paramLabel, unitLabel);
 }
 
 /**
@@ -331,7 +354,24 @@ export default function BeverageCard({
    */
   const catLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
   const users = beverageParams(bev).filter((p) => p.kind === "user");
-  const read = bev.bounds ?? bev.values;
+  /**
+   * **Les trames LUES sur la machine — les DEUX, quand les deux existent.**
+   *
+   * C'était `bev.bounds ?? bev.values`, et ce `??` JETAIT une lecture. Une boisson dont les bornes
+   * sont lues n'affichait jamais sa trame de valeurs (`0xA6`) : le panneau technique annonçait
+   * « Trame lue (bornes 0xB0) » et la recette du profil, pourtant lue, enregistrée et horodatée,
+   * n'apparaissait nulle part sur la carte.
+   *
+   * ⚠️ **Sur le mug de voyage, c'est la seule trace qui reste de ses valeurs.** Café 0, arôme 3,
+   * lait 0, eau 0 : les trois quantités sont sous leur minimum, donc `valeurSure` les écarte de la
+   * légende, donc elles ne sont nulle part ailleurs. Une trame lue que la carte ne montre pas est
+   * une lecture perdue — et le reproche que ce dépôt s'adresse partout ailleurs.
+   *
+   * L'ordre est celui où on les compare : les bornes, puis les valeurs qu'elles encadrent.
+   */
+  const lectures = [bev.bounds, bev.values].filter((d): d is Decoded => !!d);
+  /** La première, pour ce qui ne demande que « a-t-on lu quelque chose » : le bandeau de la tête. */
+  const read = lectures[0] ?? null;
   const [tech, setTech] = useState(false);
   // `nom` sert AUSSI aux noms accessibles des boutons (« Préparer : … ») : le titre visible et ce
   // que le lecteur d'écran annonce doivent désigner le même objet.
@@ -429,20 +469,20 @@ export default function BeverageCard({
         <span className="k">{t("valuesProp", { profile: profileName ? `${profile} — ${profileName}` : profile })}</span>
         <span className="mono">{bev.valuesProp ?? "—"}</span>
       </div>
-      {read && (
-        <div className="kv">
+      {lectures.map((d) => (
+        <div className="kv" key={d.kind}>
           {/* « Trame lue » sur une trame qu'on a assemblée soi-même affirmerait une lecture qui
               n'a pas eu lieu. La provenance vient de la trame, pas de la page qui la montre. */}
           <span className="k">
-            {read.calculee
-              ? t("computedFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })
-              : t("readFrame", { kind: read.kind === "bounds" ? t("frameBounds") : t("frameValues") })}
+            {d.calculee
+              ? t("computedFrame", { kind: d.kind === "bounds" ? t("frameBounds") : t("frameValues") })
+              : t("readFrame", { kind: d.kind === "bounds" ? t("frameBounds") : t("frameValues") })}
           </span>
           <span className="mono">
-            {read.hex}
+            {d.hex}
           </span>
         </div>
-      )}
+      ))}
       {/* **La trame de la commande, pas celle de la lecture** — et les deux se lisent l'une sous
           l'autre parce que c'est là qu'on les compare. Elle est dite « calculée » comme sa voisine
           d'au-dessus : rien ne l'a encore envoyée, et l'afficher sans le dire laisserait croire
@@ -547,7 +587,10 @@ export default function BeverageCard({
               {t("beanSystem", { name: bev.beanSystem.name })}
             </Badge>
           )}
-          {read && !read.exact && (
+          {/* **Les DEUX lectures, pas la première.** Un désalignement de la trame de valeurs ne
+              levait rien tant que les bornes tombaient juste — et c'est la trame de valeurs qui
+              porte ce qu'on affiche comme étant le contenu de la tasse. */}
+          {lectures.some((d) => !d.exact) && (
             <Badge variant="arret" title={t("misalignedHint")}>
               {t("misaligned")}
             </Badge>
@@ -567,7 +610,7 @@ export default function BeverageCard({
                 c'est un emplacement personnalisé, ce qui est une information. */}
             {bev.factoryName.toLowerCase() !== nom.toLowerCase() && <>{bev.factoryName} · </>}
             {t("paramCount", { count: bev.ingredients.length })}
-            {users.length > 0 && bev.bounds ? ` · ${summary(users, paramLabel, unitLabel)}` : ""}
+            {users.length > 0 && bev.bounds ? ` · ${summary(bev, users, paramLabel, unitLabel)}` : ""}
             {bev.counter && (
               <>
                 {" · "}

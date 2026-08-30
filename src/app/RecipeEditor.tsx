@@ -524,11 +524,37 @@ export default function RecipeEditor({
                   />
                   <span>{nomGroupe(g.cle)}</span>
                 </span>
-                {coche(g.cle) && (
+                {coche(g.cle) ? (
                   <>
                     {reglage(qte)}
                     {opts.map(reglage)}
                   </>
+                ) : (
+                  /**
+                   * **Un ingrédient déclaré mais décoché DIT son étendue, il ne rend plus le vide.**
+                   *
+                   * C'est le raisonnement de `groupeAbsent` deux branches plus haut — « une ligne
+                   * qui le DIT, pas un bloc vide » — appliqué au cas qui manquait : non pas « ce
+                   * modèle ne porte pas de lait », mais « cette recette n'en porte pas encore ».
+                   *
+                   * ⚠️ **Sans elle, la carte ouverte du mug de voyage était vide.** Ses trois
+                   * quantités valent 0 sur l'appareil (jamais configurées), donc `presenceInitiale`
+                   * les rend toutes absentes, donc aucun des trois `reglage` ne montait — et les
+                   * bornes que la trame `0xB0` porte pourtant (café 40-240, lait 60-460, eau 50-260)
+                   * n'apparaissaient nulle part. Il ne restait de la carte que « Mélange 0 (imposé) ».
+                   *
+                   * L'avertissement de `coche` — « le lire ici décocherait son café et ferait
+                   * disparaître son curseur » — visait juste, mais sa garde ne couvrait pas ce cas :
+                   * elle suppose `parIngredients` ⟺ emplacement perso, et `composable()` répond vrai
+                   * pour le mug de voyage AUSSI (c'est écrit dans son propre en-tête).
+                   *
+                   * Les bornes, et rien d'autre : le défaut du modèle vaut 0 pour ces trois-là, donc
+                   * hors bornes, donc il n'y a pas de valeur d'usine à annoncer et on n'en invente
+                   * pas (`defautModele`).
+                   */
+                  <p className="quantiteDecochee">
+                    {t("groupUnset", { min: qte.min ?? 0, max: qte.max ?? 0, unit: unitLabel(qte.unit) })}
+                  </p>
                 )}
               </div>
             ),

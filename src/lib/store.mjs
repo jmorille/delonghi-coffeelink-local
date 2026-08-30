@@ -135,8 +135,18 @@ CREATE TABLE settings (
  * URL, donc cachée par le navigateur et jamais retransmise avec la liste.
  *
  * `bytes` est un vrai BLOB : `STRICT` accepte ce type, et garder les octets tels quels évite
- * les 33 % de la base64 et une conversion à chaque lecture. `id` est celui de la configuration
- * (`b1`, `b2`…), donc la même clé des deux côtés.
+ * les 33 % de la base64 et une conversion à chaque lecture.
+ *
+ * ⚠️ **`id` porte DEUX espaces de noms, et le préfixe est ce qui les sépare.**
+ *
+ * - `b1`, `b2`… — une configuration mémorisée par le serveur, dont c'est l'identifiant ;
+ * - `s1`…`s6` — un emplacement de la MACHINE, dont c'est l'index préfixé.
+ *
+ * Cette table n'en sait rien et n'a pas à en savoir : elle range des octets sous une clé. C'est
+ * `server.mjs` qui frappe les deux formes (`putBeanPreset`, `ID_VISUEL_EMPLACEMENT`), et c'est le
+ * préfixe qui garantit qu'un `b3` et un `s3` ne se marchent pas dessus. Le second espace a été
+ * ouvert pour donner une photo aux six emplacements sans imposer une version de schéma — donc une
+ * migration — pour une seule colonne. La torréfaction, elle, ne pèse rien et reste dans `meta`.
  *
  * Déclarée à part de `DDL_V2` pour que chaque migration ne joue QUE son propre pas : une base v1
  * passe en v2 avec les sept tables d'origine, puis en v3 avec celle-ci. Les concaténer en un seul

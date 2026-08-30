@@ -1,0 +1,29 @@
+{
+ "_": "Généré par scripts/import-bean-images.mjs — ne pas éditer à la main.",
+ "chemin": "/grains",
+ "extension": "png",
+ "version": "ec759cca",
+ "torrefaction": {
+  "1": "torrefaction-1",
+  "2": "torrefaction-2",
+  "3": "torrefaction-3",
+  "4": "torrefaction-4"
+ },
+ "crema": {
+  "1": "crema-claire",
+  "2": "crema-foncee",
+  "3": "crema-absente"
+ },
+ "source": {
+  "questionnaire": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/questions/BeanSystemQuestions_app_millcore_1.0.json",
+  "images": {
+   "crema-absente": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/no_crema.png",
+   "crema-claire": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/light.png",
+   "crema-foncee": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/dark.png",
+   "torrefaction-1": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans1.png",
+   "torrefaction-2": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans2.png",
+   "torrefaction-3": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans3.png",
+   "torrefaction-4": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans4.png"
+  }
+ }
+}

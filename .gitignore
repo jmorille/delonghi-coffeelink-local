@@ -20,6 +20,13 @@ next-env.d.ts
 public/boissons/
 
 
+# Visuels de GRAINS importés par scripts/import-bean-images.mjs — les quatre niveaux de
+# torréfaction et les trois aspects de crema, plus la copie du questionnaire qui les nomme. Même
+# règle que public/boissons/ ci-dessus, et le fait qu'ils viennent d'un seau S3 ouvert n'y change
+# rien : un seau public autorise à lire, pas à republier. Le dépôt transporte la table
+# (src/lib/bean-images.json), jamais les images.
+public/grains/
+
 # Conversions SVG de ces mêmes visuels (scripts de test). Une œuvre dérivée reste l'œuvre : les
 # vectoriser ne les rend pas redistribuables. Elles suivent donc public/boissons/ ci-dessus.
 public/boissons-svg/

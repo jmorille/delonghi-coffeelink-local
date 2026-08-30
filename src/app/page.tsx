@@ -800,6 +800,7 @@ export default function Boissons() {
                    compteur de categorie — reste celle de la carte OUVERTE : on la lit apres avoir
                    reconnu la boisson, jamais avant. */
                 apercuCompact={resumeContenance(
+                  b,
                   beverageParams(b).filter((p) => p.kind === "user"),
                   paramLabel,
                   unitLabel,
@@ -925,21 +926,6 @@ function PowerCard({
   const mon = status?.lastMonitor ?? null;
   const running = status?.program?.active === true;
   /**
-   * `0x04` est le seul état positivement identifié : la veille. Tout autre état signifie que la
-   * machine est éveillée — `0x00` relevé juste après un réveil (en chauffe), `0x02` écran de
-   * sélection des boissons, prête. On raisonne donc « éveillée sauf 0x04 » plutôt que sur une
-   * liste blanche : une version précédente n'acceptait que `0x00` et affichait « état inconnu »
-   * alors que la machine était bel et bien allumée.
-   *
-   * **Mais une préparation en cours l'emporte sur l'octet d'état, et c'est un fait mesuré.** Un
-   * espresso complet a été enregistré le 2026-08-22 avec `état=0x04` sur ses 49 trames, sans
-   * qu'aucune commande « Allumer » ne soit passée (capture `espresso-veille.json`). L'octet 4 ne
-   * dit donc pas « la machine ne fait rien » : une machine qui moud, infuse et verse n'est pas en
-   * veille, quoi qu'annonce cet octet. Sans ce `||`, l'interrupteur affichait ÉTEINT juste
-   * au-dessus d'une barre annonçant « Écoulement du café — 84 % ».
-   */
-  const isOn = mon != null && (mon.stateByte !== 0x04 || mon.auRepos === false);
-  /**
    * **Une horloge locale, et rien d'autre.** L'âge du monitor est la seule chose de cette page qui
    * change sans que le serveur ait quoi que ce soit à pousser : personne n'écrit une ligne de
    * journal parce qu'une minute est passée. L'ancienne scrutation le rafraîchissait par accident,
@@ -991,14 +977,62 @@ function PowerCard({
   /**
    * **La durée est mesurée ici, parce qu'elle n'existe nulle part dans le protocole.** Aucune des
    * trois trames monitor ne porte de durée, ni écoulée ni restante — vérifié sur trois
-   * préparations réelles. On date donc le premier monitor non-repos et on compte.
+   * préparations réelles. On date donc la TRANSITION vers le travail — pas le premier monitor
+   * non-repos qu'on croise, voir juste en dessous — et on compte.
    */
   const [debut, setDebut] = useState<number | null>(null);
+  /**
+   * ⚠️ **Le repos de la trame PRÉCÉDENTE, et c'est lui qui autorise le chronomètre.**
+   *
+   * `setDebut(d => d ?? Date.now())` datait le départ à l'instant où la PAGE avait vu la première
+   * trame non-repos — pas où la machine avait commencé. Une trame non-repos déjà présente à
+   * l'ouverture affichait donc « depuis 4 s » pour quelque chose qui ne se passait pas, et le
+   * compteur repartait de zéro à chaque rechargement d'onglet au milieu d'une vraie préparation.
+   *
+   * Une seule trame ne porte aucune durée (voir juste au-dessus) : le départ n'est datable que
+   * par la TRANSITION repos → travail, donc on ne date que ce qu'on a vu basculer. Arriver au
+   * milieu d'une préparation laisse `debut` à `null`, l'étape et le pourcentage s'affichent quand
+   * même, et le temps écoulé — la seule des trois choses qu'on ignore — est simplement absent.
+   */
+  const reposAvant = useRef<boolean | null | undefined>(undefined);
   useEffect(() => {
-    if (mon?.auRepos === false) setDebut((d) => d ?? Date.now());
-    else if (mon?.auRepos === true) setDebut(null);
-  }, [mon?.auRepos]);
-  const ecoule = prepa && debut ? Math.round((Date.now() - debut) / 1000) : null;
+    const repos = mon?.auRepos;
+    const avant = reposAvant.current;
+    reposAvant.current = repos;
+    // `mon.at` et non `Date.now()` : c'est l'horodatage de la trame qui a basculé, la même base de
+    // temps que `ageSec` juste au-dessus. Un écart d'horloge navigateur/serveur fausse alors les
+    // deux affichages de la même quantité, au lieu de les faire diverger entre eux.
+    if (mon && repos === false) {
+      if (avant === true) setDebut(mon.at);
+    } else if (repos === true) setDebut(null);
+  }, [mon]);
+  // `Math.max(0, …)` : les deux horloges ne sont pas la même, et « depuis −1 s » est le seul
+  // résultat que cette soustraction ne doit jamais pouvoir afficher.
+  const ecoule = prepa && debut ? Math.max(0, Math.round((Date.now() - debut) / 1000)) : null;
+
+  /**
+   * `0x04` est le seul état positivement identifié : la veille. Tout autre état signifie que la
+   * machine est éveillée — `0x00` relevé juste après un réveil (en chauffe), `0x02` écran de
+   * sélection des boissons, prête. On raisonne donc « éveillée sauf 0x04 » plutôt que sur une
+   * liste blanche : une version précédente n'acceptait que `0x00` et affichait « état inconnu »
+   * alors que la machine était bel et bien allumée.
+   *
+   * **Mais une préparation en cours l'emporte sur l'octet d'état, et c'est un fait mesuré.** Un
+   * espresso complet a été enregistré le 2026-08-22 avec `état=0x04` sur ses 49 trames, sans
+   * qu'aucune commande « Allumer » ne soit passée (capture `espresso-veille.json`). L'octet 4 ne
+   * dit donc pas « la machine ne fait rien » : une machine qui moud, infuse et verse n'est pas en
+   * veille, quoi qu'annonce cet octet. Sans cette exception, l'interrupteur affichait ÉTEINT juste
+   * au-dessus d'une barre annonçant « Écoulement du café — 84 % ».
+   *
+   * ⚠️ **Et l'exception exige une préparation OBSERVÉE, pas seulement rapportée** — d'où `prepa`
+   * plutôt que `mon.auRepos === false`. Le drapeau brut n'a pas d'âge : la dernière trame d'une
+   * préparation finie, gardée en mémoire faute de suivante, faisait basculer l'interrupteur sur
+   * ALLUMÉ pendant que la ligne d'état juste dessous disait « En veille ». Les deux lisaient le
+   * même `0x04`, l'une avec l'exception et l'autre sans — une carte qui se contredisait à deux
+   * lignes d'intervalle. `prepa` porte déjà le seuil de fraîcheur (`AGE_PROGRESSION`) qui rend
+   * l'exception vraie : une préparation qu'on VOIT avancer.
+   */
+  const isOn = mon != null && (mon.stateByte !== 0x04 || prepa != null);
 
   let label: string;
   // Le libellé interne du programme (« Paramètres 100+9 ») ne dit rien à qui attend un café :

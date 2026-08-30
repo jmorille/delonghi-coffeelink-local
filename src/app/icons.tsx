@@ -72,6 +72,9 @@ export type NomIcone =
   | "marche"
   | "choisir"
   | "modifier"
+  | "retourner"
+  | "appareil"
+  | "copier"
   | "reglages";
 
 /** La tasse, dessinée une fois : c'est l'objet du produit et la marque, et c'est aussi l'action. */
@@ -268,6 +271,45 @@ const TRACES: Record<NomIcone, React.ReactNode> = {
     <>
       <path d="M4.4 19.6l1.1-4.2L16.2 4.7a1.6 1.6 0 0 1 2.2 0l1 1a1.6 1.6 0 0 1 0 2.2L8.6 18.5l-4.2 1.1Z" />
       <path d="M14.8 6.1l3.2 3.2" />
+    </>
+  ),
+  /* **Retourner : une plaque vue de trois quarts, et la flèche qui la fait pivoter.**
+     Le geste que ce glyphe nomme n'est pas « modifier » — c'est « voir l'autre côté de CET
+     objet-là ». Le crayon aurait dit la même chose que sur une recette (ouvrir un formulaire
+     ailleurs), or ici rien ne s'ouvre ailleurs : la carte elle-même tourne. D'où la plaque en
+     perspective plutôt qu'un carré, et une flèche qui décrit un demi-tour et non un aller-retour
+     — le rembobinage, lui, est déjà pris par `reinitialiser`. */
+  retourner: (
+    <>
+      <path d="M9.6 4.4h6a3.4 3.4 0 0 1 3.4 3.4v7.8" />
+      <path d="M12.6 1.4l-3 3 3 3" />
+      <path d="M4.6 8.4h8.8v11.2H4.6z" />
+    </>
+  ),
+  /* **L'appareil : le sceau posé dans le coin d'une photo modifiable.**
+     Il ne nomme pas une action dans une rangée de commandes — il dit d'une IMAGE qu'elle se
+     change. C'est ce qui remplace le bouton « Ajouter une photo » qui aurait doublé le cadre : au
+     survol, un contour l'annonce, mais un doigt ne survole rien, et l'affiche fait 20 rem de large
+     — sans marque, rien ne distingue un poster d'un poster cliquable.
+     Corps à angles vifs comme le reste du jeu ; la lentille est le seul cercle du jeu, et c'est le
+     seul endroit où le rond décrit l'objet plutôt que le trait de la main. */
+  appareil: (
+    <>
+      <path d="M2.8 8.6h18.4v10.8H2.8z" />
+      <path d="M8.4 8.6l1.5-2.6h4.2l1.5 2.6" />
+      <circle cx="12" cy="14" r="3.4" />
+    </>
+  ),
+  /* **Copier : deux feuilles décalées, et la seconde n'est pas fermée.**
+     Le geste est « il y en a maintenant deux » : c'est le DÉCALAGE qui le dit, pas les feuilles.
+     D'où le tracé arrière ouvert — il part du bord haut de la feuille avant et y revient par la
+     droite, donc les deux se lisent comme superposées et non comme deux cadres côte à côte. Un
+     second rectangle fermé aurait dessiné un tableau. Angles vifs, comme tout le jeu : une feuille
+     de ce boîtier est découpée, pas cornée. */
+  copier: (
+    <>
+      <path d="M3.4 8.6h12v12h-12z" />
+      <path d="M8.6 8.6V3.4h12v12h-5.2" />
     </>
   ),
 };

@@ -96,8 +96,34 @@ export const MONITOR_SWITCHES = [
  * `e === 0` suffit et se verifie : sur les cinq captures, l'etape 0 n'apparait QUE au repos —
  * jamais au milieu d'une preparation, dont les etapes relevees vont de 1 a 14.
  * `scripts/verif-monitor.mjs` le reverifie a chaque execution.
+ *
+ * ⚠️ **…mais `e === 0` seul ne suffit PAS : une fonction NULLE est aussi le repos.** Mesure du
+ * 2026-08-27, machine **en veille**, reservoir d'eau vide (alarme `EMPTY_WATER_TANK` levee) :
+ *
+ * ```
+ * d0 12 75 0f 04 40 02 01 00 00 02 64 00 00 00 00 00 3f fa
+ *             ^^          ^^ ^^ ^^     etat=0x04 · f=0 · e=2 · %=100
+ * ```
+ *
+ * `f=0, e=2, %=100` ne ressemble a AUCUNE preparation reelle : sur les soixante trames capturees
+ * la fonction vaut 7, 10 ou 12 — **jamais 0** — et 100 % n'apparait qu'aux etapes 13-14, jamais a
+ * l'etape 2. L'octet 9 est « Fun OnGoing » dans le journal de l'app : **zero veut dire qu'aucune
+ * fonction ne tourne**, et les octets 10-11 gardent alors les restes de la derniere. Sans ce
+ * second cas, une machine endormie etait lue « preparation en cours, 100 % » et, `auRepos ===
+ * false` faisant exception a l'octet d'etat (voir `isOn` dans `src/app/page.tsx`), l'accueil
+ * affichait l'interrupteur sur ALLUME juste au-dessus de « En veille » — les deux lisant le meme
+ * `0x04`, l'un avec l'exception et l'autre sans. Capture `veille-alarme.json`.
  */
 export const ETAPE_REPOS = { etape: 0 };
+/**
+ * Octet 9 a zero : aucune fonction en cours, donc le repos quoi que disent les octets 10-11.
+ *
+ * Volontairement NARROW — `MONITOR_ETAPES[fonction] === undefined` aurait couvert le meme cas et
+ * bien davantage : une fonction inconnue pendant une VRAIE preparation serait alors lue comme du
+ * repos, et la barre disparaitrait en pleine boisson. Zero est le seul code dont on sache dire ce
+ * qu'il signifie.
+ */
+export const FONCTION_REPOS = 0;
 export const MONITOR_ETAPES = {
   // Fonction 5 : chauffe (table de l'app, non observée ici).
   5: { 2: "chauffe", 4: "chauffe", 6: "chauffe" },
@@ -184,7 +210,7 @@ export function decodeMonitor(b64) {
    * afficher une barre, donc « inconnu » ne doit surtout pas être rendu comme « en cours », ce
    * qu'un booléen aurait forcé.
    */
-  const auRepos = etape == null ? null : etape === ETAPE_REPOS.etape;
+  const auRepos = etape == null ? null : etape === ETAPE_REPOS.etape || fonction === FONCTION_REPOS;
   return {
     stateByte: e[4],
     switchBits: bits,

@@ -48,7 +48,8 @@ node scripts/verif-args.mjs        # ECAM frame table / argument decoding (byte 
 node scripts/verif-transfert.mjs   # writing a local recipe into a machine slot
 node scripts/verif-messages.mjs    # literal next-intl keys exist in messages/fr.json
 node scripts/verif-contraste.mjs   # WCAG + ΔL* of both finishes, read back out of globals.css
-node scripts/verif-images.mjs      # the beverage-artwork fingerprint chain (extractor → table → URL → cache rule)
+node scripts/verif-images.mjs      # both artwork fingerprint chains — beverages AND beans (producer → table → URL → cache rule)
+node scripts/verif-datum-grains.mjs # sniffing a bean photo pulled from the Ayla datum (type from bytes, not from a claim)
 node scripts/verif-surfaces.mjs    # the 12 surfaces in a REAL headless Chrome (see § Styling)
 ```
 
@@ -60,8 +61,9 @@ values. Keeping those modules pure is what keeps this possible.
 database, boots `server.mjs` on port 3127 and drives a real Chrome (`puppeteer-core` — plain
 `puppeteer` is refused, third-party install scripts are blocked by `pnpm-workspace.yaml`; point
 `CHROME_PATH` at a binary if it is not in the usual place). It covers what only a browser can
-answer — a focus trap, an Escape key, an inert background, a `box-shadow` that a layer silently
-overrode. **Nothing in `src/ui` or `surfaces.css` ships without it green.**
+answer — a focus trap, an Escape key, an inert background, a face that is `inert` because it is
+turned away, a `box-shadow` that a layer silently overrode. **Nothing in `src/ui` or `surfaces.css`
+ships without it green.**
 
 Live diagnostics and loopback rigs, when a real behaviour is in question:
 
@@ -73,6 +75,7 @@ node scripts/fausse-machine.mjs --serveur 127.0.0.1:3099
 node scripts/extract-models.mjs                    # regenerate the APK-derived tables
 node scripts/extract-catalogs.mjs
 node scripts/extract-images.mjs
+node scripts/import-bean-images.mjs                # bean artwork, from De'Longhi's S3 (--json replays it offline)
 ```
 
 `.github/workflows/ci.yml` runs all of the above plus the SQLite migration chain (v1→v2→v3 on
@@ -138,6 +141,22 @@ migrations run automatically at boot and announce themselves through `bootMessag
 table carries a `machine` column with `ON DELETE CASCADE`; machine-independent settings live in
 their own `settings` table.
 
+A bean's photo has **two possible origins**, both landing under the same `s<n>` key: cropped here
+by `PhotoGrains` (WebP 300×340), or pulled from the cloud by `POST /api/beans/visual/import` — the
+Ayla datum `BS<index>IMG`, where the index IS byte 4 of the `0xBA` frame (`profiles.mjs` reads
+`index: buf[4]`; the app formats `BS%sIMG` with the same byte). That import is this server's
+**fourth** cloud path after the LAN key, OTA and the session, and like them it is an explicit act,
+never a side effect of a page load. What it brings back is the app's format, not ours: JPEG q35,
+5:3 stored from a 3:2 crop — a measured 10% vertical squash (1394×836 on the machine tested). So
+`FORMAT_IMAGE` describes what our UI *produces*, never what the table *contains*.
+
+⚠️ **`bean_images.id` holds two namespaces, on purpose.** `b1`, `b2`… are server-side bean
+presets; `s1`…`s6` are the machine's own slots. The prefix is what keeps a `b3` and an `s3`
+apart, and it is what let slot visuals ship without a schema v4 for one column. Roast levels —
+which the machine never stores — live in `meta`: inside each preset for a preset, under
+`meta.beanRoasts` keyed by index for a slot. A slot's visual follows the **index**, not the bean:
+nothing tells us the appliance was renamed.
+
 ### Several machines
 
 Machine ids are **ours** (`m1`, `m2`…), not the DSN — the DSN is only discovered after an address is
@@ -152,7 +171,9 @@ catalog is one model's, shared by all — a mismatch is reported, not corrected.
 `d270_serialnumber` characters 1–5 index the manufacturer table (`0132217055` → `17055` →
 ECAM 610.75.MB) — no cloud involved. `machine-models.json`, `machine-catalogs.json` and
 `beverage-images.json` are **generated** by `scripts/extract-*.mjs` from the APK (ESLint ignores the
-first two). Never hand-edit them; change the script.
+first two). Never hand-edit them; change the script. `bean-images.json` is generated too, but from a
+**network** source — De'Longhi's questionnaire S3 (`scripts/import-bean-images.mjs`), which is what
+names the four roast-level visuals and the three crema ones.
 
 ### App multiplexer — off by default
 
@@ -212,6 +233,32 @@ Three native elements were deliberately reversed in that migration — `<select>
 `<input type="range">`. Each was rendering a real service the component now owes:
 `scripts/verif-surfaces.mjs` checks all three in a real browser (focus trap, Escape, background
 inertness, the `--crans` graduation, the profile listbox). Do not weaken those assertions.
+
+⚠️ **Two faces in one DOM is two sets of tab stops.** `/beans` cards flip (`src/app/CarteGrain.tsx`):
+a poster on the front, everything editable on the back. `backface-visibility` hides a face from the
+*eye* only — the turned-away face stays tabbable and readable unless it carries `inert` **and**
+`aria-hidden`, and nothing static catches the omission. The back is also mounted lazily (first flip),
+so a closed grid has no extra tab stop at all. The plateau's height is **measured in JS** and set in
+pixels, because a transition has nothing to interpolate between two `auto`. All of it is asserted in
+`verif-surfaces.mjs`, § *La carte de grain se retourne*.
+
+⚠️ **The back opens on the SAME frame as the front, and that is what removed its title line.** Both
+faces mount one `AfficheGrain` (in `VignetteGrains.tsx`, next to the precedence it wraps) — on the
+front as a poster, on the back as the file-picker button (`PhotoGrains`). So the card turns around a
+rectangle that does not move, and the name no longer needs a third reading: the `<h3>` on the back is
+`sr-only` (removing it outright would drop the card out of the heading outline, since the front is
+`aria-hidden` while turned away) and the three things a title line used to carry sit in the poster's
+corners — index or date top-left, flip-back top-right, "change the photo" seal bottom-right. Two
+traps: an icon-only trigger needs `aria-label` (a `<button>` with no text announces itself as
+"bouton"), and **that button-poster must out-specify `button:not([data-slot])`** — the generic bare
+`<button>` rule in `surfaces.css` is `(0,1,1)`, so a plain class silently loses its `padding: 0` and
+the frame comes out 28 px narrower than the front's. Measured, and asserted.
+
+⚠️ **The five explanatory `.legende` paragraphs on that back are gone on purpose, and a tooltip did
+not replace them.** A `title` answers nothing to a finger. What engages the appliance moved into the
+confirmation dialog — which is where this repo already puts its warnings, and which shows everywhere;
+`title` keeps only the *why*. Section structure (`role="group"` + `.etiquetteGroupe`) replaced two
+more, which is why "Le grain" and "Réglages" are real named groups and not decorative headings.
 - `verif-messages.mjs` only sees **literal** keys written on the spot. A key requested inside a
   helper that receives a translator (`fmtAge(sec, t)`) is invisible to it — that is the very bug
   that motivated it.
@@ -229,8 +276,10 @@ the first line of TSX. The full reasoning is in the header of `eslint.config.mjs
 ## Secrets and data hygiene
 
 Never commit, publish, or attach to a report: `.env.local`; `data/lan-server.db` (LAN keys, serial
-numbers, profile names — treat it as a password file); `public/boissons*` (De'Longhi artwork — the
-repo ships the *mapping* `src/lib/beverage-images.json`, never the images); the workspace's `apk/`,
+numbers, profile names — treat it as a password file); `public/boissons*` and `public/grains/`
+(De'Longhi artwork — the repo ships the *mappings* `src/lib/beverage-images.json` and
+`src/lib/bean-images.json`, never the images; that the bean visuals come from an open S3 bucket
+changes nothing — a public bucket grants permission to read, not to republish); the workspace's `apk/`,
 `decompiled/` and `docs/`. `src/lib/cloud-app.json` is committed on purpose and is not secret.
 
 Device-specific values in any documentation are written as markers (`IP_MACHINE`,

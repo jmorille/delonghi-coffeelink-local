@@ -47,6 +47,64 @@ interface Payload {
  */
 const RANGES_VIDES: { known: [number, number][]; all: [number, number][] } = { known: [], all: [] };
 
+/**
+ * **Poser un texte dans le presse-papiers, sur un serveur en http simple.**
+ *
+ * ⚠️ **`navigator.clipboard` N'EXISTE PAS ici la plupart du temps, et c'est structurel.** L'API
+ * n'est exposée que dans un *contexte sûr* — https, ou `localhost`. Or ce serveur s'annonce par son
+ * adresse de réseau local (`SERVER_IP`) et se consulte depuis une tablette murale ou un téléphone :
+ * `http://192.168.x.x`, donc pas de contexte sûr, donc `navigator.clipboard === undefined`. Un
+ * bouton écrit avec la seule API moderne aurait marché sur la machine du développeur (localhost) et
+ * nulle part ailleurs — exactement le genre de défaut que ce dépôt attrape trop tard.
+ *
+ * D'où les deux chemins, dans cet ordre : l'API quand elle est là, sinon le `<textarea>` +
+ * `document.execCommand("copy")`, qui est déprécié mais reste le SEUL mécanisme disponible hors
+ * contexte sûr. Le champ est posé hors écran plutôt que caché : `display: none` n'est pas
+ * sélectionnable, donc la copie ne prendrait rien.
+ *
+ * **Rend un booléen, et l'appelant en fait un compte rendu.** Un `catch` muet aurait donné le pire
+ * retour possible — un bouton qui a l'air d'avoir marché sur un presse-papiers vide.
+ */
+async function copierTexte(texte: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+      return true;
+    } catch {
+      /* Refus de permission : on tente quand même le repli, qui ne dépend pas de la permission. */
+    }
+  }
+  try {
+    const champ = document.createElement("textarea");
+    champ.value = texte;
+    champ.setAttribute("readonly", "");
+    /* `position: fixed` + hors écran : le champ doit être RENDU pour être sélectionnable, et ne doit
+       pas faire défiler la page en recevant le focus. */
+    champ.style.position = "fixed";
+    champ.style.top = "0";
+    champ.style.left = "-9999px";
+    document.body.appendChild(champ);
+    champ.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(champ);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Les lignes d'un tableau, en colonnes séparées par des tabulations.
+ *
+ * **TSV et non CSV, et `\r\n` et non `\n`.** La tabulation évite la question du séparateur décimal
+ * français — un CSV à virgules coupe « 61,5 » en deux colonnes dans un tableur fr-FR. Le retour
+ * chariot est celui qu'attendent les applications Windows, qui sont le poste de consultation ici.
+ *
+ * Les nombres partent en chiffres NUS, sans le séparateur de milliers de `fmt()` : celui-ci est un
+ * espace fine insécable (U+202F), qui est juste à l'écran et illisible pour tout ce qui reparse.
+ */
+const tsv = (lignes: (string | number)[][]) => lignes.map((l) => l.join("\t")).join("\r\n");
+
 export default function Statistiques() {
   const t = useTranslations("stats");
   const tc = useTranslations("common");
@@ -63,6 +121,18 @@ export default function Statistiques() {
   const plages = d?.ranges ?? RANGES_VIDES;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  /**
+   * Le compte rendu de la dernière copie, et de LAQUELLE des deux — sans `cle`, copier un tableau
+   * ferait apparaître le message sous les deux.
+   */
+  const [copie, setCopie] = useState<{ cle: "known" | "unknown"; texte: string; ok: boolean } | null>(null);
+  /* Le succès s'efface, l'échec reste. Un « copié » qui persiste devient du bruit au bout de deux
+     clics ; un échec qui s'efface emporte la seule explication de ce qu'il faut faire à la place. */
+  useEffect(() => {
+    if (!copie?.ok) return;
+    const id = setTimeout(() => setCopie(null), 4000);
+    return () => clearTimeout(id);
+  }, [copie]);
 
   const load = useCallback(async () => {
     try {
@@ -172,6 +242,85 @@ export default function Statistiques() {
       .sort((a, b) => a - b);
   }, [d]);
 
+  /**
+   * **Les deux tableaux, tels qu'ils sont à l'écran.** Une copie qui diffère de ce qu'on voit est le
+   * défaut silencieux de ce genre de bouton : les lignes viennent donc des mêmes sources que le
+   * rendu — `d.known` dans son ordre, `unknownIds` dans le sien — et non d'un second parcours de
+   * `d.stats` qui pourrait trier autrement.
+   *
+   * Une ligne d'en-tête, parce que le tableau des non identifiés est deux colonnes de chiffres nus :
+   * collé sans titre dans une note, personne ne saura six mois plus tard laquelle est l'id.
+   *
+   * Pour un compteur identifié, c'est `value` qui part — la valeur convertie, celle que la page
+   * annonce — avec son unité dans une colonne à elle. Le brut reste à l'écran, entre parenthèses :
+   * l'emporter aurait demandé une cinquième colonne vide pour les neuf compteurs sans unité.
+   */
+  const lignesConnus = (): (string | number)[][] => [
+    [t("colCounter"), t("colId"), t("colValue"), t("colUnit")],
+    ...(d?.known ?? []).map((k) => [statLabel(k.key), k.id, k.value, k.unit ?? ""]),
+  ];
+  const lignesInconnus = (): (string | number)[][] => [
+    [t("colId"), t("colValue")],
+    ...unknownIds.map((id) => [id, d?.stats[String(id)] ?? ""]),
+  ];
+
+  /**
+   * Le bouton de copie d'un tableau : **une icône seule, et donc un `aria-label` obligatoire.**
+   *
+   * `iconBtn iconSeul` est le motif déjà employé par `/profils` et `/pilotage` — pas de libellé du
+   * tout, remplissage latéral ramené à 10 px, hauteur et cible tactile intactes. Le glyphe passe à
+   * la coche pendant les quatre secondes qui suivent un succès : le compte rendu est juste en
+   * dessous, mais l'œil qui vient de cliquer est sur le bouton.
+   *
+   * ⚠️ **`variant="discret"` et non `neutre`** : ce bouton ne touche pas la machine et ne change
+   * rien: il déplace du texte. Lui donner le relief d'une commande l'aurait mis au même rang que
+   * « Lire les compteurs », juste au-dessus, qui elle parle à l'appareil.
+   */
+  const boutonCopier = (
+    cle: "known" | "unknown",
+    nom: string,
+    produire: () => (string | number)[][],
+    lignes: number,
+  ) => (
+    <Button
+      type="button"
+      variant="discret"
+      size="commande"
+      className="iconBtn iconSeul"
+      disabled={!lignes}
+      aria-label={nom}
+      title={t("copyTitle")}
+      onClick={async () => {
+        const ok = await copierTexte(tsv(produire()));
+        setCopie({ cle, ok, texte: ok ? t("copyDone", { count: lignes }) : t("copyFailed") });
+      }}
+    >
+      <Icone nom={copie?.cle === cle && copie.ok ? "choisir" : "copier"} />
+    </Button>
+  );
+
+  /**
+   * Le compte rendu de la copie, sur la carte qu'il commente.
+   *
+   * **Monté en permanence, vide quand il n'y a rien** — même raison qu'à `/pilotage` : un
+   * `role="status"` créé en même temps que son contenu n'est pas annoncé, seul un changement DANS
+   * une région déjà présente l'est. `.enLigne:empty` le retire de la mise en page sans le démonter.
+   * L'échec prend le pictogramme d'alerte, comme le bandeau en tête de cette page.
+   */
+  const StatutCopie = ({ cle }: { cle: "known" | "unknown" }) => {
+    const r = copie?.cle === cle ? copie : null;
+    return (
+      <span className={"enLigne" + (r && !r.ok ? " alerte" : "")} role="status">
+        {r && (
+          <>
+            {!r.ok && <Icone nom="alerte" taille={15} />}
+            <span>{r.texte}</span>
+          </>
+        )}
+      </span>
+    );
+  };
+
   return (
     <>
       <h1>{t("heading")}</h1>
@@ -234,6 +383,29 @@ export default function Statistiques() {
 
           <h2>{t("knownHeading")}</h2>
           <Card>
+            {/* **Une tête de carte qui ne porte qu'une action, et pas de titre.** Le titre est le
+                `<h2>` juste au-dessus : le redire ici en ferait deux pour une seule section. D'où
+                `ms-auto`, et `flex-none` sur le bloc d'actions — sans le second, la règle
+                `.cardHead:not(.compacte) > :first-child` lui donne `flex: 1 1 12rem` (elle vaut
+                (0,3,0), donc elle bat `.cardHead > .actions`) et le bouton se retrouve collé à
+                gauche d'un bloc étiré.
+
+                ⚠️ **`ms-auto` alors que `surfaces.css` dit « pas de `margin-left: auto` ».** La
+                règle y est écrite pour une tête qui a un bloc de TITRE : celui-ci est en
+                `flex: 1 1 12rem` et pousse donc les actions au bord droit tout seul. Ici il n'y a
+                pas de titre du tout sur la carte des compteurs, et sur celle des non identifiés le
+                chapeau est **borné par la mesure de lecture** (`max-width: var(--mesure)`) : il
+                s'arrête à 600 px dans une carte de 1 400, donc il ne pousse rien. Mesuré : bord
+                droit du bouton à 629 px pour une carte finissant à 1 428. `justify-between` aurait
+                réglé la ligne unique et cassé le repli — sur téléphone, une action seule sur sa
+                ligne serait repartie à gauche. Les utilitaires plutôt qu'une règle dans
+                `surfaces.css` : `utilities` bat `surfaces`, c'est la loi de ce dépôt. */}
+            <div className="cardHead">
+              <div className="row actions flex-none ms-auto">
+                {boutonCopier("known", t("copyKnown"), lignesConnus, d.known.length)}
+              </div>
+            </div>
+            <StatutCopie cle="known" />
             {d.known.length === 0 ? (
               <p className="sub">{t("noKnownYet")}</p>
             ) : (
@@ -267,7 +439,17 @@ export default function Statistiques() {
 
           <h2>{t("unknownHeading")}</h2>
           <Card>
-            <p className="chapeau">{t("unknownNote")}</p>
+            {/* Ici la tête a de quoi remplir sa gauche : le chapeau y monte, et il pousse l'action
+                au bord droit tout seul (`flex: 1 1 12rem` sur le premier enfant). Deux lignes
+                deviennent une, ce qui est la raison d'être de cette tête plutôt qu'une action
+                flottant au-dessus du chapeau. */}
+            <div className="cardHead">
+              <p className="chapeau">{t("unknownNote")}</p>
+              <div className="row actions flex-none ms-auto">
+                {boutonCopier("unknown", t("copyUnknown"), lignesInconnus, unknownIds.length)}
+              </div>
+            </div>
+            <StatutCopie cle="unknown" />
             {unknownIds.length === 0 ? (
               <p className="sub">{t("unknownEmpty")}</p>
             ) : (

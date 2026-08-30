@@ -746,6 +746,19 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    19 rem faisait passer la page de trois colonnes à deux sur une tablette — une décision de
    conception défaite par une refactorisation. La grille reste unique, son minimum est un réglage. */
 .cards.dense { --carte-min: 16.25rem; }
+/* **`/beans` a quitté `dense`, et la raison qui l'y avait mis a disparu avec.** 260 px servaient à
+   COMPARER : trois chiffres par carte, le plus de cartes possible côte à côte. Depuis que la face
+   avant est une affiche, les chiffres sont au dos — il n'y a plus rien à comparer d'une colonne à
+   l'autre, et ce qu'il faut à la place c'est de la largeur pour deux choses :
+
+   1. **l'affiche.** Elle prend la largeur entière de la carte : dans 260 px elle faisait 228 px de
+      côté, ce qui est une vignette agrandie, pas une affiche ;
+   2. **le dos.** C'est un formulaire, et la carte NE S'ÉLARGIT PAS en s'ouvrant — un demi-tour qui
+      triplerait la largeur ne serait plus un demi-tour. Cette feuille mesure juste à côté (voir
+      `.open`) qu'« un curseur, ses bornes, un champ et une puce de défaut ne tiennent pas dans
+      19 rem » : c'est pourquoi les bornes ont rejoint le libellé dans `ReglagesGrains`, et pourquoi
+      la colonne monte à 20 rem. Curseur + champ y tiennent, mesuré à 178 px de course. */
+.cards.grains { --carte-min: 20rem; }
 /* `align-items: start` : sans lui une carte courte s'étire à la hauteur de la plus grande de sa
    rangée, ce qui laisse des blancs et fait croire à une donnée manquante. */
 /* La gouttière remplace la marge : sinon les deux s'additionnent entre les rangs. */
@@ -1169,6 +1182,160 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
   font-size: clamp(1.375rem, 9cqi, 2rem);
 }
 
+/* ═════════════════════════════════════════════════════════════════════════════════════════════
+   LA CARTE D'UN GRAIN — L'AFFICHE, ET LE DEMI-TOUR
+   ═════════════════════════════════════════════════════════════════════════════════════════════
+   La géométrie de `CarteGrain.tsx`, qui porte le raisonnement en entier. Ce qui est ici est ce
+   qu'aucun utilitaire ne sait dire : une perspective, un `backface-visibility`, une hauteur animée.
+
+   ⚠️ **Rien ici ne repeint la carte.** La matière — fond, rayon, biseau, rembourrage — vit dans les
+   variantes de `src/ui/card.tsx`, et `utilities` bat `surfaces` dans la cascade quelle que soit la
+   spécificité : une couleur écrite ici perdrait EN SILENCE. Ces règles ne touchent que la
+   disposition et la troisième dimension.
+   ───────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* **Le plateau : la boîte dont la hauteur est animée.** Sa hauteur vient de JavaScript, en pixels,
+   mesurée sur la face visible — une transition n'a rien à interpoler entre deux `auto`. `perspective`
+   est ce qui fait de la rotation un demi-tour et non un aplatissement : sans elle, `rotateY` ne
+   produit qu'un écrasement horizontal. 1400 px est lointain exprès — une perspective courte donnerait
+   une déformation de maquette d'architecte à une plaque de 20 rem.
+
+   Pas d'`overflow: hidden` : au milieu de la rotation les coins de la face sortent du cadre, et les
+   rogner se verrait. Ce qui dépasse est de toute façon invisible — `backface-visibility` s'occupe de
+   la face qui n'est pas devant.
+
+   ⚠️ **Oui, `height` est une propriété de disposition, et elle est animée sciemment.** Le détecteur
+   de `/impeccable` le signale, à juste titre en général. Les deux échappatoires habituelles ne
+   marchent pas ici : `grid-template-rows: 0fr → 1fr` dimensionne à la HAUTEUR DU CONTENU, or le
+   contenu de ce plateau est un rotor qui contient les DEUX faces empilées — la carte fermée
+   prendrait donc la hauteur du dos, exactement le défaut qu'on évite ; et `scaleY` déformerait le
+   texte. Ce qui rend le coût acceptable : un seul élément, une seule fois par clic délibéré, jamais
+   pendant un défilement ni sur une liste entière. */
+.grainPlateau {
+  position: relative;
+  perspective: 1400px;
+  transition: height 0.34s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* **Le rotor : les deux faces empilées dans UNE case de grille.** L'empilement est ce qui donne aux
+   deux faces une hauteur réelle en permanence, donc quelque chose à mesurer avant même la première
+   rotation. `preserve-3d` doit rester : sans lui les faces sont aplaties dans le plan du parent et
+   `backface-visibility` n'a plus rien à cacher. */
+.grainRotor {
+  position: relative;
+  display: grid;
+  transform-style: preserve-3d;
+  transition: transform 0.44s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.grainRotor[data-face="dos"] { transform: rotateY(180deg); }
+
+/* `align-self: start` : sans lui la face avant s'étirerait à la hauteur du dos, qui partage sa case,
+   et la mesure rendrait la même valeur pour les deux — la carte serait toujours à la hauteur du dos.
+   `min-width: 0` pour que les rangées de boutons puissent passer à la ligne au lieu d'élargir. */
+.grainFace {
+  grid-area: 1 / 1;
+  align-self: start;
+  min-width: 0;
+  backface-visibility: hidden;
+}
+/* Le dos est un contexte de positionnement, pour une seule raison : son declencheur de retour se
+   pose EN COIN sur la photo. Cette photo est le premier enfant du formulaire, donc le coin haut du
+   dos est le coin haut de l'image — sans avoir a la connaitre. */
+.grainFace.grainDos { transform: rotateY(180deg); position: relative; }
+
+/* **Le retour, en coin de l'affiche.** Il remplace une ligne de titre entiere : le nom se lisait
+   trois fois sur une carte retournee (l'affiche, ce titre, le champ « Nom »), et de ces trois-la
+   c'est le titre qui n'ajoutait rien — il servait a porter ce bouton. Le bouton se porte tout seul.
+   `z-index` parce qu'il chevauche un bouton (la photo), pas seulement une image. */
+.grainDosRetour {
+  position: absolute;
+  inset-block-start: var(--s-2);
+  inset-inline-end: var(--s-2);
+  z-index: 1;
+}
+/* La photo ouvre le formulaire : sa marge haute serait un vide en haut du dos. */
+.grainDos .photoGrains { margin-top: 0; }
+
+/* **Trois coins, trois rôles, et aucun d'eux ne prend de ligne.** En haut à gauche l'identité (le
+   numéro d'emplacement, ou la date d'une fiche) ; en haut à droite le retour à l'affiche ; en bas à
+   droite le sceau qui dit que la photo se change. La même plaquette opaque que le sceau, pour la
+   même raison — elle doit rester lisible sur une photo de paquet quelconque. */
+.grainDosRepere {
+  position: absolute;
+  inset-block-start: var(--s-2);
+  inset-inline-start: var(--s-2);
+  z-index: 1;
+  padding: 2px var(--s-2);
+  border-radius: var(--r-touche);
+  background: var(--panel);
+  box-shadow:
+    0 0 0 var(--trait) var(--rule),
+    0 1px 2px -1px color-mix(in srgb, var(--arete-basse) 70%, transparent);
+}
+
+/* Pendant qu'elle est retournée, la carte passe DEVANT ses voisines : le dos est plus haut que
+   l'affiche, et pendant les 340 ms où la hauteur du plateau le rattrape il dépasse par le bas.
+   Passer dessous se lirait comme un défaut d'affichage. */
+.carteGrain.retournee { position: relative; z-index: 2; }
+
+/* **L'affiche : un creux fraisé dans la tôle, à la largeur de la carte.**
+   Le rapport vient de `FORMAT_IMAGE` et arrive en style en ligne — une seule déclaration de
+   « 300 × 340 » dans tout le dépôt, sinon `object-fit: cover` rognerait la photo de l'utilisateur
+   en silence.
+
+   Les quatre arêtes du fraisage, comme la touche de `card.tsx` : ombre en haut et à gauche, reflet
+   en bas et à droite, sous une lumière qui vient d'en haut à gauche. C'est ce qui fait un CREUX —
+   deux arêtes seules dessinent un ruban, et la mesure est dans l'en-tête de `card.tsx`.
+
+   **Et le fond du creux est de l'aluminium brossé** — la classe `.brosse` de `globals.css`, posée
+   sur l'élément lui-même, pas recopiée ici. C'est ce qui empêche le cas MAJORITAIRE de se lire
+   comme une panne : `public/grains/` est gitignoré et le Dockerfile ne copie pas `public/`, donc
+   une installation fraîche n'a aucun visuel, et un rectangle uni de 313 × 355 se lit « image
+   manquante ». Un creux brossé où les initiales sont gravées se lit « il n'y a pas encore de
+   paquet ici » — la même information, sans le défaut.
+
+   ⚠️ **`background-color` et non `background`.** La forme courte réinitialise `background-image`,
+   donc elle effacerait le brossage — et `.brosse` vit dans la couche `components`, qui bat
+   `surfaces` : l'erreur se serait vue, mais dans l'autre sens seulement. */
+.afficheGrain {
+  display: grid; place-items: center;
+  overflow: hidden;
+  margin: 0 0 var(--s-3);
+  border-radius: var(--r-touche);
+  background-color: var(--panel-2);
+  box-shadow:
+    0 0 0 var(--trait) var(--affiche-anneau, var(--rule)),
+    inset 0 var(--trait) 0 0 var(--fraisage-ombre),
+    inset var(--trait) 0 0 0 var(--fraisage-ombre),
+    inset 0 calc(-1 * var(--trait)) 0 0 var(--fraisage-jour),
+    inset calc(-1 * var(--trait)) 0 0 0 var(--fraisage-jour);
+}
+/* ⚠️ **`contain` et non `cover`, et c'est un arbitrage rendu devant la mesure.** Une photo cadrée
+   par `PhotoGrains` est déjà au rapport du cadre : les deux valeurs y sont identiques. La
+   différence n'apparaît que sur une photo VENUE D'AILLEURS — l'app officielle stocke en 5:3 — et
+   là, `cover` rognait les côtés : sur un paquet réel, mesuré, il coupait les deux moitiés du nom
+   de la marque. Un cadrage qui se trompe est pire qu'une bande vide, d'autant que la bande n'est
+   pas vide ici : c'est le fond du creux, brossé, et une photo posée dedans se lit comme une photo
+   posée dedans.
+
+   **L'autre solution a été essayée et refusée : un cadre qui prend la forme de sa photo.** Elle
+   supprime la bande, et elle supprime aussi le rythme — six affiches de hauteurs différentes dans
+   une rangée, et l'œil qui descend une colonne n'a plus de repère. Deux choses la condamnent en
+   plus : les deux états SANS photo (dessin de torréfaction, initiales) ont besoin d'un cadre de
+   forme fixe de toute façon, et ce sont eux le cas majoritaire ; et la bande ne concerne que le
+   format ÉTRANGER, celui dont l'en-tête de `image-grains.mjs` documente déjà les trois défauts. */
+.afficheGrain .afficheGrainPhoto { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* Le dessin de torréfaction s'INSCRIT plus petit encore : c'est une illustration sur fond
+   transparent, pas un objet cadré — la mettre bord à bord lui donnerait le poids d'une photo. */
+.afficheGrain .afficheGrainDessin { width: 68%; height: auto; object-fit: contain; }
+/* **Les initiales gravées à la taille de l'affiche, et c'est l'état par défaut du produit.** Elles
+   ne portent donc pas leur `aspect-ratio` de vignette : c'est le cadre qui tient le rapport, elles
+   n'ont qu'à s'y placer. */
+.afficheGrain .monogramme {
+  inline-size: auto; block-size: auto;
+  font-size: clamp(2rem, 22cqi, 4rem);
+}
+
 /* Hors vue mais dans l'arbre d'accessibilité : ce qu'une lampe de 8 px n'a aucun moyen de nommer
    autrement. `title` seul ne se voit ni sur téléphone ni sur tablette — les deux appareils que
    PRODUCT.md met au premier rang — donc il ne peut pas être le porteur unique d'un sens. */
@@ -1336,6 +1503,20 @@ ol.listeFavoris > li:last-child { border-bottom: 0; }
    L'ancienne ligne était une suite de largeurs fixes — libellé 150, curseur 150, champ 80, puce
    78 — soit 558 px incompressibles pour un réglage, dans une carte qui peut en faire 300. Le
    libellé prend sa ligne quand il faut, le curseur absorbe le reste. */
+/* **« (bornes non vérifiées) » retiré de l'œil, gardé à l'oreille.** Écrit en clair, il faisait
+   passer « Température » à la ligne dans la colonne de 20 rem de `/beans` — trois mots de mise en
+   garde qui coûtaient une ligne à chaque carte retournée. Le pointillé est la convention que le
+   navigateur emploie lui-même pour « il y a une explication attachée », l'infobulle la donne, et le
+   texte complet reste dans un `sr-only` : c'est une compaction visuelle, pas une soustraction
+   d'information. `text-underline-offset` parce qu'un pointillé collé aux chiffres se lit comme un
+   souligné de saisie. */
+.borneIncertaine {
+  text-decoration: underline dotted var(--encre-douce);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
 .paramRow { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); align-items: center; padding: var(--s-1) 0; }
 .paramRow > .nom { flex: 1 1 9rem; min-width: 0; }
 /* `.ctl` vit aussi hors d'une `.paramRow` — /recipes le pose dans une cellule de tableau. */
@@ -1631,6 +1812,22 @@ button.danger.discret { color: var(--danger-text); }
 .blocIngredient { margin: var(--s-3) 0; }
 .blocIngredient > .caseLibelle { font-weight: 600; }
 .blocIngredient > .paramRow { margin-left: var(--s-4); border-left: 2px solid var(--arete-ctl); padding-left: var(--s-3); }
+/* **Une quantite declaree que la composition laisse decochee.** Le bloc rendait le VIDE : sur le mug
+   de voyage, dont les trois quantites valent 0 sur l'appareil, la carte ouverte ne montrait ni les
+   trois curseurs ni les bornes que la trame 0xB0 porte pourtant, et il n'en restait que « Melange 0
+   (impose) ». La ligne prend l'indentation et le filet du curseur qu'elle remplace — c'est la meme
+   place, donc la meme colonne — et le gris de `.groupeAbsent`, dont elle est le pendant : celle-la
+   dit « ce modele n'en porte pas », celle-ci « cette recette n'en porte pas encore ». */
+.blocIngredient > .quantiteDecochee {
+  margin: var(--s-2) 0 0 var(--s-4);
+  border-left: 2px solid var(--arete-ctl);
+  padding-left: var(--s-3);
+  color: var(--encre-douce);
+  font-size: var(--t-petit);
+  min-height: var(--h-ctl);
+  display: flex;
+  align-items: center;
+}
 /* **Un groupe dont la composition n'est pas offerte** — une boisson du catalogue. La case reste
    VISIBLE et cochee, inerte : elle dit que le modele declare cet ingredient, et son infobulle dit
    qu'il ne se retire pas. La cacher aurait obtenu la meme interdiction en supprimant l'information,
@@ -1683,24 +1880,109 @@ button.danger.discret { color: var(--danger-text); }
    Le figer en CSS ferait une deuxième déclaration du format, à faire diverger le jour où
    `FORMAT_IMAGE` bouge. */
 .photoGrains { display: flex; flex-direction: column; gap: var(--s-3); margin-top: var(--s-3); }
-.photoApercu { display: flex; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; }
-/* « Retirer la photo » se cale sous l'image plutôt qu'à côté : à côté, il partageait la rangée
-   avec elle et se retrouvait centré verticalement sur 7 rem de vide. `align-self` le remonte, et
-   la largeur reste celle de son texte — un rouge pleine largeur pour l'action la plus rare de la
-   carte serait la plus voyante. */
-.photoRetirer { align-self: flex-start; }
-.photoVignette {
-  width: 6.5rem; height: auto; border-radius: var(--radius);
-  border: 1px solid var(--edge); background: var(--raise);
+/* **Une colonne, et non plus une rangée.** L'aperçu tenait l'image et son « Retirer » côte à côte,
+   ce qui se lisait quand l'image faisait 6,5 rem. Elle fait maintenant la largeur de la carte :
+   `row` aurait poussé le bouton hors de la colonne, et `wrap` l'aurait ramené à la ligne — au même
+   endroit, mais par accident. `position: relative` est pour le champ de fichier caché, qui est en
+   absolu : sans ancre ici il se serait posé sur le premier parent positionné, c'est-à-dire le DOS
+   de la carte depuis que celui-ci est relatif. */
+.photoApercu { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-3); }
+/* **Le quatrième coin : retirer la photo.** Les trois autres sont pris — identité en haut à gauche,
+   retour à l'affiche en haut à droite, sceau de l'appareil en bas à droite — et celui-ci ferme la
+   série par le bas à gauche. Il est en absolu et non dans le flux : une ligne sous l'image pour
+   nommer une action qui ne porte QUE sur cette image se lisait comme une commande du formulaire, au
+   même rang que « Écrire dans la machine ». Posée dessus, elle dit son objet sans un mot.
+
+   `z-index` parce qu'elle chevauche un bouton, pas seulement une image : sans lui, le poster
+   passerait devant et avalerait le clic — le pire défaut possible ici, un bouton visible et mort.
+   L'ancre est `.photoApercu`, qui est relatif et dont la hauteur est exactement celle du poster :
+   le champ de fichier qu'il contient aussi est en absolu et ne prend aucune place. */
+.photoRetirer {
+  position: absolute;
+  inset-block-end: var(--s-2);
+  inset-inline-start: var(--s-2);
+  z-index: 1;
 }
-/* Le vide occupe la place de la vignette : sans lui, ajouter une photo ferait sauter la carte
-   d'une centaine de pixels, et la rangée de boutons se déplacerait sous le curseur. */
-.photoVide {
-  width: 6.5rem; height: 7.35rem; border-radius: var(--radius);
-  border: 1px dashed var(--edge); background: var(--panel);
-  display: flex; align-items: center; justify-content: center;
-  text-align: center; padding: var(--s-2); font-size: var(--t-mini);
+
+/* ⚠️ **L'affiche EST le bouton, et c'est le même cadre que la face avant** (`AfficheGrain`, monté
+   deux fois). Deux conséquences tenues par cette règle et par elle seule : le demi-tour ne déplace
+   pas l'image — même rectangle, même place, même taille des deux côtés — et le bouton n'ajoute
+   AUCUN chrome par-dessus. D'où la remise à zéro complète : un `<button>` apporte bordure, fond,
+   rembourrage et `min-height`, et chacun des quatre aurait dessiné un second cadre autour du
+   premier.
+
+   Le survol n'ajoute pas de bordure non plus : il allume l'anneau du fraisage, via
+   `--affiche-anneau`. Une bordure de plus aurait épaissi le cadre de 2 px au passage de la souris,
+   donc décalé la photo — la chose même que tout ce bloc existe pour éviter. */
+/* ⚠️ **Le sélecteur porte `button` ET un `:not`, et c'est la règle générique qui l'impose.**
+   `button:not([data-slot])`, en haut de ce fichier, habille tout `<button>` nu du dépôt — 10/14 de
+   rembourrage, un fond relevé, un biseau — et elle vaut (0,1,1) : **une simple classe LUI CÈDE.**
+   Écrite `.photoAffiche`, cette règle aurait perdu son `padding: 0` en silence, et le cadre du dos
+   aurait fait 28 px de moins que l'affiche de la face avant — mesuré : 322 px contre 350, soit une
+   image qui se décale de 14 px au milieu du demi-tour. C'est la précaution que `input.photoInput`
+   prend plus bas, pour exactement la même raison, et c'est `verif-surfaces.mjs` qui l'a attrapée
+   (§ « le dos ouvre sur le même cadre que l'affiche »).
+
+   **Ce qui est gardé de la règle générique, en revanche, l'est exprès** : la transition et
+   l'enfoncement d'un pixel à `:active`. Un poster qui s'enfonce sous le doigt est le même retour
+   que toutes les touches du produit — le refuser aurait fait de la seule commande pleine largeur
+   de la page la seule qui ne réponde pas. Seul le biseau de l'enfoncement part : sous une image
+   opaque il ne se verrait qu'aux quatre coins arrondis, en un éclair. */
+button.photoAffiche:not([data-slot]) {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  min-height: 0;
+  border-radius: var(--r-touche);
+  cursor: pointer;
 }
+button.photoAffiche:not([data-slot]):active:not(:disabled) { box-shadow: none; }
+button.photoAffiche:not([data-slot]):focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 3px; }
+button.photoAffiche:not([data-slot]):disabled { cursor: not-allowed; }
+/* **Le survol sous condition, comme partout.** Sur un écran tactile il n'existe pas mais le
+   navigateur le simule après le tap : sans cette garde, l'anneau resterait allumé jusqu'au tap
+   suivant, et une photo « sélectionnée » qui ne l'est pas est un faux état. Le fond du bouton
+   générique est éteint ici aussi — il ne se verrait qu'aux coins, mais il se verrait. */
+@media (hover: hover) {
+  button.photoAffiche:not([data-slot]):hover:not(:disabled) {
+    background: none;
+    --affiche-anneau: var(--accent-edge);
+  }
+  button.photoAffiche:not([data-slot]):hover:not(:disabled) .photoSceau { color: var(--encre); }
+}
+/* La marge basse de l'affiche appartient à la FACE AVANT, où elle sépare l'image du nom. Ici la
+   colonne du formulaire tient l'écart, et la garder ferait un double espace. */
+.photoAffiche > .afficheGrain { margin: 0; }
+
+/* **Le sceau : la preuve que ce poster se clique.** Une vignette bordée de 6,5 rem se lisait comme
+   un champ ; un poster de 20 rem se lit comme un poster, et le survol ne dit rien à un doigt. C'est
+   une plaquette opaque et non une pastille translucide, parce qu'elle doit rester lisible sur une
+   photo quelconque — un fond semi-transparent aurait un contraste qui dépend du paquet de café
+   photographié, donc pas de contraste du tout. */
+.photoSceau {
+  position: absolute;
+  inset-block-end: var(--s-2);
+  inset-inline-end: var(--s-2);
+  display: grid;
+  place-items: center;
+  padding: var(--s-1);
+  border-radius: var(--r-touche);
+  color: var(--encre-faible);
+  background: var(--panel);
+  /* L'ombre portee du monde — celle de `card.tsx`, pas un noir invente : un decalage, un flou
+     court, et la couleur de l'arete basse. C'est ce qui detache la plaquette de la photo sans lui
+     donner le halo colore d'un badge d'interface. */
+  box-shadow:
+    0 0 0 var(--trait) var(--rule),
+    0 1px 2px -1px color-mix(in srgb, var(--arete-basse) 70%, transparent);
+}
+/* Au survol c'est l'ANNEAU DU CADRE qui s'allume, pas le sceau : deux ambres pour un seul geste se
+   liraient comme deux cibles. Le sceau ne fait que passer à l'encre pleine — voir la requête de
+   media plus haut, où l'anneau et lui s'allument ensemble. */
 /* **Hauteur imposée, et c'est structurel.** `react-easy-crop` se positionne en absolu dans son
    parent : sans hauteur explicite, le conteneur s'effondre à zéro et le cadreur devient invisible
    — sans erreur, ce qui est le pire cas. */

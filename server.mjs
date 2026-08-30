@@ -21,7 +21,7 @@ import { CATEGORIES, PARAMS, catalogFor, customSlotOf, decodeRecipeProperty, mod
 // Le report d'une recette locale dans un emplacement perso : module PUR, prouvé sans machine par
 // `scripts/verif-transfert.mjs`. C'est lui qui décide de ce qui part dans une écriture persistante.
 import { planTransfert } from "./src/lib/transfert.mjs";
-import { decoderDataUrl, TAILLE_MAX as IMAGE_TAILLE_MAX } from "./src/lib/image-grains.mjs";
+import { decoderDataUrl, decoderBase64Nu, torrefactionValide, TORREFACTIONS, TAILLE_MAX as IMAGE_TAILLE_MAX } from "./src/lib/image-grains.mjs";
 // Le référentiel du protocole ECAM : la table des opérations, la lecture d'une trame sortante
 // (`opTrame`) ou entrante (`opReponse`), et le décodage des arguments. Tout ce qui nomme une
 // commande dans ce fichier — journal, libellé de tâche, ordonnanceur — lit CETTE table.
@@ -3195,6 +3195,91 @@ async function checkCloudOta(m, token) {
   return releve;
 }
 
+/**
+ * **Rapatrie les photos de grains que l'application officielle a laissées dans le cloud.**
+ *
+ * Troisième usage du jeton Ayla, après `lan.json` (clé LAN) et `ota.json` : même hôte, même en-tête
+ * d'autorisation, un chemin de plus.
+ *
+ *     GET {aylaDeviceUrl}/apiv1/dsns/<DSN>/data/BS<index>IMG.json
+ *       → { "datum": { "key": "BS3IMG", "value": "<base64 d'un JPEG>", … } }
+ *
+ * ## La clé, et pourquoi elle ne se devine pas
+ *
+ * `DeLonghiWifiConnectService.R(int)` formate `String.format("BS%sIMG", bArr[4])` où `bArr` est la
+ * trame `0xBA` de l'emplacement demandé. Et l'octet 4 est **exactement** ce que nous appelons
+ * `index` : `profiles.mjs` le lit sous `index: buf[4]`, et `p097j6/d.G0` construit son `BeanSystem`
+ * avec `bArr[4]` comme identifiant. Les trois lectures concordent, donc l'emplacement 3 correspond
+ * à `BS3IMG` — sans table de correspondance intermédiaire, qui aurait été la pièce à se tromper.
+ *
+ * ## Ce que ça écrase, et ce que ça n'est pas
+ *
+ * L'image atterrit sous `s<index>`, la même clé qu'une photo cadrée ici : un import **remplace**
+ * donc la photo locale de cet emplacement. C'est voulu — deux photos pour un emplacement
+ * demanderaient de choisir laquelle s'affiche, or il n'y a qu'une chose à montrer — mais c'est
+ * destructif, d'où la confirmation côté interface.
+ *
+ * Ces octets ne sont pas au format commun du dépôt : voir `decoderBase64Nu`, qui le dit en détail.
+ *
+ * ## Ce que le cloud répond quand il n'y a rien
+ *
+ * Un datum absent donne un **404**, et c'est un cas NORMAL : un grain sans photo dans l'app n'a pas
+ * de datum du tout (l'app affiche alors son illustration `ba_default_image`). Compté comme « rien à
+ * importer », jamais comme une panne — sinon un import partiel se lirait comme un échec.
+ *
+ * Rend un relevé par emplacement demandé : `{ index, statut, mime?, octets?, erreur? }`.
+ */
+async function importerPhotosCloud(m, token, indices) {
+  if (!m.dsn) throw new Error("DSN inconnu : les photos sont rangées chez Ayla sous le numéro de série de la machine.");
+  const releves = [];
+  for (const index of indices) {
+    const cle = `BS${index}IMG`;
+    let r;
+    try {
+      r = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${m.dsn}/data/${cle}.json`, {
+        headers: { Authorization: `auth_token ${token}` },
+        signal: AbortSignal.timeout(20000),
+      });
+    } catch (e) {
+      releves.push({ index, statut: "error", erreur: `réseau : ${e.message}` });
+      continue;
+    }
+    if (r.status === 404) { releves.push({ index, statut: "absent" }); continue; }
+    if (!r.ok) { releves.push({ index, statut: "error", erreur: `HTTP ${r.status}` }); continue; }
+    let valeur = null;
+    try {
+      valeur = (await r.json())?.datum?.value ?? null;
+    } catch {
+      releves.push({ index, statut: "error", erreur: "réponse illisible (JSON attendu)" });
+      continue;
+    }
+    // Un datum peut exister et être vide : l'app le crée puis le vide quand on retire la photo.
+    if (!valeur || String(valeur).trim() === "") { releves.push({ index, statut: "absent" }); continue; }
+    let img;
+    try {
+      img = decoderBase64Nu(String(valeur));
+    } catch (e) {
+      // On dit ce qui a été refusé et pourquoi, plutôt que de ranger des octets douteux dans la
+      // base : le message vient de `decoderBase64Nu` et est destiné à être lu.
+      releves.push({ index, statut: "refused", erreur: e.message });
+      continue;
+    }
+    m.store.putBeanImage(ID_VISUEL_EMPLACEMENT(index), img.mime, img.bytes);
+    releves.push({ index, statut: "imported", mime: img.mime, octets: img.bytes.length });
+  }
+  const importees = releves.filter((x) => x.statut === "imported");
+  L(
+    "sys",
+    `import des photos de grains depuis le cloud : ${importees.length} importée(s)` +
+      `, ${releves.filter((x) => x.statut === "absent").length} absente(s)` +
+      `, ${releves.filter((x) => x.statut === "refused").length} refusée(s)` +
+      `, ${releves.filter((x) => x.statut === "error").length} en erreur` +
+      (importees.length ? ` — ${importees.map((x) => `#${x.index} ${x.mime} ${Math.round(x.octets / 1024)} kio`).join(", ")}` : ""),
+    m,
+  );
+  return releves;
+}
+
 async function discoverLanKey(m, { email, password, jwt: givenJwt, remember = false }) {
   // **Un clic mérite une vraie tentative, et une seule.** `resolveDsn` s'étrangle à une sonde par
   // 30 s pour ne pas marteler la machine depuis les rafraîchissements de page — appliqué à une
@@ -4138,7 +4223,7 @@ function vueBeanPresets(m) {
   return beanPresets(m).map((p) => ({ ...p, imageAt: dates[p.id] ?? null }));
 }
 
-function putBeanPreset(m, { id, name, grinder, temperature, aroma }) {
+function putBeanPreset(m, { id, name, grinder, temperature, aroma, roast }) {
   const liste = beanPresets(m);
   const at = Date.now();
   const propre = {
@@ -4146,6 +4231,20 @@ function putBeanPreset(m, { id, name, grinder, temperature, aroma }) {
     grinder: Number(grinder),
     temperature: Number(temperature),
     aroma: Number(aroma),
+    /**
+     * Le niveau de torréfaction déclaré, ou `null`.
+     *
+     * ⚠️ Rangé DANS la fiche, contrairement à la photo qui a sa table. C'est un entier : le ranger
+     * à part demanderait une table pour une colonne, alors que le tableau des configurations est
+     * de toute façon réécrit en entier à chaque enregistrement. C'est exactement l'inverse du
+     * raisonnement qui a sorti l'image de `meta` — voir l'en-tête de `DDL_BEAN_IMAGES` — et pour
+     * la même raison : ce qui pèse sort, ce qui ne pèse rien reste.
+     *
+     * `?? null` et non `?? liste[i].roast` : le formulaire envoie toujours le niveau, donc une
+     * valeur absente veut dire « aucun », jamais « ne touche pas ». Le confondre rendrait le
+     * retrait impossible.
+     */
+    roast: roast ?? null,
   };
   const i = id ? liste.findIndex((x) => x.id === id) : -1;
   let entree;
@@ -4158,8 +4257,79 @@ function putBeanPreset(m, { id, name, grinder, temperature, aroma }) {
     liste.push(entree);
   }
   m.store.setMeta("beanPresets", liste);
-  L("sys", `configuration de grains ${i >= 0 ? "modifiée" : "mémorisée"} : « ${entree.name || "sans nom"} » mouture ${entree.grinder}, temp ${entree.temperature}, arôme ${entree.aroma}`, m);
+  L("sys", `configuration de grains ${i >= 0 ? "modifiée" : "mémorisée"} : « ${entree.name || "sans nom"} » mouture ${entree.grinder}, temp ${entree.temperature}, arôme ${entree.aroma}${entree.roast === null ? "" : `, torréfaction ${entree.roast}`}`, m);
   return entree;
+}
+
+/**
+ * **Le visuel d'un emplacement de la machine** — torréfaction et photo, gardés par nous.
+ *
+ * La machine ne mémorise ni l'une ni l'autre : sa trame `0xBA` porte un nom et trois réglages, rien
+ * de plus. Ces deux informations sont donc les nôtres, et elles se rangent comme les configurations
+ * mémorisées : la torréfaction dans `meta` (un entier par emplacement), la photo dans la table
+ * `bean_images`.
+ *
+ * ⚠️ **`bean_images` est indexée par une CHAÎNE, et on y ouvre un second espace de noms.** Les
+ * configurations frappent `b1`, `b2`… ; les emplacements prennent `s1`…`s6`. Le préfixe est ce qui
+ * garantit qu'un `b3` et un `s3` ne se marchent pas dessus, et il évite une version de schéma pour
+ * une colonne. La table n'en sait rien et n'a pas à en savoir : elle range des octets sous une clé.
+ *
+ * ⚠️ **Le visuel suit l'INDEX, pas le grain.** Changer le grain de l'emplacement 3 sur la machine
+ * laisse le visuel de l'ancien : rien ne nous prévient d'un renommage fait sur l'appareil, et
+ * deviner qu'un nom différent veut dire « autre paquet » effacerait la photo de qui corrige une
+ * faute de frappe. L'interface le dit plutôt que de le corriger.
+ */
+const ID_VISUEL_EMPLACEMENT = (index) => `s${Number(index)}`;
+
+/**
+ * Les emplacements de la machine **avec notre visuel** — ce que servent `/api/beanadapt` et
+ * l'import cloud.
+ *
+ * Extrait de `/api/beanadapt` quand l'import a eu besoin de rendre la même liste : deux
+ * constructions de la même vue auraient divergé sur le champ qui compte ici, `imageAt`, celui dont
+ * dépend l'URL de la vignette. Une photo importée que la liste ne signale pas ne s'afficherait
+ * jamais, et rien ne dirait pourquoi.
+ */
+function vueBeansMachine(m) {
+  const beanSystems = m.store.machineView().beanSystems ?? {};
+  /* Deux lectures locales — une clé de `meta`, une requête de dates — faites une fois pour toute
+     la liste plutôt qu'une par emplacement. */
+  const roasts = beanRoasts(m);
+  const dates = m.store.beanImageDates();
+  return Object.entries(beanSystems).map(([index, bs]) => ({
+    index: Number(index),
+    name: bs.name,
+    grinder: bs.grinder,
+    temperature: bs.temperature,
+    aroma: bs.aroma,
+    at: bs.at,
+    visible: bs.visible ?? null,
+    active: bs.active ?? null,
+    // L'index 0 est l'entrée « Bean Adapt (ON/OFF) », pas une configuration de café.
+    isToggle: Number(index) === 0,
+    // Nos deux informations à nous, que la machine ne connaît pas. Voir `ID_VISUEL_EMPLACEMENT`.
+    roast: roasts[String(index)] ?? null,
+    imageAt: dates[ID_VISUEL_EMPLACEMENT(index)] ?? null,
+  }));
+}
+
+/** Les torréfactions par emplacement : `{ "1": 3, … }`, jamais `null` dans la table. */
+function beanRoasts(m) {
+  const o = m.store.getMeta("beanRoasts");
+  return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+}
+
+/**
+ * Pose ou retire la torréfaction d'un emplacement. `null` **supprime la clé** au lieu de ranger un
+ * `null` : une entrée qui vaut « rien » est indistinguable d'une absence à la lecture, et les
+ * garder ferait grossir `meta` d'autant d'emplacements qu'on aura touchés puis annulés.
+ */
+function setBeanRoast(m, index, roast) {
+  const o = beanRoasts(m);
+  const cle = String(Number(index));
+  if (roast === null) delete o[cle];
+  else o[cle] = roast;
+  m.store.setMeta("beanRoasts", o);
 }
 
 function deleteBeanPreset(m, id) {
@@ -4873,19 +5043,9 @@ async function handleApi(req, res) {
   }
 
   if (url === "/api/beanadapt" && req.method === "GET") {
-    const store = m.store.machineView();
-    const beans = Object.entries(store.beanSystems ?? {}).map(([index, bs]) => ({
-      index: Number(index),
-      name: bs.name,
-      grinder: bs.grinder,
-      temperature: bs.temperature,
-      aroma: bs.aroma,
-      at: bs.at,
-      visible: bs.visible ?? null,
-      active: bs.active ?? null,
-      // L'index 0 est l'entrée « Bean Adapt (ON/OFF) », pas une configuration de café.
-      isToggle: Number(index) === 0,
-    }));
+    /* Le visuel de chaque emplacement voyage AVEC la liste : la date joue le rôle de version dans
+       l'URL de la vignette, exactement comme pour les configurations mémorisées. */
+    const beans = vueBeansMachine(m);
     return raw(res, JSON.stringify({
       beans,
       // La bibliothèque locale, servie avec les grains de la machine : la page les montre côte à
@@ -4947,6 +5107,13 @@ async function handleApi(req, res) {
     if (!(grinder >= GRINDER_MIN && grinder <= GRINDER_MAX)) return raw(res, JSON.stringify({ error: `mouture hors bornes (${GRINDER_MIN}–${GRINDER_MAX})` }), 400);
     if (!(aroma >= AROMA_MIN && aroma <= AROMA_MAX)) return raw(res, JSON.stringify({ error: `arôme hors bornes (${AROMA_MIN}–${AROMA_MAX})` }), 400);
     if (!(temperature >= TEMPERATURE_MIN && temperature <= TEMPERATURE_MAX)) return raw(res, JSON.stringify({ error: `température hors bornes (${TEMPERATURE_MIN}–${TEMPERATURE_MAX})` }), 400);
+    /* La torréfaction est validée contre la MÊME liste que le rail de l'interface, celle de
+       `image-grains.mjs`. Un niveau que la table d'images ne nomme pas s'enregistrerait sans
+       erreur et n'afficherait aucun visuel — une fiche muette sans cause visible. */
+    const roast = b.roast === undefined ? null : b.roast;
+    if (!torrefactionValide(roast)) {
+      return raw(res, JSON.stringify({ error: `torréfaction inconnue (attendu ${TORREFACTIONS.join(", ")} ou aucune)` }), 400);
+    }
     /**
      * L'image, s'il y en a une, est décodée **avant** d'écrire quoi que ce soit.
      *
@@ -4966,7 +5133,7 @@ async function handleApi(req, res) {
         return raw(res, JSON.stringify({ error: e.message, maxBytes: IMAGE_TAILLE_MAX }), 400);
       }
     }
-    const entree = putBeanPreset(m, { id: typeof b.id === "string" ? b.id : null, name: b.name, grinder, temperature, aroma });
+    const entree = putBeanPreset(m, { id: typeof b.id === "string" ? b.id : null, name: b.name, grinder, temperature, aroma, roast });
     if (image) {
       m.store.putBeanImage(entree.id, image.mime, image.bytes);
       L("sys", `image de la configuration de grains « ${entree.name || "sans nom"} » enregistrée (${image.mime}, ${Math.round(image.bytes.length / 1024)} kio)`, m);
@@ -4980,6 +5147,124 @@ async function handleApi(req, res) {
     const id = new URL(req.url, "http://x").searchParams.get("id");
     const removed = deleteBeanPreset(m, String(id ?? ""));
     return raw(res, JSON.stringify({ removed, presets: vueBeanPresets(m) }));
+  }
+
+  /**
+   * **Le visuel d'un emplacement de la machine** — photo et torréfaction. Voir
+   * `ID_VISUEL_EMPLACEMENT` pour le pourquoi et pour l'espace de noms.
+   *
+   * **Rien ne part vers la machine par ces deux routes**, et c'est la raison pour laquelle elles
+   * existent au lieu d'un champ de plus dans `/api/beanadapt/save` : cette dernière écrit un profil
+   * dans l'appareil, geste physique et persistant. Mêler une préférence d'affichage locale à une
+   * écriture machine ferait d'un changement de photo une opération à confirmer, et d'une écriture
+   * machine quelque chose qui a l'air anodin. Deux destinations, deux routes.
+   */
+  if (url === "/api/beans/visual/image" && req.method === "GET") {
+    const index = Number(new URL(req.url, "http://x").searchParams.get("index"));
+    const img = Number.isInteger(index) ? m.store.getBeanImage(ID_VISUEL_EMPLACEMENT(index)) : null;
+    // 404 franc, comme pour une configuration : un emplacement sans photo est un cas normal.
+    if (!img) return raw(res, JSON.stringify({ error: "aucune image pour cet emplacement" }), 404);
+    /* `ETag` sur la date d'écriture et revalidation à chaque affichage : l'index ne change pas
+       quand on remplace la photo, donc une durée de vie resservirait l'ancienne. Le 304 rend la
+       revalidation gratuite. Identique à `/api/beanpresets/image`, à la clé près. */
+    const etag = `"s${index}-${img.at}"`;
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { ETag: etag, "Cache-Control": "private, max-age=0, must-revalidate" });
+      return res.end();
+    }
+    return rawBin(res, Buffer.from(img.bytes), img.mime, {
+      ETag: etag,
+      "Cache-Control": "private, max-age=0, must-revalidate",
+    });
+  }
+
+  if (url === "/api/beans/visual" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const index = Number(b.index);
+    /* Les six emplacements, et pas l'index 0 : ce n'est pas un café mais l'interrupteur
+       « Bean Adapt (ON/OFF) », et lui donner une photo de paquet serait décrire un objet qui
+       n'existe pas. Borne haute à 6, ce que la machine expose. */
+    if (!Number.isInteger(index) || index < 1 || index > 6) {
+      return raw(res, JSON.stringify({ error: "emplacement hors bornes (1–6)" }), 400);
+    }
+    const roast = b.roast === undefined ? null : b.roast;
+    if (!torrefactionValide(roast)) {
+      return raw(res, JSON.stringify({ error: `torréfaction inconnue (attendu ${TORREFACTIONS.join(", ")} ou aucune)` }), 400);
+    }
+    /* Décoder avant d'écrire, même règle que pour une configuration : poser la torréfaction puis
+       refuser l'image laisserait un visuel à moitié changé, dont personne ne saurait l'état. */
+    let image = null;
+    if (b.image !== undefined && b.image !== null) {
+      try {
+        image = decoderDataUrl(b.image);
+      } catch (e) {
+        return raw(res, JSON.stringify({ error: e.message, maxBytes: IMAGE_TAILLE_MAX }), 400);
+      }
+    }
+    const cle = ID_VISUEL_EMPLACEMENT(index);
+    setBeanRoast(m, index, roast);
+    let photo = "inchangée";
+    if (image) {
+      m.store.putBeanImage(cle, image.mime, image.bytes);
+      photo = `remplacée (${image.mime}, ${Math.round(image.bytes.length / 1024)} kio)`;
+    } else if (b.image === null && m.store.deleteBeanImage(cle)) {
+      photo = "retirée";
+    }
+    L("sys", `visuel de l'emplacement de grains ${index} : torréfaction ${roast ?? "aucune"}, photo ${photo}`, m);
+    return raw(res, JSON.stringify({
+      ok: true,
+      index,
+      roast,
+      imageAt: m.store.beanImageDates()[cle] ?? null,
+    }));
+  }
+
+  /**
+   * **Import des photos que l'app officielle a laissées dans le cloud.** Voir
+   * `importerPhotosCloud` pour la clé du datum et ce que l'import écrase.
+   *
+   * ⚠️ **Le seul endroit de cette page qui sorte du réseau local.** Ce serveur ne parle au cloud
+   * que par trois chemins, tous demandés explicitement : la clé LAN, l'OTA, la session. Celui-ci
+   * est le quatrième, et il obéit à la même règle — c'est un `POST`, donc un geste, jamais un effet
+   * de bord d'un affichage de page.
+   *
+   * `index` restreint l'import à un emplacement ; sans lui, les six y passent. Même cascade de
+   * jeton que `/api/ota` : jeton en mémoire, session mémorisée, identifiants de la requête,
+   * `AYLA_TOKEN`.
+   */
+  if (url === "/api/beans/visual/import" && req.method === "POST") {
+    const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    let indices;
+    if (b.index === undefined || b.index === null) {
+      // Les six emplacements de café. L'index 0 est l'interrupteur « Bean Adapt (ON/OFF) » : il n'a
+      // pas de paquet, et l'app ne lui associe pas de photo non plus (`id == 0` la renvoie sur son
+      // illustration par défaut sans jamais lire de datum).
+      indices = [1, 2, 3, 4, 5, 6];
+    } else {
+      const index = Number(b.index);
+      if (!Number.isInteger(index) || index < 1 || index > 6) {
+        return raw(res, JSON.stringify({ error: "emplacement hors bornes (1–6)" }), 400);
+      }
+      indices = [index];
+    }
+    if (!(await resolveDsn(m, { force: true }))) {
+      return raw(res, JSON.stringify({ error: `DSN inconnu, et les photos sont rangées chez Ayla sous ce numéro : ${raisonDsnManquant(m)}`, needsDsn: true }), 409);
+    }
+    const email = typeof b.email === "string" ? b.email.trim() : "";
+    const password = typeof b.password === "string" ? b.password : "";
+    const jwt = typeof b.jwt === "string" && b.jwt.trim() ? b.jwt.trim() : null;
+    try {
+      const token = await aylaToken(m, { email, password, jwt, remember: b.remember === true });
+      if (!token) {
+        return raw(res, JSON.stringify({ error: "identifiants du compte De'Longhi requis : ces photos ne vivent que côté cloud, et aucune session n'est mémorisée.", needsCredentials: true }), 400);
+      }
+      const releves = await importerPhotosCloud(m, token, indices);
+      return raw(res, JSON.stringify({ ok: true, releves, beans: vueBeansMachine(m) }));
+    } catch (e) {
+      // Le message vient de Gigya/Ayla ou du DSN manquant, et ne contient aucun identifiant.
+      L("sys", `import des photos de grains impossible (${e.message})`, m);
+      return raw(res, JSON.stringify({ error: e.message }), 502);
+    }
   }
 
   // Simulation : ce que la règle donnerait, sans rien envoyer à la machine.

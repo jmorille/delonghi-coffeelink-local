@@ -830,6 +830,7 @@
      la touche s'enfonce d'1 px      elle ne descend plus          l'inversion du biseau
      la poignée du basculeur file    elle saute à sa position      la teinte de la piste
      la jauge se remplit             elle affiche la valeur        (la valeur EST la donnée)
+     la carte de grain fait un tour  les faces s'échangent net     le changement de hauteur
      les témoins changent de teinte  inchangé                      une teinte ne se déplace pas
 
    Chaque ligne est écrite ci-dessous, nommément. C'est plus long qu'un `*`, et c'est le but : on
@@ -876,6 +877,19 @@
         de 28 à 68 en une image. Mais une barre qui saute reste juste — c'est la donnée — alors
         qu'une barre qui glisse sur 400 ms est un mouvement, et il a été refusé. */
   .jaugeBarre {
+    transition: none;
+  }
+
+  /* 5. **La carte de grain ne tourne plus : les deux faces s'échangent net.** C'est le seul
+        mouvement de ce monde qui déplace un objet dans la profondeur, donc le premier candidat au
+        retrait — et il ne coûte rien, parce que ce que la rotation raconte (« c'est la même carte,
+        vue de l'autre côté ») est déjà dit par le fait qu'elle reste à sa place dans la grille.
+
+        ⚠️ **La TRANSFORMATION part, la HAUTEUR reste.** Le dos fait deux à trois fois l'affiche : la
+        supprimer aussi ferait sauter toute la grille d'un coup, ce qui est un mouvement bien plus
+        grand que celui qu'on vient de retirer. Une hauteur qui s'ajuste n'est pas un déplacement
+        d'objet — c'est la même raison qui garde le fondu du voile en 1. */
+  .grainRotor {
     transition: none;
   }
 }

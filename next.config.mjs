@@ -8,6 +8,13 @@ const { version: VERSION_IMAGES } = JSON.parse(
   readFileSync(new URL("./src/lib/beverage-images.json", import.meta.url), "utf8"),
 );
 
+/* Idem pour les visuels de grains, écrits par `scripts/import-bean-images.mjs` et posés par
+   `VignetteGrains.tsx`. Deux jeux, deux empreintes : ils sont régénérés séparément, et une
+   empreinte commune ferait invalider les 58 dessins de boisson parce qu'un grain a changé. */
+const { version: VERSION_GRAINS } = JSON.parse(
+  readFileSync(new URL("./src/lib/bean-images.json", import.meta.url), "utf8"),
+);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // La machine parle en HTTP 1.1 simple et attend des chemins littéraux type
@@ -42,6 +49,16 @@ const nextConfig = {
       {
         source: "/boissons/:fichier*",
         has: [{ type: "query", key: "v", value: VERSION_IMAGES }],
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      /* Les visuels de grains, même règle et mêmes raisons. Ils sont moins nombreux — sept — mais
+         arrivent dans les mêmes conditions : `/api/beanadapt` livre la liste, donc aucune `<img>`
+         n'est dans le HTML servi, et le rail de torréfaction en crée quatre d'un coup par carte
+         ouverte. Le `?v=` compare ici encore la VALEUR : promettre un an à une empreinte qu'on ne
+         reconnaît pas serait promettre pour un visuel qu'on n'a pas. */
+      {
+        source: "/grains/:fichier*",
+        has: [{ type: "query", key: "v", value: VERSION_GRAINS }],
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
       },
     ];

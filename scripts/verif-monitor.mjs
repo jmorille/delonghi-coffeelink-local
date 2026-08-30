@@ -243,6 +243,10 @@ const charger = (nom) =>
 // L'invariant qui rend la regle ci-dessus sure : sur TOUTES les captures, l'etape 0 n'apparait
 // qu'au repos. Si une preparation utilisait un jour l'etape 0 comme etape de travail, la barre
 // disparaitrait en plein milieu — et cette assertion le dirait avant l'utilisateur.
+//
+// ⚠️ La reciproque est enoncee SOUS UNE FONCTION EN COURS, et le sous-entendu a coute cher : une
+// etape non nulle sous la fonction 0 n'est PAS une preparation (voir `veille-alarme.json` et le
+// bloc dedie plus bas). Ecrite sans ce filtre, l'assertion affirmait exactement le defaut.
 for (const f of readdirSync(CAPTURES)) {
   const t = charger(f.replace(/\.json$/, ""));
   ok(
@@ -250,8 +254,12 @@ for (const f of readdirSync(CAPTURES)) {
     t.filter((x) => x.etape === 0).every((x) => x.auRepos === true && x.pourcent === null),
   );
   ok(
-    `${f} : toute étape non nulle est une préparation`,
-    t.filter((x) => x.etape != null && x.etape !== 0).every((x) => x.auRepos === false),
+    `${f} : toute étape non nulle SOUS UNE FONCTION EN COURS est une préparation`,
+    t.filter((x) => x.etape != null && x.etape !== 0 && x.fonction !== 0).every((x) => x.auRepos === false),
+  );
+  ok(
+    `${f} : la fonction 0 est toujours lue au repos`,
+    t.filter((x) => x.fonction === 0).every((x) => x.auRepos === true && x.pourcent === null),
   );
 }
 
@@ -271,6 +279,34 @@ for (const f of readdirSync(CAPTURES)) {
   ok("veille : une préparation y est pourtant visible", prepa.length > 0);
   ok("veille : elle atteint 100 %", prepa.some((x) => x.pourcent === 100));
   ok("veille : elle se termine au repos", t[t.length - 1].auRepos === true);
+}
+
+// ── …et une machine EN VEILLE garde les RESTES de la derniere dans les octets 10-11 ──────────
+// Le revers exact du bloc precedent, releve en direct le 2026-08-27 (reservoir vide, alarme
+// `EMPTY_WATER_TANK`) : `etat=0x04, f=0, e=2, %=100`. L'etape n'est PAS nulle, donc la regle
+// « repos = etape 0 » concluait « preparation en cours — 100 % » sur une machine endormie. Et comme
+// `auRepos === false` fait exception a l'octet d'etat sur l'accueil, l'interrupteur s'affichait
+// ALLUME deux lignes au-dessus de « En veille » : la meme carte se contredisait.
+//
+// C'est la FONCTION qui tranche, et l'assertion finale est ce qui rend la regle sure plutot que
+// commode : la fonction 0 n'apparait dans aucune trame de preparation reelle.
+{
+  const t = charger("veille-alarme");
+  ok("veille+alarme : la trame porte bien état=0x04", t[0].stateByte === 0x04, String(t[0].stateByte));
+  ok("veille+alarme : la fonction est nulle", t[0].fonction === 0, String(t[0].fonction));
+  ok("veille+alarme : l'étape ne l'est PAS — c'est tout le piège", t[0].etape === 2, String(t[0].etape));
+  ok("veille+alarme : l'octet de pourcentage vaut pourtant 100", t[0].raw.split(" ")[11] === "64");
+  ok("veille+alarme : elle est néanmoins lue AU REPOS", t[0].auRepos === true);
+  ok("veille+alarme : donc aucun pourcentage n'est publié", t[0].pourcent === null, String(t[0].pourcent));
+  ok("veille+alarme : et aucune étape à nommer", t[0].etapeCle === null, String(t[0].etapeCle));
+  // L'alarme est bien la : la trame n'est pas « vide », elle est au repos ET en defaut.
+  ok("veille+alarme : l'alarme de réservoir vide est levée", t[0].alarms.some((a) => a.name === "EMPTY_WATER_TANK"));
+  ok(
+    "aucune préparation enregistrée ne tourne sous la fonction 0",
+    ["espresso", "espresso-macchiato", "lait-chaud", "espresso-veille"]
+      .flatMap((n) => charger(n))
+      .every((x) => x.fonction !== 0),
+  );
 }
 
 // ── Le seuil de fraîcheur de la progression doit tenir la cadence RÉELLE ─────────────────────
