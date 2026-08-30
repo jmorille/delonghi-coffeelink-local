@@ -44,16 +44,46 @@
  */
 /**
  * ⚠️ **`TWO` est DÉCLARÉE dans `trame-bornes.mjs` et seulement ré-exportée ici.** Ce fichier reste le
- * référentiel ECAM, mais il exécute un `Buffer.from` au chargement (la constante `0x37` plus bas), ce
- * qui l'interdit côté navigateur — et `/recipes` a besoin de cette table pour composer une trame de
- * bornes dans la page. Le déplacement garde **une seule déclaration** ; l'alternative était un
- * quatrième exemplaire d'une table de protocole, ce que ce dépôt a déjà payé une fois.
+ * référentiel ECAM ; `/recipes` a besoin de cette table pour composer une trame de bornes dans la
+ * page. Le déplacement garde **une seule déclaration** ; l'alternative était un quatrième
+ * exemplaire d'une table de protocole, ce que ce dépôt a déjà payé une fois.
+ *
+ * ⚠️ **Ce module ne connaît plus `Buffer`, et c'est ce qui le rend utilisable dans le navigateur.**
+ * Il en exécutait un au CHARGEMENT (la constante `0x37`, plus bas), donc l'importer depuis une page
+ * jetait avant la première ligne de rendu : `/pilotage` s'affichait vide, sans que rien ne dise
+ * pourquoi. Le tiroir du journal décode une trame côté client — et il doit le faire avec CETTE
+ * table, pas une copie. Donc `Uint8Array` et `atob`, disponibles des deux côtés ; le serveur, lui,
+ * garde ses `Buffer` partout ailleurs, ils s'indexent pareil.
  */
 import { TWO } from "./trame-bornes.mjs";
 export { TWO };
 
 /**
- * @param {Buffer} t     la trame ECAM, **sans** les 4 octets d'horodatage
+ * Le base64 en octets, sans `Buffer`. `atob` est un global du navigateur ET de Node depuis la 16.
+ *
+ * Ne lève jamais : une valeur qui n'est pas du base64 rend un tableau vide, ce que les appelants
+ * traitent déjà comme « pas une trame ». Lever ici ferait tomber une ligne de journal entière pour
+ * une valeur mal formée — or c'est précisément celle qu'on veut voir.
+ */
+export function octetsDeB64(v) {
+  try {
+    const bin = atob(String(v ?? ""));
+    const o = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i);
+    return o;
+  } catch {
+    return new Uint8Array(0);
+  }
+}
+
+const octetsDeHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
+/** L'hexadécimal d'une suite d'octets. Remplace `Buffer.prototype.toString("hex")`. */
+export const enHex = (o) => [...o].map((x) => x.toString(16).padStart(2, "0")).join("");
+/** Remplace `Buffer.prototype.equals` — `Uint8Array` n'en a pas. */
+const memesOctets = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * @param {Uint8Array} t la trame ECAM, **sans** les 4 octets d'horodatage
  * @param {object} o
  * @param {(id:number)=>string} o.boisson  le nom d'une boisson pour ce modèle et cette machine
  * @param {(addr:number)=>string} o.reglage  le nom d'un réglage machine
@@ -204,7 +234,7 @@ export function octetsEcam(valeur) {
   // donc la fusion des sélections de profil répétées cessait d'opérer par la même occasion.
   const v = String(valeur ?? "").replace(/\s+/g, "");
   if (!v || v.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v)) return null;
-  const buf = Buffer.from(v, "base64");
+  const buf = octetsDeB64(v);
   if (buf.length < 4 || (buf[0] !== 0x0d && buf[0] !== 0xd0)) return null;
   return buf;
 }
@@ -233,7 +263,7 @@ export function octetsEcam(valeur) {
  */
 export const CONSTANTES_NON_ECAM = [
   {
-    octets: Buffer.from("45da378834ebaffffffa9381", "hex"),
+    octets: octetsDeHex("45da378834ebaffffffa9381"),
     nom: "constante d'ouverture de session (classic) — p097j6.d.s0()",
   },
 ];
@@ -241,7 +271,7 @@ export const CONSTANTES_NON_ECAM = [
 /** La constante connue dont `valeur` porte le préfixe, ou `null`. */
 export function constanteConnue(trame) {
   for (const c of CONSTANTES_NON_ECAM) {
-    if (trame.length >= c.octets.length && trame.subarray(0, c.octets.length).equals(c.octets)) return c;
+    if (trame.length >= c.octets.length && memesOctets(trame.subarray(0, c.octets.length), c.octets)) return c;
   }
   return null;
 }
@@ -250,7 +280,7 @@ export function opTrame(ecamB64) {
   const buf = octetsEcam(ecamB64);
   // Une valeur qui n'est pas une trame le DIT, au lieu de se voir attribuer une commande. Elle
   // garde ses octets tels quels — c'est elle, justement, qu'on voudra examiner.
-  if (!buf) return { cmd: null, op: null, trame: Buffer.from(String(ecamB64 ?? ""), "base64"), nonTrame: true };
+  if (!buf) return { cmd: null, op: null, trame: octetsDeB64(ecamB64), nonTrame: true };
   const trame = buf.subarray(0, Math.max(0, buf.length - 4));
   const cmd = trame[2];
   // `0x83` : l'octet 5 porte le mode, et c'est lui qui dit ce que la commande fait vraiment.
@@ -297,7 +327,7 @@ export function describeFrame(ecamB64, { octets = true } = {}) {
     // (ce ne sont des horodatages que dans une trame), et le base64 est joint parce que c'est ce
     // qui se recolle dans un test — c'est une valeur qu'on relaie à une VRAIE cafetière.
     if (nonTrame) {
-      const brut = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+      const brut = enHex(trame).replace(/(..)/g, "$1 ").trim();
       // Connue : on la nomme, en disant qu'elle n'est pas une trame — les octets restent, ils
       // sont la seule chose qu'on sache vraiment d'elle.
       const connue = constanteConnue(trame);
@@ -308,7 +338,7 @@ export function describeFrame(ecamB64, { octets = true } = {}) {
     // Une commande inconnue garde ses octets même en forme courte : sans eux la ligne ne dit
     // rien du tout, alors que c'est justement celle qu'on veut pouvoir analyser.
     if (!octets && op) return `${nom} (${hexCmd(cmd)})`;
-    const hex = trame.toString("hex").replace(/(..)/g, "$1 ").trim();
+    const hex = enHex(trame).replace(/(..)/g, "$1 ").trim();
     return `${nom} (${hexCmd(cmd)}) · trame ${hex}`;
   } catch {
     return "trame illisible";

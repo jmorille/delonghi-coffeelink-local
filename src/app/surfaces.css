@@ -520,15 +520,12 @@ label { display: block; font-size: var(--t-petit); color: var(--encre-douce); ma
 [data-slot="table"] { font-size: var(--t-petit); line-height: var(--lead-dense); }
 [data-slot="table-head"], [data-slot="table-cell"] { padding: 6px 8px; text-align: left; }
 [data-slot="table-row"] { border-bottom: 1px solid var(--rule); }
-.log { font-family: var(--pile-mono); font-size: var(--t-mini); line-height: var(--lead-dense); max-height: 260px; overflow: auto; }
-/* Les lignes du journal portent maintenant la trame ECAM : sans repli, une trame de 52 octets
-   obligerait a faire defiler horizontalement pour lire une seule ligne. */
-.log > div { overflow-wrap: anywhere; }
-/* `--accent-2` et `--accent` sont des tons de SURFACE : en texte sur une carte blanche ils
-   tombaient à 2,58:1 et 2,92:1. Les tons de texte sont calculés pour ça (6,41:1 et 6,28:1). */
-.log .in { color: var(--ok-text); }
-.log .out { color: var(--accent-text); }
-.log .sys { color: var(--encre-douce); }
+/* **`.log` ne definit plus « une sortie de terminal ».** Elle habillait la carte entiere en chasse
+   fixe et lui posait un plafond de 260 px : c'etait exactement le rendu que ce lot remplace. Il ne
+   lui reste qu'a ouvrir les bords, pour que les filets de la grille aillent d'un cote a l'autre du
+   cadre — la matiere est passee sur `.journal*`, plus bas, et le defilement sur la grille seule,
+   pour que la barre de filtres ne parte pas avec ses propres resultats. */
+.log { padding-left: 0; padding-right: 0; }
 /* **`.mono` désigne un identifiant, jamais une mesure ni une phrase.** Il servait 81 fois et
    couvrait trois emplois : un identifiant qu'on lit caractère par caractère (DSN, hôte, nom de
    propriété Ayla, trame hexadécimale) — le bon ; une colonne de chiffres, où l'alignement était le
@@ -2004,3 +2001,245 @@ button.photoAffiche:not([data-slot]):disabled { cursor: not-allowed; }
 }
 .photoZoom { display: flex; align-items: center; gap: var(--s-3); }
 .photoZoom > [data-slot="slider"] { flex: 1 1 8rem; }
+
+/* ═══ Le journal ══════════════════════════════════════════════════════════════════════════════
+   **Une mesure gravee sur la facade, pas une sortie de terminal.**
+
+   Le vocabulaire du boitier existait deja en jetons et n'attendait que ca : `--gravure` pour les
+   filets, `--suivi-legende` et `--t-legende` pour l'en-tete serigraphie, `--creux` pour le champ
+   en retrait. Rien ici n'invente une grammaire — la grille reprend celle des plaques.
+
+   ⚠️ **Deux emplois de la chasse fixe, et un seul est legitime.** Avant, la carte entiere etait en
+   mono : c'etait le costume « technique », precisement ce que le plancher de qualite refuse. Ici
+   elle ne couvre que ce qui est une mesure ou un identifiant — l'heure, les octets, le sujet
+   (`d251_beansystem_1` se lit caractere par caractere), le compteur. Le resume, lui, est de la
+   prose francaise et reste dans la police du produit. C'est cette bascule qui fait la difference
+   entre « ca ressemble a un terminal » et « ca se lit comme un tableau de bord ».
+
+   ⚠️ **Les colonnes sont declarees UNE fois, sur `.journal`.** L'en-tete et les lignes lisent la
+   meme variable : c'est la seule facon qu'un ajout de colonne ne desaligne pas l'un des deux. */
+.journal {
+  /* ⚠️ **La derniere colonne est DECLAREE, jamais `auto`.** L'en-tete et les lignes sont deux
+     grilles distinctes : `auto` se dimensionne alors sur le contenu de CHACUNE, et la cellule de
+     fin — vide dans l'en-tete, un chevron dans une ligne — donnait 0 px d'un cote et 14 px de
+     l'autre. Les quatre premieres colonnes restaient alignees, la cinquieme decalait le resume de
+     dix pixels d'une rangee a l'autre. Mesure prise au navigateur, dans `verif-surfaces.mjs`.
+
+     La colonne du SENS fait 2,6 rem et non la largeur de son glyphe : l'en-tete y ecrit « SENS »,
+     en capitales espacees de `--suivi-legende`, ce qui vaut ~36 px. Dimensionnee sur l'icone, elle
+     donnait « SENSSUJET » colle dans la serigraphie. */
+  --journal-cols: 4.9rem 2.6rem minmax(0, 11rem) minmax(0, 1fr) 2.6rem;
+  --journal-marge: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ── La barre de filtres, hors de la zone qui defile ─────────────────────────────────────────── */
+.journalFiltres {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--s-2) var(--s-3);
+  padding: 0 var(--journal-marge) var(--s-3);
+  border-bottom: 1px solid var(--rule);
+}
+/* Les trois sens forment UN objet — un segment unique, pas trois boutons voisins : c'est ce qui
+   dit qu'ils se combinent au lieu de s'exclure. Filet interieur plutot qu'ecart, comme les
+   groupes de commande du boitier. */
+.journalDirs {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-touche);
+  overflow: hidden;
+  background: var(--creux);
+}
+/* `button:not([data-slot])` en haut de ce fichier vaut (0,1,1) et habille tout `<button>` nu du
+   depot. Sans le `:not()` ici, cette bascule heriterait de son rembourrage de 10/14 px et de son
+   relief : trois grosses touches la ou il faut trois temoins. Voir la meme trappe sur
+   `.photoAffiche`. */
+button.journalDir:not([data-slot]) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 5px 9px;
+  font-size: var(--t-mini);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--encre-douce);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transition: background .1s, color .1s;
+}
+button.journalDir:not([data-slot]) + button.journalDir:not([data-slot]) { border-left: 1px solid var(--rule); }
+button.journalDir:not([data-slot]):hover { background: var(--releve); color: var(--encre); }
+/* Un filtre ACTIF est un temoin allume : l'ambre est la couleur du « choisi » dans ce produit —
+   jamais celle de l'importance. Voir le remappage de `--primary` dans `globals.css`. */
+button.journalDir:not([data-slot])[aria-pressed="true"] {
+  background: var(--ambre-verre);
+  color: var(--accent-text);
+  box-shadow: inset 0 -2px 0 0 var(--ambre);
+}
+.journalChamp { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.journalChamp > span {
+  font-size: var(--t-legende);
+  text-transform: uppercase;
+  letter-spacing: var(--suivi-legende);
+  color: var(--encre-douce);
+}
+.journalRecherche { flex: 1 1 11rem; min-width: 0; }
+.journalRecherche input { width: 100%; }
+/* Pousse le compte a droite quand la place existe, sous les filtres quand elle manque. */
+.journalCompte {
+  margin: 0 0 2px auto;
+  font-size: var(--t-mini);
+  color: var(--encre-douce);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── La grille ──────────────────────────────────────────────────────────────────────────────── */
+.journalGrille { max-height: 340px; overflow: auto; overscroll-behavior: contain; }
+/* La serigraphie : capitales espacees, comme les reperes graves d'une facade. Elle reste posee
+   pendant le defilement, sinon la troisieme colonne n'a plus de nom des la dixieme ligne. */
+.journalEntete {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: var(--journal-cols);
+  gap: var(--s-2);
+  padding: var(--s-2) var(--journal-marge);
+  background: var(--boitier);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--t-legende);
+  text-transform: uppercase;
+  letter-spacing: var(--suivi-legende);
+  color: var(--encre-douce);
+}
+.journalLignes { list-style: none; margin: 0; padding: 0; }
+.journalLigne + .journalLigne { border-top: 1px solid color-mix(in srgb, var(--rule) 55%, transparent); }
+/* Le corps de ligne EST la grille : le bouton doit donc porter le meme gabarit que l'en-tete, ce
+   qu'il ne peut faire qu'en etant lui-meme la grille. `display: contents` l'aurait permis aussi,
+   au prix de la zone cliquable — un bouton sans boite ne se survole pas.
+
+   ⚠️ **Le rembourrage est declare en VARIABLE, et applique DEUX fois.** `button:not([data-slot])`,
+   en haut de ce fichier, vaut (0,1,1) et pose `padding: 10px 14px` sur tout `<button>` nu : une
+   classe simple perd, en silence. Mesure au navigateur : la ligne sortait a 14 px de marge contre
+   16 px pour l'en-tete, donc 4 px de plus, donc une colonne de resume decalee d'une rangee a
+   l'autre. Une variable garde UNE valeur — la media query n'en change qu'une — et les deux regles
+   la lisent, celle du `<div>` fige comme celle du `<button>`. Meme trappe que `.photoAffiche`. */
+.journalBascule {
+  --journal-pad: var(--s-1) var(--journal-marge);
+  display: grid;
+  grid-template-columns: var(--journal-cols);
+  gap: var(--s-2);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--journal-pad);
+  text-align: left;
+}
+button.journalBascule:not([data-slot]) {
+  padding: var(--journal-pad);
+  /* ⚠️ **La taille et l'interligne ne sont PAS ici** — ils sont sur le composant, en utilitaires.
+     `globals.css` pose `font: inherit; line-height: 1.2` sur tout `<button>` dans la couche
+     `facade`, qui bat `surfaces` quelle que soit la specificite : les ecrire ici les ferait perdre
+     en silence. Voir `CORPS_LIGNE` dans `Journal.tsx`. */
+  font-weight: 400;
+  color: var(--text);
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  transition: background .1s;
+}
+button.journalBascule:not([data-slot]):hover { background: var(--releve); }
+button.journalBascule:not([data-slot]):active:not(:disabled) { transform: none; }
+button.journalBascule:not([data-slot]):focus-visible { outline-offset: -2px; }
+/* Une ligne sans trame n'a pas de tiroir : ni curseur, ni survol, ni tabulation. Le dire par
+   l'absence de bouton — et non par un bouton desactive — evite un arret de tabulation qui
+   n'ouvrirait rien. */
+.journalFige { cursor: default; }
+.journalLigne[data-ouvert] { background: var(--creux); }
+
+.journalHeure { font-family: var(--pile-mono); font-variant-numeric: tabular-nums; color: var(--encre-douce); }
+/* La couleur ne porte RIEN a elle seule : chaque sens a son glyphe (voir `entrant` / `sortant` /
+   `systeme` dans `icons.tsx`) et son mot en `sr-only`. Trois teintes proches sur un ecran de
+   tablette en plein jour, ou une capture en noir et blanc, ne laisseraient sinon rien du tout. */
+.journalDirCell { display: inline-flex; align-items: center; }
+.journalDirCell[data-dir="in"] { color: var(--ok-text); }
+.journalDirCell[data-dir="out"] { color: var(--accent-text); }
+.journalDirCell[data-dir="sys"] { color: var(--encre-douce); }
+/* Le sujet est un IDENTIFIANT — il se lit caractere par caractere et se compare d'une ligne a
+   l'autre. Coupe plutot que replie : c'est la colonne qui tient l'alignement de tout le bloc, et
+   sa valeur entiere est dans le tiroir. */
+.journalSujet {
+  font-family: var(--pile-mono);
+  color: var(--encre);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* L'identifiant de machine ou d'application : une colonne DANS la colonne, pas un prefixe de
+   sujet. C'est ce qui permet de suivre un telephone parmi trois. */
+.journalMachine {
+  display: inline-block;
+  margin-right: var(--s-1);
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-creux);
+  font-size: var(--t-legende);
+  color: var(--encre-douce);
+}
+/* De la prose francaise, donc la police du produit — pas la chasse fixe. */
+.journalResume {
+  font-family: inherit;
+  font-size: var(--t-petit);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.journalFin { display: inline-flex; align-items: center; gap: var(--s-2); justify-self: end; }
+/* Le compte de repetitions est une MESURE : chasse fixe, chiffres tabulaires, cadre a droite.
+   C'etait un suffixe de phrase (« … (×24) ») ; c'est un compteur. */
+.journalRepet {
+  font-family: var(--pile-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-legende);
+  color: var(--accent-text);
+  background: var(--ambre-verre);
+  border-radius: var(--r-creux);
+  padding: 0 4px;
+}
+.journalChevron { display: inline-flex; color: var(--encre-douce); transition: transform .12s ease-out; }
+.journalChevron[data-ouvert] { transform: rotate(180deg); }
+.journalVide { padding: var(--s-4) var(--journal-marge); margin: 0; }
+
+/* ── Le tiroir ──────────────────────────────────────────────────────────────────────────────── */
+.journalTiroir {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0 var(--s-5);
+  padding: 0 var(--journal-marge) var(--s-3);
+  border-top: 1px solid var(--rule);
+}
+.journalTiroir .etiquetteGroupe { margin-top: var(--s-3); }
+.journalTiroir .kv { font-size: var(--t-petit); }
+.journalHexa { display: flex; flex-direction: column; gap: 2px; font-family: var(--pile-mono); font-size: var(--t-mini); }
+.journalHexaRang { display: flex; gap: var(--s-2); font-variant-numeric: tabular-nums; }
+.journalOffset { color: var(--encre-douce); min-width: 2ch; }
+/* Les quatre derniers octets d'une trame sont l'horodatage ajoute a l'emission. Les cacher ferait
+   mentir la longueur ; les banaliser ferait chercher un argument la ou il n'y en a pas. */
+.journalOctetSuffixe { color: var(--encre-douce); opacity: .65; }
+
+/* ── Sous le pouce ──────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 40rem) {
+  /* Deux niveaux plutot que cinq colonnes : l'heure, le sens et le sujet gardent leur alignement
+     sur la premiere ligne — c'est lui qu'on parcourt — et le resume prend toute la largeur en
+     dessous. Sur 360 px, la colonne de resume valait sinon huit caracteres. */
+  .journal { --journal-cols: 4.9rem 2.6rem minmax(0, 1fr) 2.6rem; --journal-marge: var(--s-3); }
+  .journalEntete { display: none; }
+  /* La cible reste atteignable au doigt une fois la ligne repliee sur deux niveaux. Le rembourrage
+     passe par la variable : la regle du `<button>` la relit, donc les deux faces suivent. */
+  .journalBascule { grid-template-columns: var(--journal-cols); row-gap: 2px; --journal-pad: var(--s-2) var(--journal-marge); }
+  .journalResume { grid-column: 1 / -1; }
+}

@@ -1,8 +1,8 @@
 # Intégration continue : le projet n'a pas de suite de tests (les changements de protocole sont
 # validés en direct sur la vraie machine), donc la CI vérifie ce qu'elle peut vérifier sans
-# cafetière : les types, la syntaxe ET le lint des modules ESM, les quatre vérifications pures, le
-# catalogue de messages, le build Next, la base SQLite, et le fait que l'image Docker démarre et
-# répond.
+# cafetière : les types, la syntaxe ET le lint des modules ESM, les douze vérifications pures, le
+# catalogue de messages, le build Next, les surfaces dans un vrai navigateur (APRÈS le build, dont
+# elles dépendent), la base SQLite, et le fait que l'image Docker démarre et répond.
 name: CI
 
 on:
@@ -147,17 +147,6 @@ jobs:
       - name: Vérifier les contrastes des deux finitions
         run: node scripts/verif-contraste.mjs
 
-      # Les surfaces, dans un vrai navigateur — la seule chose que ni tsc, ni ESLint, ni les onze
-      # vérifications pures ne regardent. Il existe pour la migration vers shadcn : le piège de
-      # focus d'un <dialog>, la fermeture par Échap et l'échelle imprimée d'un curseur étaient des
-      # propriétés de la PLATEFORME et deviennent du code, donc des choses à prouver.
-      #
-      # `puppeteer-core` se branche sur le Chrome déjà présent sur le runner (pnpm-workspace.yaml
-      # refuse par principe les scripts d'installation tiers, et le paquet complet en télécharge
-      # 150 Mo). Sans Chrome, le script SAUTE en le disant plutôt que d'échouer.
-      - name: Vérifier les surfaces dans un navigateur
-        run: node scripts/verif-surfaces.mjs
-
       # L'empreinte des visuels lie quatre pièces — l'extracteur qui l'écrit, la table qui la
       # porte, la vignette qui la pose sur son URL, la configuration qui accorde `immutable` à
       # cette valeur et à elle seule. Chacune de ces ruptures est muette : le produit s'affiche à
@@ -174,10 +163,32 @@ jobs:
       - name: Vérifier le décodage du grain sélectionné
         run: node scripts/verif-beansync.mjs
 
+      # La photo d'un grain rapatriée du datum Ayla `BS<index>IMG` : le type est reniflé DANS les
+      # octets, jamais pris de ce que le nuage annonce, et l'index est celui de l'octet 4 de la
+      # trame `0xBA`. Se tromper d'index ne lève rien — il range la photo sous un autre grain.
+      - name: Vérifier le reniflage d'une photo de grain
+        run: node scripts/verif-datum-grains.mjs
+
       - name: Build
         run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: 1
+
+      # Les surfaces, dans un vrai navigateur — la seule chose que ni tsc, ni ESLint, ni les onze
+      # vérifications pures ne regardent. Il existe pour la migration vers shadcn : le piège de
+      # focus d'un <dialog>, la fermeture par Échap et l'échelle imprimée d'un curseur étaient des
+      # propriétés de la PLATEFORME et deviennent du code, donc des choses à prouver.
+      #
+      # `puppeteer-core` se branche sur le Chrome déjà présent sur le runner (pnpm-workspace.yaml
+      # refuse par principe les scripts d'installation tiers, et le paquet complet en télécharge
+      # 150 Mo). Sans Chrome, le script SAUTE en le disant plutôt que d'échouer.
+      #
+      # ⚠️ **Cette étape vient APRÈS le build, et c'est structurel.** Le script lève `server.mjs`
+      # en mode production : il sert `.next/`, pas les sources. Placé avec les vérifications pures
+      # — c'est là qu'il était — il s'arrêtait sur « Aucun build Next (.next/BUILD_ID absent) » et
+      # faisait rougir la CI sans qu'aucune surface ne soit en cause. Ne pas le remonter.
+      - name: Vérifier les surfaces dans un navigateur
+        run: node scripts/verif-surfaces.mjs
 
       # Vérifie que le stockage SQLite s'initialise et migre correctement, sans machine ni réseau.
       - name: Vérifier le stockage SQLite

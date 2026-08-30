@@ -234,9 +234,19 @@ async function semer(dir) {
   return cible;
 }
 
+/**
+ * La cle LAN de la base semee.
+ *
+ * Elle n'existe que pour que `fausse-machine.mjs` puisse ouvrir une session et pousser un monitor :
+ * c'est la seule facon d'obtenir une VRAIE trame au journal sans cafetiere, et donc de verifier le
+ * tiroir sur autre chose qu'une trame fabriquee par le test lui-meme. Seize octets quelconques —
+ * rien ici ne parle a un appareil reel.
+ */
+const CLE_LAN = "verifsurfaces000";
+
 function demarrer(dir) {
   const enfant = spawn(process.execPath, ["server.mjs"], {
-    env: { ...process.env, DATA_DIR: dir, SERVER_PORT: String(PORT) },
+    env: { ...process.env, DATA_DIR: dir, SERVER_PORT: String(PORT), LANIP_KEY: CLE_LAN },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let journal = "";
@@ -1114,6 +1124,227 @@ try {
       await page.close();
     });
   }
+  /* ───────────────────────────────────────────────────────────────────────────────────────────
+     LE JOURNAL — des données structurées, et un tiroir qui porte les octets
+     ───────────────────────────────────────────────────────────────────────────────────────────
+
+     **Ce qui ne se prouve qu'ici.** Le décodage d'une trame est déjà couvert par `verif-args.mjs`,
+     et le flux d'ajouts par le serveur lui-même. Reste ce dont seul un navigateur peut répondre :
+     que les colonnes s'alignent VRAIMENT — l'en-tête et les lignes lisent la même variable, donc
+     une seule des deux peut dériver en silence —, qu'un filtre qui ne rend rien le dise au lieu de
+     ressembler à une machine muette, qu'un seul tiroir soit ouvert à la fois, et qu'une ligne sans
+     trame n'ajoute aucun arrêt de tabulation.
+
+     La ligne à trame est fabriquée par `fausse-machine.mjs`, qui joue le rôle APPAREIL et pousse un
+     monitor inoffensif. C'est la seule façon d'obtenir une vraie trame sans cafetière : la
+     fabriquer à la main dans le test reviendrait à vérifier le test. */
+  console.log("\nLe journal — une ligne se lit, un tiroir porte la trame");
+
+  /** Pousse un monitor depuis une fausse machine, et attend que la ligne paraisse. */
+  const semerTrame = async () => {
+    await new Promise((resolve) => {
+      const p = spawn(process.execPath, [join(RACINE_DEPOT, "scripts", "fausse-machine.mjs"), "--serveur", `127.0.0.1:${PORT}`, "--cle", CLE_LAN], {
+        cwd: RACINE_DEPOT, stdio: "ignore",
+      });
+      p.on("exit", resolve);
+      p.on("error", resolve);
+    });
+    // La ligne passe par `sseTouch()`, regroupé sur 250 ms.
+    for (let i = 0; i < 40; i++) {
+      const r = await fetch(`${BASE}/api/journal`).then((x) => x.json()).catch(() => null);
+      if (r?.lignes?.some((l) => l.trame)) return true;
+      await new Promise((r2) => setTimeout(r2, 250));
+    }
+    return false;
+  };
+
+  const trameSemee = await semerTrame();
+
+  /**
+   * ⚠️ **`/pilotage` porte DEUX journaux** — celui de la machine et celui des applications, jumeaux
+   * et bâtis sur le même composant. Un sélecteur `.journal` nu attrape donc le premier venu, qui est
+   * celui des applications et qui peut être vide : les mesures partaient sur un bloc sans lignes, et
+   * « aucune ligne ne dit son sens » disait vrai pour la mauvaise raison. On ancre donc tout sur la
+   * section, par son titre.
+   */
+  const J = 'section[aria-labelledby="titre-journal"]';
+
+  const ouvrirJournal = async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/pilotage", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${J} .journalLigne`, { timeout: 10000 });
+    return page;
+  };
+
+  await test("les colonnes de l'en-tête et celles des lignes sont la MÊME grille", async () => {
+    const page = await ouvrirJournal();
+    const g = await page.evaluate((sel) => {
+      const j = document.querySelector(sel);
+      const col = (e) => getComputedStyle(e).gridTemplateColumns;
+      return { entete: col(j.querySelector(".journalEntete")), ligne: col(j.querySelector(".journalBascule")) };
+    }, J);
+    // Comparer les valeurs CALCULÉES, pas la variable : c'est le désalignement à l'écran qu'on
+    // cherche, et il peut naître d'une règle qui redéclare `grid-template-columns` ailleurs.
+    eq(g.ligne, g.entete, "la grille d'une ligne diffère de celle de l'en-tête");
+    await page.close();
+  });
+
+  /**
+   * **Une ligne à trame et une ligne sans trame ne diffèrent que par le tiroir.**
+   *
+   * La première est un `<button>`, la seconde un `<div>` — et `button:not([data-slot])`, en haut de
+   * `surfaces.css`, pose `font: inherit` à (0,1,1). Une classe simple perd : les lignes à trame
+   * sortaient en 16 px et leurs voisines en 12, dans la même colonne. Rien ne lève, la page rend,
+   * et c'est visible au premier coup d'œil — exactement le genre de défaut que seule une mesure au
+   * navigateur attrape. Même trappe que le rembourrage, même réponse.
+   */
+  await test("toutes les lignes ont la même taille de texte, tiroir ou pas", async () => {
+    const page = await ouvrirJournal();
+    const tailles = await page.$$eval(`${J} .journalHeure`, (e) => [...new Set(e.map((x) => getComputedStyle(x).fontSize))]);
+    eq(tailles.length, 1, `deux tailles cohabitent dans la colonne des heures : ${tailles.join(" | ")}`);
+    const resumes = await page.$$eval(`${J} .journalResume`, (e) => [...new Set(e.map((x) => getComputedStyle(x).fontSize))]);
+    eq(resumes.length, 1, `deux tailles cohabitent dans la colonne des résumés : ${resumes.join(" | ")}`);
+    await page.close();
+  });
+
+  await test("l'en-tête est décoratif, et le sens de chaque ligne est dit en toutes lettres", async () => {
+    const page = await ouvrirJournal();
+    const r = await page.evaluate((sel) => {
+      const j = document.querySelector(sel);
+      const sens = [...j.querySelectorAll(".journalDirCell .sr-only")].map((e) => e.textContent.trim());
+      return { entete: j.querySelector(".journalEntete").getAttribute("aria-hidden"), sens };
+    }, J);
+    eq(r.entete, "true", "l'en-tête n'est pas retiré de l'arbre — la grille se répète à chaque ligne");
+    vrai(r.sens.length > 0, "aucune ligne ne dit son sens autrement que par la couleur");
+    vrai(
+      r.sens.every((s) => ["Reçu", "Envoyé", "Système"].includes(s)),
+      `un sens n'est pas nommé : ${r.sens.join(" | ")}`,
+    );
+    await page.close();
+  });
+
+  /**
+   * **Sous le pouce, la ligne se replie sur deux niveaux — et rien ne deborde.**
+   *
+   * Le telephone est un appareil de premier ordre (PRODUCT.md), et une grille de cinq colonnes ne
+   * tient pas sur 380 px : la colonne de resume y valait huit caracteres. La regle est donc de
+   * garder l'alignement de ce qu'on PARCOURT — heure, sens, sujet — et de donner toute la largeur
+   * au resume, en dessous. Ce qui se verifie ici est ce qui casse en silence : un debordement
+   * horizontal de la PAGE, que personne ne voit au poste de travail.
+   */
+  await test("sur 380 px la ligne se replie, et la page ne defile pas lateralement", async () => {
+    const page = await navigateur.newPage();
+    await page.setViewport({ width: 380, height: 900 });
+    await page.goto(BASE + "/pilotage", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${J} .journalLigne`, { timeout: 10000 });
+    const m = await page.evaluate((sel) => {
+      const j = document.querySelector(sel);
+      const r = j.querySelector(".journalResume");
+      return {
+        entete: getComputedStyle(j.querySelector(".journalEntete")).display,
+        resumeCol: getComputedStyle(r).gridColumnStart,
+        debordePage: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        debordeBloc: j.querySelector(".journalGrille").scrollWidth > j.querySelector(".journalGrille").clientWidth + 1,
+      };
+    }, J);
+    eq(m.entete, "none", "l'en-tete de colonnes survit sous 40 rem — il nomme des colonnes qui n'existent plus");
+    eq(m.resumeCol, "1", "le resume ne repart pas a la premiere colonne : il reste coince dans une colonne etroite");
+    vrai(!m.debordePage, "la page defile lateralement sur 380 px");
+    vrai(!m.debordeBloc, "le journal deborde de son cadre sur 380 px");
+    await page.close();
+  });
+
+  await test("un filtre qui ne rend rien le DIT, et le compte suit", async () => {
+    const page = await ouvrirJournal();
+    const avant = await page.$$eval(`${J} .journalLigne`, (e) => e.length);
+    vrai(avant > 0, "le journal est vide au départ — rien à filtrer");
+    await page.type(`${J} .journalRecherche input`, "zzzz-aucune-chance");
+    await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .journalLigne`).length === 0, { timeout: 3000 }, J);
+    const vide = await page.$eval(`${J} .journalVide`, (e) => e.textContent);
+    vrai(
+      vide.includes("filtre"),
+      `le vide filtré ne se distingue pas d'un journal vide : « ${vide} »`,
+    );
+    // Le compte est ce qui empêche « 0 » de se lire comme « la machine ne dit rien ».
+    const compte = await page.$eval(`${J} .journalCompte`, (e) => e.textContent);
+    vrai(/0\s*sur\s*\d+/.test(compte), `le compte ne rapporte pas le filtre au total : « ${compte} »`);
+    await page.close();
+  });
+
+  await test("les trois sens sont des bascules, et elles se combinent", async () => {
+    const page = await ouvrirJournal();
+    const etats = await page.$$eval(`${J} .journalDir`, (b) => b.map((e) => e.getAttribute("aria-pressed")));
+    eq(etats.length, 3, "il n'y a pas trois bascules de sens");
+    vrai(etats.every((v) => v === "false"), "une bascule est armée au chargement — le journal doit s'ouvrir entier");
+    await page.click(`${J} .journalDir[data-dir="sys"]`);
+    await page.waitForFunction(
+      (sel) => document.querySelector(`${sel} .journalDir[data-dir="sys"]`).getAttribute("aria-pressed") === "true",
+      { timeout: 3000 }, J,
+    );
+    const dirs = await page.$$eval(`${J} .journalLigne`, (e) => [...new Set(e.map((x) => x.dataset.dir))]);
+    vrai(dirs.every((d) => d === "sys"), `le filtre laisse passer d'autres sens : ${dirs.join(", ")}`);
+    await page.close();
+  });
+
+  if (!trameSemee) {
+    console.log("  (sauté) la fausse machine n'a poussé aucune trame — le tiroir n'est pas vérifié");
+  } else {
+    await test("une ligne à trame s'ouvre, une ligne sans trame n'est même pas un bouton", async () => {
+      const page = await ouvrirJournal();
+      const compte = await page.evaluate((sel) => ({
+        boutons: document.querySelectorAll(`${sel} button.journalBascule`).length,
+        figes: document.querySelectorAll(`${sel} .journalFige`).length,
+      }), J);
+      vrai(compte.boutons > 0, "aucune ligne n'est dépliable alors qu'une trame a été poussée");
+      vrai(compte.figes > 0, "toutes les lignes sont des boutons — les lignes système n'ont pourtant rien à ouvrir");
+      // `.journalFige` n'est pas un `<button>` désactivé : c'est un `<div>`. Un bouton désactivé
+      // reste un objet qu'un lecteur annonce ; ici il n'y a rien à annoncer.
+      const figeEstBouton = await page.$eval(`${J} .journalFige`, (e) => e.tagName === "BUTTON");
+      vrai(!figeEstBouton, "une ligne sans trame est un bouton — elle ajoute un objet qui n'ouvre rien");
+      await page.close();
+    });
+
+    await test("le tiroir n'existe qu'ouvert, et il porte les octets et l'opération", async () => {
+      const page = await ouvrirJournal();
+      eq(await page.$$eval(`${J} .journalTiroir`, (e) => e.length), 0, "tiroirs montés à la fermeture");
+      eq(await page.$eval(`${J} button.journalBascule`, (e) => e.getAttribute("aria-expanded")), "false", "aria-expanded fermé");
+      await page.click(`${J} button.journalBascule`);
+      await page.waitForSelector(`${J} .journalTiroir`, { timeout: 3000 });
+      const t = await page.evaluate((sel) => {
+        const b = document.querySelector(`${sel} button.journalBascule`);
+        const tiroir = document.querySelector(`${sel} .journalTiroir`);
+        return {
+          ouvert: b.getAttribute("aria-expanded"),
+          controle: b.getAttribute("aria-controls"),
+          id: tiroir.id,
+          rangs: tiroir.querySelectorAll(".journalHexaRang").length,
+          octets: tiroir.querySelectorAll(".journalHexaRang > span").length,
+          texte: tiroir.textContent,
+        };
+      }, J);
+      eq(t.ouvert, "true", "le déclencheur ne dit pas qu'il est ouvert");
+      eq(t.controle, t.id, "aria-controls ne désigne pas le tiroir");
+      vrai(t.rangs > 0, "le tiroir ne montre aucun octet");
+      // La trame poussée par `fausse-machine.mjs` est un monitor `0x75`. Que l'opération soit
+      // NOMMÉE est le propos du tiroir : des octets sans lecture, on en avait déjà.
+      vrai(t.texte.includes("0x75"), `le tiroir ne nomme pas la commande : ${t.texte.slice(0, 160)}`);
+      vrai(t.texte.toLowerCase().includes("lecture"), "le tiroir ne dit pas la nature de l'opération");
+      await page.close();
+    });
+
+    await test("un seul tiroir à la fois", async () => {
+      const page = await ouvrirJournal();
+      await page.click(`${J} button.journalBascule`);
+      await page.waitForSelector(`${J} .journalTiroir`, { timeout: 3000 });
+      const plusieurs = await page.$$eval(`${J} button.journalBascule`, (b) => b.length);
+      if (plusieurs < 2) return; // une seule ligne à trame : rien à prouver ici
+      await page.$$eval(`${J} button.journalBascule`, (b) => b[1].click());
+      await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .journalTiroir`).length === 1, { timeout: 3000 }, J);
+      eq(await page.$$eval(`${J} .journalTiroir`, (e) => e.length), 1, "deux tiroirs restent ouverts");
+      await page.close();
+    });
+  }
+
 } finally {
   if (navigateur) await navigateur.close().catch(() => {});
   serveur.enfant.kill();

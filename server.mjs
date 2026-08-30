@@ -140,14 +140,37 @@ const MACHINES = new Map();
  */
 const LOG = [];
 /**
- * Numero de ligne, monotone et jamais reutilise.
+ * Numero de ligne, monotone et jamais reutilise — et PARTAGE par les deux journaux.
  *
  * Il n'est pas decoratif : le journal se remplit par la TETE (`unshift`), donc si l'interface
  * identifie ses lignes par leur rang, une ligne de plus decale les cinquante autres et React
  * reecrit tout le bloc au lieu d'inserer un noeud. `t` ne suffit pas comme identite — deux lignes
  * tombent dans la meme milliseconde des qu'un import defile.
+ *
+ * ⚠️ **Il porte desormais DEUX roles, et les separer est ce qui rend le flux d'ajouts possible.**
+ * `id` nomme la ligne pour toujours ; `n` date sa DERNIERE touche. Un repli mute la tete en place
+ * (`repetitions++`) : il lui donne donc un `n` neuf pour qu'elle reparte sur le fil, mais son `id`
+ * ne bouge pas et le navigateur REMPLACE la ligne qu'il a deja au lieu d'en empiler une
+ * vingt-quatrieme. Sans cette separation, le repli — la seule chose qui rende un journal lisible
+ * quand tout va mal — serait exactement ce que le flux casserait.
+ *
+ * Partage entre `LOG` et `LOG_APPS` parce que le navigateur n'a qu'UN curseur : deux suites
+ * independantes obligeraient a en porter deux dans `Last-Event-ID`, et a les recoudre a la
+ * reprise. Les deux bacs restent separes ; c'est la numerotation qui est commune.
  */
-let logSeq = 0;
+let journalSeq = 0;
+/**
+ * Le `n` de la derniere ligne EVINCEE, tous bacs confondus.
+ *
+ * C'est ce qui permet de repondre honnetement a une reprise : un navigateur qui revient avec un
+ * curseur plus vieux que celui-la a rate des lignes qui n'existent plus, et lui envoyer un delta
+ * lui laisserait un trou muet dans la chronologie. On lui renvoie la fenetre entiere, et on le
+ * DIT (`complet`), pour qu'il remplace au lieu d'ajouter.
+ */
+let journalEvince = 0;
+/** Ce que chaque bac retient. Le journal machine est le plus long : c'est l'instrument. */
+const JOURNAL_MAX = { machine: 400, apps: 200 };
+
 /**
  * **Une répétition consécutive n'écrit pas une ligne de plus, elle incrémente un compteur.**
  *
@@ -161,25 +184,58 @@ let logSeq = 0;
  * séparées par autre chose restent deux lignes, parce que leur voisinage est justement
  * l'information. L'horodatage suit la DERNIÈRE occurrence — « ça continue » est ce qu'on veut
  * savoir — et `repetitions` porte le compte.
+ *
+ * La trame entre dans la comparaison. Deux `data_response` de même opération et de même résumé
+ * mais d'octets différents sont deux évènements : les replier ne garderait que les derniers
+ * octets sous un compteur qui promettrait vingt-quatre fois les mêmes.
  */
-function L(dir, msg, m = null) {
-  const tete = LOG[0];
-  if (tete && tete.msg === msg && tete.dir === dir && tete.m === (m?.id ?? null)) {
-    tete.repetitions = (tete.repetitions ?? 1) + 1;
+function ligneJournal(bac, source, dir, sujet, resume, m, app, trame) {
+  const mid = m?.id ?? null;
+  const tete = bac[0];
+  if (
+    tete && tete.dir === dir && tete.sujet === sujet && tete.resume === resume &&
+    tete.m === mid && tete.app === app && tete.trame === trame
+  ) {
+    tete.repetitions += 1;
     tete.t = Date.now();
-    tete.n = ++logSeq;
-    sseTouch();
-    console.log(now(), dir.toUpperCase(), (m && MACHINES.size > 1 ? `[${m.id}] ` : "") + msg + ` (×${tete.repetitions})`);
-    return;
+    tete.n = ++journalSeq;
+    return tete;
   }
-  LOG.unshift({ n: ++logSeq, t: Date.now(), dir, msg, m: m?.id ?? null });
-  if (LOG.length > 400) LOG.pop();
+  const n = ++journalSeq;
+  const e = { id: n, n, t: Date.now(), source, dir, sujet, resume, m: mid, app, repetitions: 1, trame: trame ?? null };
+  bac.unshift(e);
+  if (bac.length > JOURNAL_MAX[source]) journalEvince = Math.max(journalEvince, bac.pop().n);
+  return e;
+}
+
+/** La ligne telle qu'elle s'écrit dans le terminal — un seul endroit, les deux journaux. */
+function ligneTexte(e) {
+  return (e.app ? `${e.app} · ` : "") + e.sujet + (e.resume ? ` · ${e.resume}` : "") +
+    (e.repetitions > 1 ? ` (×${e.repetitions})` : "");
+}
+
+/**
+ * ⚠️ **`sujet` et `resume` sont deux arguments, pas une phrase à découper ensuite.**
+ *
+ * Le sujet est une COLONNE dans `/pilotage` : il s'aligne d'une ligne à l'autre, et c'est cet
+ * alignement qui fait qu'on descend un journal du regard au lieu de relire cinquante phrases.
+ * Le déduire au rendu — couper au premier « : » — marchait sur les messages qui suivent la
+ * convention et laissait une colonne vide sur les autres, sans que rien ne le signale. Ici la
+ * signature l'exige : un appel qui n'a pas de sujet ne compile pas dans la tête de qui l'écrit.
+ *
+ * `trame` est la valeur base64 telle qu'elle a circulé, jamais un décodage. Ce qui la lit
+ * (`opTrame`, `argumentsTrame`) vit dans `ecam-args.mjs` et s'exécute dans le navigateur, à
+ * l'ouverture du tiroir : décoder 400 lignes à chaque poussée reviendrait à payer le tiroir sur
+ * les 399 qu'on n'ouvre pas.
+ */
+function L(dir, sujet, resume = "", m = null, trame = null) {
+  const e = ligneJournal(LOG, "machine", dir, sujet, resume, m, null, trame);
   // Tout changement d'état significatif passe par ici : c'est donc d'ici qu'on prévient les
   // navigateurs abonnés. Voir sseTouch().
   sseTouch();
   // Le préfixe n'apparaît que s'il y a de quoi confondre : en mono-machine, la sortie du
   // terminal reste exactement celle qu'elle était.
-  console.log(now(), dir.toUpperCase(), (m && MACHINES.size > 1 ? `[${m.id}] ` : "") + msg);
+  console.log(now(), dir.toUpperCase(), (m && MACHINES.size > 1 ? `[${m.id}] ` : "") + ligneTexte(e));
 }
 
 /**
@@ -202,22 +258,11 @@ function L(dir, msg, m = null) {
  * les refus arrivent avant qu'une entrée existe — et ce sont eux qu'on veut le plus voir.
  */
 const LOG_APPS = [];
-let logAppSeq = 0;
-function LA(dir, msg, app = null, m = null) {
+function LA(dir, sujet, resume = "", app = null, m = null, trame = null) {
   const qui = app?.id ?? app ?? null;
-  const tete = LOG_APPS[0];
-  if (tete && tete.msg === msg && tete.dir === dir && tete.app === qui) {
-    tete.repetitions = (tete.repetitions ?? 1) + 1;
-    tete.t = Date.now();
-    tete.n = ++logAppSeq;
-    sseTouch();
-    console.log(now(), "APP", `${qui ?? "?"} · ${msg} (×${tete.repetitions})`);
-    return;
-  }
-  LOG_APPS.unshift({ n: ++logAppSeq, t: Date.now(), dir, msg, app: qui, m: m?.id ?? null });
-  if (LOG_APPS.length > 200) LOG_APPS.pop();
+  const e = ligneJournal(LOG_APPS, "apps", dir, sujet, resume, m, qui, trame);
   sseTouch();
-  console.log(now(), "APP", `${qui ?? "?"} · ${msg}`);
+  console.log(now(), "APP", ligneTexte(e));
 }
 
 /**
@@ -386,19 +431,19 @@ function applyCatalog(m) {
       m.gen = gen;
       m.send = gen === "striker" ? "app_data_request" : "data_request";
       m.mon = gen === "striker" ? "d302_monitor_machine" : "d302_monitor";
-      L("sys", `génération déduite du modèle ${identite} : ${gen} (propriétés ${m.send} / ${m.mon})`, m);
+      L("sys", "modele", `déduite du modèle ${identite} : ${gen} (propriétés ${m.send} / ${m.mon})`, m);
     }
   }
   if (c.fallback && m.modelKey) {
     const fiche = modelSheet(m.modelKey);
-    L("sys", fiche
+    L("sys", "catalogue", fiche
       ? `⚠ modèle ${m.modelKey} (${fiche.type}) reconnu mais son catalogue n'est pas exploitable (${fiche.support === "norecipes" ? "aucune recette dans la table constructeur" : "boissons hors de l'espace de noms vérifié"}) — catalogue ${c.model.type} conservé`
       : `⚠ modèle ${m.modelKey} absent de la table des catalogues — catalogue ${c.model.type} conservé`, m);
   } else if (avant && avant !== c.key) {
-    L("sys", `catalogue basculé sur ${c.model.type} (${c.key}) : ${c.beverages.length} boissons, ${c.model.nProfiles} profils, ${c.model.nCustomRecipes} recettes perso`, m);
+    L("sys", "catalogue", `basculé sur ${c.model.type} (${c.key}) : ${c.beverages.length} boissons, ${c.model.nProfiles} profils, ${c.model.nCustomRecipes} recettes perso`, m);
   }
   if (c.unaddressable.length) {
-    L("sys", `⚠ ${c.unaddressable.length} boissons de ce modèle n'ont aucune propriété Ayla connue (${c.unaddressable.slice(0, 6).join(", ")}…) : listées, mais ni lisibles ni réglables`, m);
+    L("sys", "catalogue", `⚠ ${c.unaddressable.length} boissons de ce modèle n'ont aucune propriété Ayla connue (${c.unaddressable.slice(0, 6).join(", ")}…) : listées, mais ni lisibles ni réglables`, m);
   }
   return c;
 }
@@ -862,17 +907,17 @@ const paquet = (props) => JSON.stringify({ properties: props });
  * l'exclusion, et c'est pour ça qu'il ne peut jamais y avoir deux trames en vol.
  */
 function prochainePaquet(m) {
-  if (vide(m.file)) { m.visites = 0; return { data: "{}", label: "idle" }; }
+  if (vide(m.file)) { m.visites = 0; return { data: "{}", label: "idle", trame: null }; }
   const c = m.visites++;
   // `device_connected` en tête de séquence puis périodiquement : la machine cesse de nous
   // considérer présents sans lui, et le pas suivant ne serait jamais récupéré.
-  if (c === 0 || c % 5 === 0) return { data: paquet([prop(m, "device_connected", nowSec())]), label: "device_connected" };
+  if (c === 0 || c % 5 === 0) return { data: paquet([prop(m, "device_connected", nowSec())]), label: "device_connected", trame: null };
 
   const a = aServir(m.file, Date.now());
   if (a.quoi === "pas") {
     const p = a.pas;
-    if (p.type === "prop") return { data: readPropertyCmd(m, p.prop), label: `lecture ${p.prop}` };
-    return { data: paquet([prop(m, m.send, p.trame, true)]), label: `${a.tache.label} · ${p.nom}` };
+    if (p.type === "prop") return { data: readPropertyCmd(m, p.prop), label: `lecture ${p.prop}`, trame: null };
+    return { data: paquet([prop(m, m.send, p.trame, true)]), label: `${a.tache.label} · ${p.nom}`, trame: p.trame };
   }
   if (a.quoi === "soutien") {
     // Présence tenue pendant qu'on attend la réponse du pas déjà servi.
@@ -882,11 +927,13 @@ function prochainePaquet(m) {
     // la machine du profil 3 au profil 1). `profile` n'est donc utilisé que là où réaffirmer la
     // valeur est la recette validée — le réveil — ou idempotent : la sélection de profil elle-même.
     if (a.sustain === "profile") {
-      return { data: paquet([prop(m, m.send, datapointValue(frameSendProfile(m.activeProfile)), true)]), label: `présence(profil ${m.activeProfile})` };
+      const t = datapointValue(frameSendProfile(m.activeProfile));
+      return { data: paquet([prop(m, m.send, t, true)]), label: `présence(profil ${m.activeProfile})`, trame: t };
     }
-    return { data: paquet([prop(m, m.send, datapointValue(frameMonitorRequest()), true)]), label: "présence(monitor)" };
+    const t = datapointValue(frameMonitorRequest());
+    return { data: paquet([prop(m, m.send, t, true)]), label: "présence(monitor)", trame: t };
   }
-  return { data: "{}", label: "idle" };
+  return { data: "{}", label: "idle", trame: null };
 }
 
 /**
@@ -1081,18 +1128,18 @@ function startImport(m, queue, durationMs = 120000, { label = null, rang = RANG.
 function enfilerTache(m, t, ligne) {
   const r = enfiler(m.file, t, Date.now());
   if (!r.ok) {
-    L("sys", `file pleine (${MAX_FILE} tâches) : « ${t.label} » refusée`, m);
+    L("sys", "file", `pleine (${MAX_FILE} tâches) : « ${t.label} » refusée`, m);
     return { ok: false, raison: r.raison };
   }
   if (r.fusion) {
-    L("sys", `« ${t.label} » déjà en attente (${r.tache.id}) : demande fusionnée`, m);
+    L("sys", "file", `« ${t.label} » déjà en attente (${r.tache.id}) : demande fusionnée`, m);
     return { ok: true, fusion: true, taskId: r.tache.id, position: m.file.liste.indexOf(r.tache) };
   }
   const position = m.file.liste.indexOf(r.tache);
   // Une seule ligne, et elle porte tout : ce que l'utilisateur a demandé, ce que ça vaut côté
   // protocole, et les octets. La trame vit ici — plus dans les messages de l'interface, où elle ne
   // renseignait personne sur le résultat de son geste. La position dit s'il va falloir attendre.
-  L("out", `${r.tache.id} · ${ligne}${position > 0 ? ` · ${position} tâche(s) devant` : ""}`, m);
+  L("out", "tâche", `${r.tache.id} · ${ligne}${position > 0 ? ` · ${position} tâche(s) devant` : ""}`, m);
   ensureKeepalive(m);
   sseWatch();
   return { ok: true, taskId: r.tache.id, position };
@@ -1123,18 +1170,18 @@ function readPropertyCmd(m, name) {
 async function postLocalReg(m) {
   const t = await machineTarget(m);
   if (!t) {
-    L("out", "local_reg impossible : adresse de la machine non configurée (page « Machines »)", m);
+    L("out", "local_reg", "impossible : adresse de la machine non configurée (page « Machines »)", m);
     return { ok: false, error: "machineIp" };
   }
   if (!t.ip) {
-    L("out", `local_reg impossible : ${t.error}`, m);
+    L("out", "local_reg", `impossible : ${t.error}`, m);
     return { ok: false, error: "dns" };
   }
   const probleme = serverIpProblem();
   if (probleme) {
     // On n'envoie pas : la machine accepterait (202) une adresse à laquelle elle ne peut pas
     // revenir, et le serveur croirait s'être annoncé.
-    L("out", `local_reg impossible : ${probleme} — c'est l'adresse que la machine utilisera pour nous joindre`, m);
+    L("out", "local_reg", `impossible : ${probleme} — c'est l'adresse que la machine utilisera pour nous joindre`, m);
     return { ok: false, error: "serverIp" };
   }
   // `notify` dit à la machine qu'il y a du travail : c'est vrai dès qu'une tâche est en file.
@@ -1149,7 +1196,7 @@ async function postLocalReg(m) {
     // `{ ok: false }` nu, que personne ne lisait : les pages annonçaient « commande envoyée » alors
     // que la machine n'avait jamais entendu l'annonce, donc n'irait jamais chercher la commande.
     // C'est le cas d'une cafetière hors tension au secteur ou sortie du réseau, et il doit se dire.
-    r.on("error", (e) => { L("out", `local_reg erreur: ${e.message}`, m); resolve({ ok: false, error: "unreachable" }); });
+    r.on("error", (e) => { L("out", "local_reg", `erreur: ${e.message}`, m); resolve({ ok: false, error: "unreachable" }); });
     r.setTimeout(8000, () => r.destroy());
     r.write(b); r.end();
   });
@@ -1170,12 +1217,12 @@ async function postLocalReg(m) {
  */
 function ensureKeepalive(m) {
   if (m.keepalive) return;
-  L("sys", "keep-alive démarré (2,5 s)", m);
+  L("sys", "keep-alive", "démarré (2,5 s)", m);
   let videDepuis = 0;
   m.keepalive = setInterval(async () => {
     if (vide(m.file)) {
       if (!videDepuis) videDepuis = Date.now();
-      if (Date.now() - videDepuis > 15000) { clearInterval(m.keepalive); m.keepalive = null; L("sys", "keep-alive arrêté", m); return; }
+      if (Date.now() - videDepuis > 15000) { clearInterval(m.keepalive); m.keepalive = null; L("sys", "keep-alive", "arrêté", m); return; }
     } else videDepuis = 0;
     await postLocalReg(m);
   }, 2500);
@@ -1227,7 +1274,7 @@ async function handleLan(req, res) {
     // renumérotée n'est identifiable que par sa clé.
     const m = machineByPeer(req) ?? machineByKeyId(kx.key_id);
     if (!m) {
-      L("in", `échange de clés refusé : aucune machine connue à l'adresse ${peerAddress(req)} et key_id ${kx.key_id} non attribué`);
+      L("in", "session", `refusé : aucune machine connue à l'adresse ${peerAddress(req)} et key_id ${kx.key_id} non attribué`);
       return raw(res, JSON.stringify({ error: "unknown device" }), 412);
     }
     if (Number(kx.key_id) !== m.lanKeyId) return raw(res, JSON.stringify({ error: "keyid" }), 412);
@@ -1250,19 +1297,19 @@ async function handleLan(req, res) {
     // Aucun risque d'inonder le journal : une session s'ouvre une fois, pas toutes les deux
     // secondes — et si elle se rouvre en boucle, c'est précisément ce qu'il faut voir. Le repli
     // des lignes identiques de `L()` s'en charge, avec son compte.
-    L("in", `session LAN ${rouverte ? "rouverte" : "établie"} (key_id ${m.lanKeyId})`, m);
+    L("in", "session", `${rouverte ? "rouverte" : "établie"} (key_id ${m.lanKeyId})`, m);
     return raw(res, JSON.stringify({ random_2: m.session.random2, time_2: t2 }));
   }
   const m = machineByPeer(req);
   if (!m) {
-    L("in", `requête device-facing ignorée : ${url} vient de ${peerAddress(req)}, qui ne correspond à aucune machine connue`);
+    L("in", "session", `requête device-facing ignorée : ${url} vient de ${peerAddress(req)}, qui ne correspond à aucune machine connue`);
     return raw(res, JSON.stringify({ error: "unknown device" }), 412);
   }
   if (url === "/local_lan/commands.json" && req.method === "GET") {
     if (!m.session) return raw(res, "no session", 412);
     // Une visite, un pas — c'est ici que l'exclusion est matérialisée. Voir prochainePaquet().
-    const { data, label } = prochainePaquet(m);
-    if (label !== "idle") L("out", `commande servie: ${label}`, m);
+    const { data, label, trame } = prochainePaquet(m);
+    if (label !== "idle") L("out", "commande", label, m, trame);
     return raw(res, m.session.encapsulate(data));
   }
   if (url.includes("/property/datapoint") && req.method === "POST") {
@@ -1270,7 +1317,7 @@ async function handleLan(req, res) {
       try {
         const dec = m.session.decapsulate(JSON.parse(body.toString("utf8")));
         for (const { name, value } of collectProps(dec)) handleProperty(m, name, value);
-      } catch (e) { L("in", `decrypt datapoint échec: ${e.message}`, m); }
+      } catch (e) { L("in", "session", `decrypt datapoint échec: ${e.message}`, m); }
     }
     return raw(res, m.session ? m.session.encapsulate("{}") : "{}");
   }
@@ -1361,12 +1408,12 @@ async function ouvrirSessionApp(m, app) {
     });
     const session = makeLanSession({ lanKey: m.lanKey, random1, random2, time1, time2, role: "device" });
     etablir(PROXY.registre, app, session, Date.now());
-    LA("out", `session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, app, m);
+    LA("out", "session", `session établie, nous nous présentons comme ${m.dsn ?? "DSN inconnu"}`, app, m);
     armerSondeApp(m, app);
   } catch (e) {
     app.dernierMotif = "echecEchange";
     refuser(PROXY.registre, { from: `${app.ip}:${app.port}`, motif: "echecEchange", detail: e.message }, Date.now());
-    LA("out", `échange de clés échoué — ${e.message}`, app, m);
+    LA("out", "session", `échange de clés échoué — ${e.message}`, app, m);
   } finally {
     app.echangeEnCours = false;
   }
@@ -1458,7 +1505,7 @@ async function sonderApp(m, app) {
 function noterSondage(m, app, etat) {
   if (etat === app.dernierSondage) return;
   app.dernierSondage = etat;
-  LA("out", `sonde commands.json — ${etat}`, app, m);
+  LA("out", "sonde", `commands.json — ${etat}`, app, m);
 }
 
 async function sonderAppSerialise(m, app) {
@@ -1515,7 +1562,7 @@ async function sonderAppSerialise(m, app) {
     // tôt, quand c'est le déchiffrement lui-même qui refuse (remplissage invalide). On
     // journalisait et on repartait sonder sans jamais rouvrir la session.
     noterSondage(m, app, `HTTP ${rep.status}, ${rep.corps.length} o — indéchiffrable`);
-    LA("in", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
+    LA("in", "commandes", `bloc de commandes indéchiffrable (${e.message}) · ${chargeBrute(rep.corps, 96)}`, app, m);
     relancerSessionApp(m, app, "déchiffrement refusé");
     return false;
   }
@@ -1569,7 +1616,7 @@ async function executerPourApp(m, app, intention) {
     case "vide":
       return;
     case "finSession":
-      LA("in", "fin de session demandée", app, m);
+      LA("in", "session", "fin de session demandée", app, m);
       retirerApp(app, m, "départ");
       return;
     case "lecture": {
@@ -1585,7 +1632,7 @@ async function executerPourApp(m, app, intention) {
       const fraiche = !!connue && Date.now() - connue.at < FRAICHEUR_LECTURE_APP;
       const dit = connue ? (fraiche ? " · servie du cache" : " · servie du cache, rafraîchissement demandé")
                          : " · valeur inconnue, demandée à la machine";
-      LA("in", `lecture ${intention.nom}${dit}`, app, m);
+      LA("in", "lecture", `${intention.nom}${dit}`, app, m);
       if (connue) {
         // Servie AVANT de mettre quoi que ce soit en file : les 5 secondes de l'application
         // courent déjà, et notre file, elle, peut être occupée par une préparation.
@@ -1636,14 +1683,14 @@ async function executerPourApp(m, app, intention) {
         // l'exécution. Il est DIT dans la ligne, sans quoi « ignorée » se lirait comme « sans
         // réponse » alors que c'est exactement le contraire qui se produit.
         const accuse = await accuserSiDemande(m, app, intention);
-        LA("in", `écriture ignorée sur ${intention.nom} (seule ${m.send} est relayée)${accuse ? " · accusée" : ""} · ${chargeBrute(intention.valeur)}`, app, m);
+        LA("in", "écriture", `ignorée sur ${intention.nom} (seule ${m.send} est relayée)${accuse ? " · accusée" : ""} · ${chargeBrute(intention.valeur)}`, app, m);
         return;
       }
       app.commandes++;
       // Les arguments AVANT les octets : c'est la question qu'on se pose en lisant cette ligne —
       // quelle boisson, quel profil, quels réglages — et les octets ne servent qu'ensuite, pour
       // vérifier ou pour rétro-concevoir. Une commande sans argument connu garde sa seule trame.
-      LA("in", decrireCommande(m, intention.valeur), app, m);
+      LA("in", "commande", decrireCommande(m, intention.valeur), app, m, intention.valeur);
       // Une commande relayée qui vise un profil DÉPLACE le profil actif de l'appareil, au même
       // titre que si nous l'avions envoyée nous-mêmes. On adopte donc la valeur ici — au moment de
       // la mise en file, comme le fait `/api/command` — sans quoi nos pages continueraient
@@ -1659,8 +1706,8 @@ async function executerPourApp(m, app, intention) {
         // l'APPAREIL, donc il appartient à la chronologie machine ; et c'est un tiers qui l'a
         // décidé, donc il appartient aussi à celle des applications. Le retirer du journal
         // principal ferait disparaître un changement d'état réel du journal qui le décrit.
-        L("sys", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
-        LA("sys", `profil ${profil} imposé${avant && avant !== profil ? ` (était ${avant})` : ""}`, app, m);
+        L("sys", "profil", `app ${app.id} a imposé le profil ${profil}${avant && avant !== profil ? ` (était ${avant})` : ""}`, m);
+        LA("sys", "profil", `profil ${profil} imposé${avant && avant !== profil ? ` (était ${avant})` : ""}`, app, m);
       }
       // Le libellé de la tâche porte la commande DÉCODÉE, arguments compris — sans octets, ils
       // sont déjà dans les deux journaux. « App a2 · commande » ne disait rien de ce qui partait
@@ -1712,14 +1759,14 @@ async function executerPourApp(m, app, intention) {
       // signature se lit à l'œil — en CBC un chaînage faux ne salit que le bloc de tête, d'où
       // des octets illisibles finissant proprement par `…a":{}}`. Sans elle, « désynchronisé »
       // est un verdict qu'on ne peut ni vérifier ni contredire.
-      LA("in", `bloc illisible, conservé tel quel — ${String(intention.brut ?? "").slice(0, 200)}`, app, m);
+      LA("in", "bloc", `illisible, conservé tel quel — ${String(intention.brut ?? "").slice(0, 200)}`, app, m);
       relancerSessionApp(m, app, "bloc illisible, flux désynchronisé");
       return;
     default:
       // 400 et non 160 : cette ligne est le seul endroit où une demande que nous ne savons pas
       // interpréter laisse une trace, et une demande tronquée à 160 caractères ne s'analyse pas.
       // C'est de la matière de rétro-ingénierie, pas un accusé de réception.
-      LA("in", `demande non reconnue — ${JSON.stringify(intention).slice(0, 400)}`, app, m);
+      LA("in", "demande", `non reconnue — ${JSON.stringify(intention).slice(0, 400)}`, app, m);
   }
 }
 
@@ -1782,7 +1829,7 @@ function reprendreSessionApp(m, app, motif = null) {
   const maintenant = Date.now();
   if (app.relanceA && maintenant - app.relanceA < DELAI_RELANCE_APP) return false;
   app.relanceA = maintenant;
-  if (motif) LA("sys", motif, app, m);
+  if (motif) LA("sys", "session", motif, app, m);
   app.etat = "annoncee";
   ouvrirSessionApp(m, app).catch(() => {});
   return true;
@@ -1796,7 +1843,7 @@ function relancerSessionApp(m, app, motif = "flux illisible") {
   // Le MOTIF est journalisé, pas seulement le verdict. « Désynchronisé » se constatait trois
   // fois par session sans qu'aucune ligne ne dise ce qui l'avait provoqué, ce qui laissait la
   // cause au rang d'hypothèse pendant des jours.
-  LA("sys", `${motif} — nouvel échange de clés`, app, m);
+  LA("sys", "session", `${motif} — nouvel échange de clés`, app, m);
   app.session = null;
   app.etat = "annoncee";
   ouvrirSessionApp(m, app).catch(() => {});
@@ -1987,7 +2034,7 @@ function diffuserAuxApps(m, name, value) {
     // part : ni au journal, ni ailleurs qu'en compteur cumulé. Il l'est ici, et le repli des
     // lignes identiques suffit à contenir une préparation, où la machine pousse toutes les 1 à
     // 3 secondes. C'est aussi la seule trace de ce qu'une application a REÇU de nous.
-    LA("out", `état ${attendue !== null ? "servi" : "rediffusé"} · ${libelleEtat(m, name, value)}`, app, m);
+    LA("out", "état", `${attendue !== null ? "servi" : "rediffusé"} · ${libelleEtat(m, name, value)}`, app, m, value);
     pousserVersApp(m, app, corps, "/property/datapoint.json", attendue).catch(() => {});
   }
 }
@@ -2023,7 +2070,7 @@ function constaterEchecApp(m, app, err = null) {
 function retirerApp(app, m = null, motif = "retirée") {
   desarmerSondeApp(app);
   oublier(PROXY.registre, app);
-  LA("sys", motif, app, m);
+  LA("sys", "registre", motif, app, m);
 }
 
 /** Balayage des applications muettes. Le même raisonnement que le coupe-circuit de la file. */
@@ -2031,7 +2078,7 @@ setInterval(() => {
   if (!PROXY.actif) return;
   for (const app of expirer(PROXY.registre, Date.now())) {
     desarmerSondeApp(app);
-    LA("sys", `muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`, app);
+    LA("sys", "app", `muette depuis ${Math.round(DELAI_APP_MUETTE / 1000)} s, oubliée`, app);
   }
 }, 10000).unref?.();
 
@@ -2069,12 +2116,12 @@ async function handleAppRegtoken(req, res) {
     else await probeRegtoken(m).catch(() => {});            // premier appel : on n'a pas le choix
   }
   if (m.regtokenBrut) {
-    LA("in", `regtoken demandé, nous resservons celui de la machine (${m.dsn})`, peerAddress(req), m);
+    LA("in", "regtoken", `demandé, nous resservons celui de la machine (${m.dsn})`, peerAddress(req), m);
     return raw(res, m.regtokenBrut.body, 200, "text/json");
   }
   // Repli : la machine est injoignable et nous n'avons jamais vu sa réponse. On sert le minimum,
   // et on le DIT — une application qui refuserait ici doit être diagnosticable.
-  LA("in", "regtoken demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite", peerAddress(req), m);
+  LA("in", "regtoken", "demandé, mais la réponse de la machine est inconnue — réponse minimale reconstruite", peerAddress(req), m);
   return raw(res, JSON.stringify({ registered: 1, registration_type: "AP-Mode", host_symname: m.dsn }), 200, "text/json");
 }
 
@@ -2115,12 +2162,12 @@ async function handleAppReg(req, res) {
     // Refus explicite plutôt que rattachement au hasard : relayer vers la mauvaise cafetière est
     // exactement le genre d'erreur qu'on ne rattrape pas après coup.
     refuser(PROXY.registre, { from, motif: "dsnInconnu", detail: dsn }, Date.now());
-    LA("in", `enregistrement refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`, from);
+    LA("in", "enregistrement", `refusé — DSN ${dsn ?? "non fourni"} ne correspond à aucune machine connue`, from);
     return raw(res, JSON.stringify({ error: "unknown dsn" }), 412);
   }
   if (!m.lanKey.length) {
     refuser(PROXY.registre, { from, motif: "sansCle", detail: m.id }, Date.now());
-    LA("in", `enregistrement refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, from, m);
+    LA("in", "enregistrement", `refusé — la clé LAN de ${m.id} est inconnue, aucune session ne pourrait être chiffrée`, from, m);
     return raw(res, JSON.stringify({ error: "no key" }), 412);
   }
 
@@ -2151,13 +2198,13 @@ async function handleAppReg(req, res) {
   if (ua && ua !== app.ua) {
     const avant = app.ua;
     app.ua = ua;
-    if (avant) LA("in", `client changé — ${avant} → ${ua}`, app, m);
+    if (avant) LA("in", "client", `changé — ${avant} → ${ua}`, app, m);
   }
   // 202, comme la machine : c'est ce que l'app attend d'un `local_reg` accepté.
   raw(res, JSON.stringify({}), 202);
 
   if (nouvelle) {
-    LA("in", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})${ua ? ` · client ${ua}` : " · client anonyme"}`, app, m);
+    LA("in", "annonce", `${from} s'annonce pour ${m.dsn ?? m.id} (écoute ${app.ip}:${app.port}${app.uri})${ua ? ` · client ${ua}` : " · client anonyme"}`, app, m);
     // L'échange de clés part APRÈS la réponse : l'application n'a pas encore fini de traiter son
     // propre `local_reg` tant qu'elle attend notre 202, et son serveur HTTP pourrait ne pas être
     // prêt à recevoir. La machine fait exactement pareil avec nous.
@@ -2230,9 +2277,9 @@ function handleProperty(m, name, value) {
       // La progression n'est journalisée que pendant une préparation : au repos elle n'apprend
       // rien et ferait perdre le pliage des lignes identiques de `L()`.
       const prog = mo.auRepos ? "" : ` · ${mo.etapeCle ?? "en cours"} ${mo.pourcent ?? "?"} % (f=${mo.fonction} e=${mo.etape})`;
-      L("in", `monitor: état=0x${mo.stateByte.toString(16).padStart(2, "0")}${prog}${mo.switches.length ? " · " + mo.switches.map((x) => x.label).join(", ") : ""}${mo.alarms.length ? " · alarmes " + mo.alarms.map((a) => a.name ?? `bit ${a.bit}`).join(", ") : ""}`, m);
+      L("in", "monitor", `état=0x${mo.stateByte.toString(16).padStart(2, "0")}${prog}${mo.switches.length ? " · " + mo.switches.map((x) => x.label).join(", ") : ""}${mo.alarms.length ? " · alarmes " + mo.alarms.map((a) => a.name ?? `bit ${a.bit}`).join(", ") : ""}`, m, value);
     } catch (e) {
-      L("in", `${name}: monitor illisible (${e.message})`, m);
+      L("in", `${name}`, `monitor illisible (${e.message})`, m, value);
     }
     // ⚠️ **La poussée de monitor EST la réponse à `0x75`.** Ce retour se faisait sans jamais
     // apparier, si bien qu'un pas « Présence » ne pouvait être satisfait que par un
@@ -2259,7 +2306,7 @@ function handleProperty(m, name, value) {
     // Une propriété absente du modèle a bel et bien RÉPONDU : le pas est fait, pas manqué. La
     // confondre avec un échec relancerait une lecture qui n'a aucune chance d'aboutir.
     apparier(m.file, { prop: name }, Date.now());
-    L("in", `${name}: absente sur ce modèle`, m);
+    L("in", `${name}`, `absente sur ce modèle`, m);
     return;
   }
 
@@ -2283,12 +2330,12 @@ function handleProperty(m, name, value) {
     try {
       const sy = decodeBeanSync(value);
       m.store.putProp(name, { at: Date.now(), kind: "beanSync", selected: sy.selected, mots: sy.mots, hex: sy.hex });
-      L("in", `${name}: grain sélectionné ${sy.selected} · mots ${sy.mots.join(", ")}`, m);
+      L("in", `${name}`, `grain sélectionné ${sy.selected} · mots ${sy.mots.join(", ")}`, m, value);
     } catch (e) {
       // La machine a répondu : le pas est FAIT, pas manqué — le redemander rendrait les mêmes
       // octets. On garde la trame brute, seule chose qui permettra de comprendre l'échec.
       m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: 0xa1, hex: Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim() });
-      L("in", `${name}: décodage impossible (${e.message})`, m);
+      L("in", `${name}`, `décodage impossible (${e.message})`, m, value);
     }
     apparier(m.file, { prop: name }, Date.now());
     return;
@@ -2309,7 +2356,7 @@ function handleProperty(m, name, value) {
   // Chaque branche écrit ce qu'elle a décodé, tout de suite : `done` ne fait plus que journaliser.
   const done = (msg) => {
     apparier(m.file, { prop: name }, Date.now());
-    L("in", `${name}: ${msg}`, m);
+    L("in", `${name}`, msg, m, value);
   };
   /**
    * Décodage impossible : la machine a répondu, donc le pas n'est PAS à retenter — le redemander
@@ -2318,7 +2365,7 @@ function handleProperty(m, name, value) {
    */
   const failed = (e) => {
     apparier(m.file, { prop: name }, Date.now());
-    L("in", `${name}: décodage impossible (${e.message})`, m);
+    L("in", `${name}`, `décodage impossible (${e.message})`, m, value);
   };
 
   try {
@@ -2411,7 +2458,7 @@ function handleDataResponse(m, value) {
   const buf = Buffer.from(value, "base64");
   const hex = buf.toString("hex").replace(/(..)/g, "$1 ").trim();
   m.lastDataResponse = { at: Date.now(), hex };
-  L("in", `data_response: ${hex}`, m);
+  L("in", "data_response", describeFrame(value, { octets: false }), m, value);
   // C'est LA réponse qu'attend un pas de trame de lecture (0xBA, 0xA3, 0xA2, monitor). Apparier ici
   // est ce qui fait avancer un balayage à la vitesse de la machine : six grains ne sont plus six
   // programmes espacés d'un `setTimeout(11000)` deviné, mais six pas qui s'enchaînent à la réponse.
@@ -2420,9 +2467,9 @@ function handleDataResponse(m, value) {
     try {
       const pr = decodeParameters(value);
       m.store.putStats(pr.entries);
-      L("in", `paramètres : ${pr.entries.map((e) => `${e.id}=${e.value}`).join(", ")}`, m);
+      L("in", "paramètres", `${pr.entries.map((e) => `${e.id}=${e.value}`).join(", ")}`, m);
     } catch (e) {
-      L("in", `paramètres : décodage impossible (${e.message})`, m);
+      L("in", "paramètres", `décodage impossible (${e.message})`, m);
     }
     return;
   }
@@ -2430,9 +2477,9 @@ function handleDataResponse(m, value) {
     try {
       const st = decodeSettings(value);
       noteReglages(m, st.entries, "trame 0x95");
-      L("in", `réglages : ${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`, m);
+      L("in", "réglages", `${st.entries.map((e) => `${e.addr}=${e.value}`).join(", ")}`, m);
     } catch (e) {
-      L("in", `réglages : décodage impossible (${e.message})`, m);
+      L("in", "réglages", `décodage impossible (${e.message})`, m);
     }
     return;
   }
@@ -2443,9 +2490,9 @@ function handleDataResponse(m, value) {
       // qui dit ce qui a bougé, il est écrit dans une seule transaction.
       const { prev, current } = m.store.putChecksums(cs);
       const changed = diffChecksums(prev, current);
-      L("in", `sommes de contrôle : ${cs.size} profils, noms=0x${cs.names.toString(16)}, perso=0x${cs.customRecipes.toString(16)}${changed.length ? " — changé : " + changed.join(", ") : prev ? " — rien de changé" : ""}`, m);
+      L("in", "sommes", `${cs.size} profils, noms=0x${cs.names.toString(16)}, perso=0x${cs.customRecipes.toString(16)}${changed.length ? " — changé : " + changed.join(", ") : prev ? " — rien de changé" : ""}`, m);
     } catch (e) {
-      L("in", `sommes de contrôle : décodage impossible (${e.message})`, m);
+      L("in", "sommes", `décodage impossible (${e.message})`, m);
     }
   }
 }
@@ -2822,11 +2869,11 @@ function applyChecksumMark(m, t) {
   // Une propriété non lue, même une seule, invalide la marque : « à jour » doit vouloir dire que
   // TOUT ce que la somme couvre a bien été relu.
   if (t.nonLus.length) {
-    L("sys", `sommes non mémorisées : ${t.nonLus.length} propriété(s) sans réponse — la relecture restera proposée`, m);
+    L("sys", "sommes", `non mémorisées : ${t.nonLus.length} propriété(s) sans réponse — la relecture restera proposée`, m);
     return;
   }
   m.store.setMeta("checksumsAtImport", { ...(m.store.getMeta("checksumsAtImport") ?? {}), ...mark });
-  L("sys", `somme des noms mémorisée (0x${Number(mark.names).toString(16)}) : inutile de les relire tant qu'elle ne bouge pas`, m);
+  L("sys", "sommes", `mémorisée (0x${Number(mark.names).toString(16)}) : inutile de les relire tant qu'elle ne bouge pas`, m);
 }
 
 /**
@@ -2855,7 +2902,7 @@ async function machineTarget(m) {
   if (m.dns?.configured === configured && Date.now() - m.dns.at < 60000) return m.dns;
   try {
     const { address } = await dnsLookup(configured, { family: 4 });
-    if (m.dns?.ip !== address) L("sys", `« ${configured} » résolu en ${address}`, m);
+    if (m.dns?.ip !== address) L("sys", "adresse", `« ${configured} » résolu en ${address}`, m);
     m.dns = { configured, ip: address, at: Date.now() };
   } catch (e) {
     m.dns = {
@@ -2952,7 +2999,7 @@ function restoreLanKey(m) {
       m.lanKey = Buffer.from(String(s.lanip_key), "utf8");
       m.lanKeyId = Number(s.lanip_key_id);
       m.lanKeySource = `cache local (découverte du ${new Date(s.at).toISOString().slice(0, 10)})`;
-      L("sys", `clé LAN reprise du cache (key_id ${m.lanKeyId})`, m);
+      L("sys", "clé LAN", `reprise du cache (key_id ${m.lanKeyId})`, m);
     }
   } catch {}
 }
@@ -3072,10 +3119,10 @@ async function refreshAylaToken(m) {
     if (!j?.access_token) throw new Error(`HTTP ${r.status}${j?.error ? " " + j.error : ""}`);
     // Ayla fait tourner le refresh_token : garder l'ancien le rendrait inutilisable au coup suivant.
     rememberCloudSession(j.refresh_token ?? s.token);
-    L("sys", "cloud : jeton renouvelé depuis la session mémorisée (sans mot de passe)", m);
+    L("sys", "cloud", "jeton renouvelé depuis la session mémorisée (sans mot de passe)", m);
     return { token: j.access_token, expiresIn: Number(j.expires_in) || 0 };
   } catch (e) {
-    L("sys", `cloud : renouvellement impossible (${e.message}) — session mémorisée oubliée, le mot de passe sera redemandé`, m);
+    L("sys", "cloud", `renouvellement impossible (${e.message}) — session mémorisée oubliée, le mot de passe sera redemandé`, m);
     forgetCloudSession();
     return null;
   }
@@ -3127,9 +3174,9 @@ async function aylaAccessToken(m, { email, password, jwt: givenJwt, remember = f
 
   let jwt = givenJwt;
   if (jwt) {
-    L("sys", "cloud : JWT fourni, Gigya court-circuité", m);
+    L("sys", "cloud", "JWT fourni, Gigya court-circuité", m);
   } else {
-    L("sys", "cloud : connexion au compte De'Longhi…", m);
+    L("sys", "cloud", "connexion au compte De'Longhi…", m);
     const login = await gigyaCall("accounts.login", { apiKey, loginID: email, password });
     // Uniquement `cookieValue` : l'ancien repli sur `sessionToken` ne rattrapait rien, il
     // transmettait un jeton du mauvais type au lieu d'échouer avec un message clair.
@@ -3137,7 +3184,7 @@ async function aylaAccessToken(m, { email, password, jwt: givenJwt, remember = f
     if (!loginToken) throw new Error("accounts.login : pas de sessionInfo.cookieValue dans la réponse (session non navigateur ?)");
     jwt = (await gigyaCall("accounts.getJWT", { apiKey, login_token: loginToken }))?.id_token;
     if (!jwt) throw new Error("accounts.getJWT : aucun id_token dans la réponse");
-    L("sys", "cloud : identité De'Longhi obtenue, échange vers Ayla…", m);
+    L("sys", "cloud", "identité De'Longhi obtenue, échange vers Ayla…", m);
   }
 
   const tr = await fetch(`${APP.aylaUserUrl}/api/v1/token_sign_in.json`, {
@@ -3154,7 +3201,7 @@ async function aylaAccessToken(m, { email, password, jwt: givenJwt, remember = f
   // Le refresh_token n'est écrit que si on l'a demandé. Voir cloudSession() pour ce que ça implique.
   if (remember) {
     if (tj.refresh_token) rememberCloudSession(tj.refresh_token);
-    else L("sys", "cloud : aucun refresh_token dans la réponse — la session ne peut pas être mémorisée", m);
+    else L("sys", "cloud", "aucun refresh_token dans la réponse — la session ne peut pas être mémorisée", m);
   }
   return accessToken;
 }
@@ -3191,7 +3238,7 @@ async function checkCloudOta(m, token) {
     body: corps,
   };
   m.store.setMeta("otaCheck", releve);
-  L("sys", `OTA : ${disponible ? `image proposée${releve.version ? ` (${releve.version})` : ""}` : `aucune mise à jour (HTTP ${r.status})`}`, m);
+  L("sys", "OTA", `${disponible ? `image proposée${releve.version ? ` (${releve.version})` : ""}` : `aucune mise à jour (HTTP ${r.status})`}`, m);
   return releve;
 }
 
@@ -3294,7 +3341,7 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt, remember = fa
 
   const accessToken = await aylaAccessToken(m, { email, password, jwt: givenJwt, remember });
 
-  L("sys", `clé LAN : lecture de lan.json pour ${dsn}…`, m);
+  L("sys", "clé LAN", `lecture de lan.json pour ${dsn}…`, m);
   const lr = await fetch(`${APP.aylaDeviceUrl}/apiv1/dsns/${dsn}/lan.json`, {
     headers: { Authorization: `auth_token ${accessToken}` },
     signal: AbortSignal.timeout(20000),
@@ -3308,7 +3355,7 @@ async function discoverLanKey(m, { email, password, jwt: givenJwt, remember = fa
   // gratuite au moment où l'on a de toute façon parlé au cloud. Au mieux disant : un échec ici ne
   // doit pas faire échouer la récupération de la clé, qui est le but de l'appel.
   let ota = null;
-  try { ota = await checkCloudOta(m, accessToken); } catch (e) { L("sys", `OTA : relevé impossible (${e.message})`, m); }
+  try { ota = await checkCloudOta(m, accessToken); } catch (e) { L("sys", "OTA", `relevé impossible (${e.message})`, m); }
   return { key: String(lanip.lanip_key), keyId: Number(lanip.lanip_key_id), status: lanip.status, keepAlive: lanip.keep_alive, ota };
 }
 
@@ -3323,10 +3370,10 @@ function applyLanKey(m, { key, keyId }, source) {
   m.lanKeySource = source;
   if (changed && m.session) {
     m.session = null;
-    L("sys", "clé LAN changée : session LAN abandonnée, un nouveau key exchange est nécessaire", m);
+    L("sys", "clé LAN", "changée : session LAN abandonnée, un nouveau key exchange est nécessaire", m);
   }
   m.store.setLanKey(key, keyId);
-  L("sys", `clé LAN ${changed ? "mise à jour" : "confirmée"} (key_id ${keyId}, source : ${source})`, m);
+  L("sys", "clé LAN", `${changed ? "mise à jour" : "confirmée"} (key_id ${keyId}, source : ${source})`, m);
   return changed;
 }
 
@@ -3389,7 +3436,7 @@ async function resolveDsn(m, { compare = false, force = false } = {}) {
   // lancée au démarrage a repeuplé, 186 ms plus tard, un DSN qu'un changement d'adresse venait
   // d'effacer.
   if (r?.host && r.host !== m.ip) {
-    L("sys", `sonde ignorée : la réponse venait de ${r.host}, l'adresse est maintenant ${m.ip ?? "inconnue"}`, m);
+    L("sys", "sonde", `ignorée : la réponse venait de ${r.host}, l'adresse est maintenant ${m.ip ?? "inconnue"}`, m);
     return m.dsn;
   }
   const found = r?.regtoken?.host_symname;
@@ -3404,18 +3451,18 @@ async function resolveDsn(m, { compare = false, force = false } = {}) {
         : `DSN inconnu : aucune réponse de ${r?.host ?? "(adresse non configurée)"} (${r?.error ?? "pas de détail"}), et MACHINE_DSN n'est pas défini`;
       if (msg !== m.dsnLastMsg) {
         m.dsnLastMsg = msg;
-        L("sys", msg, m);
+        L("sys", "DSN", msg, m);
       }
     }
     return m.dsn;
   }
   if (m.dsn && m.dsn !== found) {
-    L("sys", `⚠ DSN divergent : ${m.dsnSource} donne ${m.dsn}, la machine annonce ${found}. Le réglage explicite reste prioritaire — retirer MACHINE_DSN de .env.local pour suivre la machine.`, m);
+    L("sys", "DSN", `divergent : ${m.dsnSource} donne ${m.dsn}, la machine annonce ${found}. Le réglage explicite reste prioritaire — retirer MACHINE_DSN de .env.local pour suivre la machine.`, m);
   } else if (!m.dsn) {
     m.dsnLastMsg = null;
   m.dsn = found;
     m.dsnSource = "lu sur la machine";
-    L("sys", `DSN découvert sur la machine : ${found}`, m);
+    L("sys", "DSN", `découvert sur la machine : ${found}`, m);
   }
   // Mémorisé pour pouvoir redémarrer sans la machine.
   try { m.store.setMeta("dsn", { value: found, at: Date.now() }); } catch {}
@@ -3440,7 +3487,7 @@ function restoreMachineIp(m) {
     if (saved?.value) {
       m.ip = saved.value;
       m.ipSource = "saisie dans l'interface";
-      L("sys", `adresse de la machine reprise du cache : ${saved.value}`, m);
+      L("sys", "adresse", `reprise du cache : ${saved.value}`, m);
     }
   } catch {}
 }
@@ -3469,9 +3516,9 @@ function applyMachineIp(m, ip) {
       m.dsnSource = "inconnu";
       m.store.clearMeta("dsn");
     }
-    L("sys", `adresse de la machine changée : ${value} — session et DSN mémorisé abandonnés`, m);
+    L("sys", "adresse", `changée : ${value} — session et DSN mémorisé abandonnés`, m);
   } else {
-    L("sys", `adresse de la machine confirmée : ${value}`, m);
+    L("sys", "adresse", `confirmée : ${value}`, m);
   }
   return changed;
 }
@@ -3484,7 +3531,7 @@ function restoreDsn(m) {
     if (saved?.value) {
       m.dsn = saved.value;
       m.dsnSource = "cache local";
-      L("sys", `DSN repris du cache : ${saved.value}`, m);
+      L("sys", "DSN", `repris du cache : ${saved.value}`, m);
     }
   } catch {}
 }
@@ -3505,7 +3552,7 @@ function applyIdentity(m, b64) {
   const r = identifyModel(b64);
   if (!r.ok) {
     m.identity = { at: Date.now(), ok: false, reason: r.reason, hex: r.hex };
-    L("in", `${SERIAL_PROP} : ${r.reason} — trame ${r.hex || "(vide)"}`, m);
+    L("in", `${SERIAL_PROP}`, r.reason, m, b64);
     return;
   }
   m.identity = { at: Date.now(), ok: true, serial: r.serial, machineName: r.machineName, modelKey: r.modelKey, hex: r.hex };
@@ -3521,7 +3568,7 @@ function applyIdentity(m, b64) {
   const lu = r.model
     ? `${r.model.type} — ${r.model.appModelId}, ${r.model.recipeCount} recettes, ${r.model.nProfiles} profils`
     : `modèle absent de la table v${MODELS_TABLE_VERSION} (${Object.keys(MODELS).length} modèles connectés connus)`;
-  L("in", `${SERIAL_PROP} : ${r.machineName} → clé ${r.modelKey} → ${lu}`, m);
+  L("in", `${SERIAL_PROP}`, `${r.machineName} → clé ${r.modelKey} → ${lu}`, m, b64);
   applyCatalog(m);
 }
 
@@ -3564,7 +3611,7 @@ async function maybeInitialRead(m) {
     if (!m.store.getProp(x.prop)) queue.push(x.prop);
   }
   if (!queue.length) return null;
-  L("sys", `adresse et clé LAN réunies : première lecture (${queue.length} propriétés — modèle et noms)`, m);
+  L("sys", "lecture", `adresse et clé LAN réunies : première lecture (${queue.length} propriétés — modèle et noms)`, m);
   startImport(m, queue, 0, { label: "Première lecture (modèle et noms)", cle: "initiale", i18n: { k: "initialRead" } });
   await postLocalReg(m);
   return queue;
@@ -3580,7 +3627,7 @@ function restoreModel(m) {
     m.modelSource = "cache local";
     const modele = findModel(saved.key);
     m.identity = { at: saved.at ?? null, ok: true, serial: saved.serial ?? null, machineName: saved.machineName ?? null, modelKey: saved.key, hex: null, restored: true };
-    L("sys", `modèle repris du cache : ${saved.key}${modele ? ` (${modele.type})` : " (inconnu de la table)"}`, m);
+    L("sys", "modele", `repris du cache : ${saved.key}${modele ? ` (${modele.type})` : " (inconnu de la table)"}`, m);
     applyCatalog(m);
   } catch {}
 }
@@ -3657,7 +3704,7 @@ function restoreActiveProfile(m) {
     if (saved?.id) {
       m.activeProfile = saved.id;
       m.activeProfileConfirmed = saved.confirmed === true;
-      L("sys", `profil actif restauré : ${saved.id}${saved.confirmed ? "" : " (non confirmé)"}`, m);
+      L("sys", "profil", `restauré : ${saved.id}${saved.confirmed ? "" : " (non confirmé)"}`, m);
     }
   } catch {}
 }
@@ -3888,7 +3935,7 @@ async function handleMachines(req, res) {
     // L'identifiant est frappé par le stockage, jamais fourni par la requête (voir createMachine).
     const m = makeMachine(createMachine({ label }));
     MACHINES.set(m.id, m);
-    L("sys", `machine ajoutée : ${machineLabel(m)}`, m);
+    L("sys", "machines", `ajoutée : ${machineLabel(m)}`, m);
     // Même chose que sur /api/machine : une adresse enregistrée mais muette doit être signalée
     // tout de suite, pas découverte à la première commande.
     let probe = null;
@@ -3916,11 +3963,11 @@ async function handleMachines(req, res) {
       const label = typeof b.label === "string" && b.label.trim() ? b.label.trim().slice(0, 60) : null;
       setMachineLabel(m.id, label);
       m.label = label;
-      L("sys", `machine renommée : ${machineLabel(m)}`, m);
+      L("sys", "machines", `renommée : ${machineLabel(m)}`, m);
     }
     if (b.makeDefault === true) {
       setSetting("defaultMachine", m.id);
-      L("sys", `machine par défaut : ${machineLabel(m)}`, m);
+      L("sys", "machines", `par défaut : ${machineLabel(m)}`, m);
     }
     return raw(res, JSON.stringify({ ok: true, machine: machineSummary(m), defaultId: defaultMachine().id }));
   }
@@ -3958,11 +4005,11 @@ async function handleMachines(req, res) {
       const frais = makeMachine({ id: m.id, createdAt: m.createdAt, label: null });
       MACHINES.set(frais.id, frais);
       clearSetting("defaultMachine");
-      L("sys", `machine remise à zéro : ${nom} — adresse, clé LAN, DSN, modèle, ${cleared.props} propriétés et ${cleared.stats} statistiques effacés`, frais);
+      L("sys", "machines", `remise à zéro : ${nom} — adresse, clé LAN, DSN, modèle, ${cleared.props} propriétés et ${cleared.stats} statistiques effacés`, frais);
       // Ce que l'environnement remet en place aussitôt : il faut le DIRE, sinon la remise à zéro
       // a l'air de n'avoir rien fait.
       const envRestored = ["ip", "lanKey", "dsn", "modelKey"].filter((k) => envForced(frais, k));
-      if (envRestored.length) L("sys", `valeurs reprises de .env.local après la remise à zéro : ${envRestored.join(", ")}`, frais);
+      if (envRestored.length) L("sys", "machines", `valeurs reprises de .env.local après la remise à zéro : ${envRestored.join(", ")}`, frais);
       return raw(res, JSON.stringify({
         removed: false,
         reset: true,
@@ -3978,7 +4025,7 @@ async function handleMachines(req, res) {
     MACHINES.delete(m.id);
     const removed = deleteMachine(m.id);
     if (getSetting("defaultMachine") === m.id) clearSetting("defaultMachine");
-    L("sys", `machine supprimée : ${nom} — propriétés lues, statistiques, recettes et clé LAN mémorisée effacées`, m);
+    L("sys", "machines", `supprimée : ${nom} — propriétés lues, statistiques, recettes et clé LAN mémorisée effacées`, m);
     return raw(res, JSON.stringify({ removed, defaultId: defaultMachine().id, machines: machineList().map(machineSummary) }));
   }
 
@@ -4065,6 +4112,46 @@ function machineActivity(m) {
  */
 const SSE = new Set();
 let sseTimer = null;
+/**
+ * Le `n` le plus haut déjà poussé sur le fil, tous abonnés confondus.
+ *
+ * **Un seul curseur pour tout le monde, et c'est l'`id` de ligne qui rend ça sûr.** Un navigateur
+ * qui s'abonne reçoit d'abord la fenêtre entière, puis suit le même flux que les autres : la
+ * prochaine poussée peut donc lui redonner des lignes qu'il a déjà. Ça ne coûte rien, parce que
+ * le client remplace par `id` — sur-livrer est gratuit, sous-livrer laisse un trou. Un curseur
+ * par abonné aurait acheté quelques octets contre un état à tenir par connexion.
+ */
+let sseJournalCurseur = 0;
+
+/** Les lignes des deux bacs dont `n` dépasse `depuis`, dans l'ordre où elles sont arrivées. */
+function journalDepuis(depuis) {
+  const l = [];
+  for (const e of LOG) if (e.n > depuis) l.push(e);
+  for (const e of LOG_APPS) if (e.n > depuis) l.push(e);
+  return l.sort((a, b) => a.n - b.n);
+}
+
+/** La fenêtre entière, les deux bacs mêlés, du plus ancien au plus récent. */
+const journalComplet = () => [...LOG, ...LOG_APPS].sort((a, b) => a.n - b.n);
+
+function sseEcrire(res, cadre) {
+  try { res.write(cadre); } catch { SSE.delete(res); }
+}
+
+/**
+ * Le cadre SSE d'un lot de lignes.
+ *
+ * Deux choses le distinguent du cadre d'état, et les deux comptent. Il est **nommé**
+ * (`event: journal`) : `EventSource.onmessage` ne reçoit que les évènements ANONYMES, donc les six
+ * pages branchées sur `useMachineEvents` ne voient rien de nouveau — par construction, pas par
+ * précaution. Et il porte un **`id:`**, que le navigateur renvoie tout seul en `Last-Event-ID` à
+ * la reconnexion : la reprise après un décrochage est native, il n'y a pas de curseur à mémoriser
+ * dans la page.
+ */
+function cadreJournal(lignes, complet) {
+  const jusqu = lignes.length ? lignes[lignes.length - 1].n : journalSeq;
+  return `id: ${jusqu}\nevent: journal\ndata: ${JSON.stringify({ lignes, complet, jusqu })}\n\n`;
+}
 
 function sseBroadcast() {
   if (!SSE.size) return;
@@ -4073,12 +4160,12 @@ function sseBroadcast() {
     defaultId: defaultMachine().id,
     at: Date.now(),
   });
+  const lignes = journalDepuis(sseJournalCurseur);
+  const journal = lignes.length ? cadreJournal(lignes, false) : null;
+  if (lignes.length) sseJournalCurseur = lignes[lignes.length - 1].n;
   for (const res of [...SSE]) {
-    try {
-      res.write(`data: ${charge}\n\n`);
-    } catch {
-      SSE.delete(res);
-    }
+    sseEcrire(res, `data: ${charge}\n\n`);
+    if (journal) sseEcrire(res, journal);
   }
 }
 
@@ -4104,16 +4191,16 @@ function avancerFiles() {
     for (const e of tic(m.file, Date.now())) {
       if (e.silencieux) continue;
       if (e.type === "muette") {
-        L("sys", `${e.tache.id} « ${e.tache.label} » abandonnée : aucun contact de la machine depuis ${Math.round(DELAIS.muet / 1000)} s${e.restantes ? ` — ${e.restantes} tâche(s) en attente annulée(s) pour la même raison` : ""}`, m);
+        L("sys", "tâche", `${e.tache.id} « ${e.tache.label} » abandonnée : aucun contact de la machine depuis ${Math.round(DELAIS.muet / 1000)} s${e.restantes ? ` — ${e.restantes} tâche(s) en attente annulée(s) pour la même raison` : ""}`, m);
       } else if (e.type === "repris") {
-        L("sys", `${e.tache.id} · « ${e.pas.nom} » sans réponse, remis en fin de tâche`, m);
+        L("sys", "tâche", `${e.tache.id} · « ${e.pas.nom} » sans réponse, remis en fin de tâche`, m);
       } else if (e.type === "perdu") {
-        L("sys", `${e.tache.id} · « ${e.pas.nom} » sans réponse après reprise : abandonné`, m);
+        L("sys", "tâche", `${e.tache.id} · « ${e.pas.nom} » sans réponse après reprise : abandonné`, m);
       } else if (e.type === "faite") {
-        L("sys", `${e.tache.id} « ${e.tache.label} » terminée : ${e.tache.faits} pas`, m);
+        L("sys", "tâche", `${e.tache.id} « ${e.tache.label} » terminée : ${e.tache.faits} pas`, m);
         finDeTache(m, e.tache);
       } else if (e.type === "echouee") {
-        L("sys", `${e.tache.id} « ${e.tache.label} » échouée : ${e.tache.motif}`, m);
+        L("sys", "tâche", `${e.tache.id} « ${e.tache.label} » échouée : ${e.tache.motif}`, m);
         finDeTache(m, e.tache);
       }
     }
@@ -4183,6 +4270,18 @@ function sseSubscribe(req, res) {
   req.on("close", fin);
   req.on("error", fin);
   res.on("error", fin);
+  /**
+   * L'amorce du journal, et elle n'a lieu qu'ICI — ensuite, le fil ne porte plus que des ajouts.
+   *
+   * `Last-Event-ID` est renvoyé par le navigateur sans qu'on lui demande, parce que `cadreJournal`
+   * pose un `id:`. Trois cas, et le troisième est celui qui empêche de mentir : curseur absent →
+   * la fenêtre entière ; curseur récent → le rattrapage seul ; curseur plus vieux que la dernière
+   * ligne évincée → il a raté des lignes qui n'existent plus, donc la fenêtre entière **et** on le
+   * dit (`complet`), pour qu'il remplace au lieu d'ajouter à une chronologie trouée.
+   */
+  const repris = Number(req.headers["last-event-id"]);
+  const reprise = Number.isFinite(repris) && repris > 0 && repris >= journalEvince;
+  sseEcrire(res, reprise ? cadreJournal(journalDepuis(repris), false) : cadreJournal(journalComplet(), true));
   sseBroadcast();
 }
 
@@ -4257,7 +4356,7 @@ function putBeanPreset(m, { id, name, grinder, temperature, aroma, roast }) {
     liste.push(entree);
   }
   m.store.setMeta("beanPresets", liste);
-  L("sys", `configuration de grains ${i >= 0 ? "modifiée" : "mémorisée"} : « ${entree.name || "sans nom"} » mouture ${entree.grinder}, temp ${entree.temperature}, arôme ${entree.aroma}${entree.roast === null ? "" : `, torréfaction ${entree.roast}`}`, m);
+  L("sys", "grains", `${i >= 0 ? "modifiée" : "mémorisée"} : « ${entree.name || "sans nom"} » mouture ${entree.grinder}, temp ${entree.temperature}, arôme ${entree.aroma}${entree.roast === null ? "" : `, torréfaction ${entree.roast}`}`, m);
   return entree;
 }
 
@@ -4340,7 +4439,7 @@ function deleteBeanPreset(m, id) {
   // L'image part avec la configuration : la garder ne ferait qu'une ligne que plus rien ne
   // désigne, et que le prochain `b<n>` réutiliserait sous une autre identité.
   m.store.deleteBeanImage(id);
-  L("sys", `configuration de grains oubliée (${id})`, m);
+  L("sys", "grains", `oubliée (${id})`, m);
   return true;
 }
 
@@ -4354,6 +4453,20 @@ async function handleApi(req, res) {
   // Le flux d'évènements est global, et surtout : il ne doit pas déclencher la résolution du DSN
   // ci-dessous, qui sonde la machine pendant 4 s. Un abonnement n'a aucune raison de faire ça.
   if (url === "/api/events" && req.method === "GET") return sseSubscribe(req, res);
+  /**
+   * Le journal hors flux — l'amorce d'un navigateur sans `EventSource`, et le repli de `/pilotage`
+   * quand le flux ne s'établit pas (elle repasse alors au minuteur de 3 s, et le dit).
+   *
+   * `depuis` rend la même chose que le fil : au-delà de la dernière ligne évincée, le rattrapage ;
+   * en deçà, ou absent, la fenêtre entière marquée `complet`. Les deux bacs voyagent ensemble et
+   * chaque ligne porte sa `source` : c'est le composant qui les sépare, pas deux requêtes.
+   */
+  if (url.split("?")[0] === "/api/journal" && req.method === "GET") {
+    const depuis = Number(new URL(req.url, "http://x").searchParams.get("depuis"));
+    const rattrape = Number.isFinite(depuis) && depuis > 0 && depuis >= journalEvince;
+    const lignes = rattrape ? journalDepuis(depuis) : journalComplet();
+    return raw(res, JSON.stringify({ lignes, complet: !rattrape, jusqu: lignes.length ? lignes[lignes.length - 1].n : journalSeq }));
+  }
   /**
    * Les applications branchées sur ce serveur. Global comme la liste des machines, et traité
    * ici pour la même raison : une application n'appartient pas à la machine qu'on regarde, et
@@ -4374,9 +4487,9 @@ async function handleApi(req, res) {
       portOk: CFG.port === PORT_ATTENDU_PAR_APP,
       ...v,
       apps: v.apps.map((a) => ({ ...a, machine: a.machineId ?? null })),
-      // Le journal des applications voyage avec la vue qui le décrit, sur l'endpoint que
-      // /pilotage interroge déjà : le tracer ne coûte pas une requête de plus.
-      journal: LOG_APPS.slice(0, 120),
+      // Le journal des applications est parti sur le fil, avec celui de la machine et sous la
+      // même numérotation : voir `cadreJournal`. Le laisser ici l'aurait fait retélécharger en
+      // entier à chaque poussée, ce qui est précisément ce que ce lot supprime.
     }));
   }
 
@@ -4440,7 +4553,14 @@ async function handleApi(req, res) {
        * donc plus de page qui en affirme une chose pendant qu'une autre affirme le contraire.
        */
       ...machineActivity(m),
-      lastMonitor: m.lastMonitor, lastDataResponse: m.lastDataResponse, log: LOG.slice(0, 50),
+      lastMonitor: m.lastMonitor, lastDataResponse: m.lastDataResponse,
+      /**
+       * ⚠️ **Le journal n'est plus ici, et c'est le point du lot.** Mesuré sur la machine d'essai :
+       * cette réponse pesait 8 185 octets dont 5 685 (69 %) de journal — 50 lignes retéléchargées
+       * en entier à chaque poussée SSE, soit toutes les 250 ms pendant une préparation, pour
+       * ~114 octets d'information neuve. Il voyage désormais en ajouts sur le fil
+       * (`cadreJournal`), et s'amorce par `GET /api/journal`.
+       */
     }));
   }
   if (url === "/api/command" && req.method === "POST") {
@@ -4452,7 +4572,7 @@ async function handleApi(req, res) {
      */
     if (b.action === "clear") {
       const annulees = annuler(m.file, b.taskId ?? null, "annulée depuis l'interface", Date.now());
-      L("sys", annulees.length ? `${annulees.length} tâche(s) annulée(s) : ${annulees.map((t) => t.label).join(", ")}` : "rien à annuler", m);
+      L("sys", "file", annulees.length ? `${annulees.length} tâche(s) annulée(s) : ${annulees.map((t) => t.label).join(", ")}` : "rien à annuler", m);
       return raw(res, JSON.stringify({ cleared: annulees.length, tasks: annulees.map((t) => t.id) }));
     }
     // `cleLibelle` suit `label` pas à pas : le libellé français reste (journal du terminal, repli
@@ -4707,7 +4827,7 @@ async function handleApi(req, res) {
     ajouter(scanStats(m, STAT_RANGES.all.map(([id, qty]) => ({ id, qty }))));
 
     const pas = m.file.liste.reduce((n, t) => n + t.pas.length, 0);
-    L("sys", `lecture complète demandée : ${taches.length} tâches, ${pas} pas en file`, m);
+    L("sys", "lecture", `complète demandée : ${taches.length} tâches, ${pas} pas en file`, m);
     const reg = await postLocalReg(m);
     return raw(res, JSON.stringify({ tasks: taches, count: taches.length, steps: pas, profileId: p, register: reg }));
   }
@@ -5136,9 +5256,9 @@ async function handleApi(req, res) {
     const entree = putBeanPreset(m, { id: typeof b.id === "string" ? b.id : null, name: b.name, grinder, temperature, aroma, roast });
     if (image) {
       m.store.putBeanImage(entree.id, image.mime, image.bytes);
-      L("sys", `image de la configuration de grains « ${entree.name || "sans nom"} » enregistrée (${image.mime}, ${Math.round(image.bytes.length / 1024)} kio)`, m);
+      L("sys", "grains", `« ${entree.name || "sans nom"} » enregistrée (${image.mime}, ${Math.round(image.bytes.length / 1024)} kio)`, m);
     } else if (b.image === null && m.store.deleteBeanImage(entree.id)) {
-      L("sys", `image de la configuration de grains « ${entree.name || "sans nom"} » retirée`, m);
+      L("sys", "grains", `« ${entree.name || "sans nom"} » retirée`, m);
     }
     const presets = vueBeanPresets(m);
     return raw(res, JSON.stringify({ ok: true, preset: presets.find((x) => x.id === entree.id) ?? entree, presets }));
@@ -5210,7 +5330,7 @@ async function handleApi(req, res) {
     } else if (b.image === null && m.store.deleteBeanImage(cle)) {
       photo = "retirée";
     }
-    L("sys", `visuel de l'emplacement de grains ${index} : torréfaction ${roast ?? "aucune"}, photo ${photo}`, m);
+    L("sys", "grains", `${index} : torréfaction ${roast ?? "aucune"}, photo ${photo}`, m);
     return raw(res, JSON.stringify({
       ok: true,
       index,
@@ -5262,7 +5382,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ ok: true, releves, beans: vueBeansMachine(m) }));
     } catch (e) {
       // Le message vient de Gigya/Ayla ou du DSN manquant, et ne contient aucun identifiant.
-      L("sys", `import des photos de grains impossible (${e.message})`, m);
+      L("sys", "grains", `impossible (${e.message})`, m);
       return raw(res, JSON.stringify({ error: e.message }), 502);
     }
   }
@@ -5561,7 +5681,7 @@ async function handleApi(req, res) {
   }
   if (url === "/api/cloudsession" && req.method === "DELETE") {
     const removed = forgetCloudSession();
-    L("sys", `session cloud : ${removed ? "oubliée" : "déjà absente"}`, m);
+    L("sys", "cloud", `${removed ? "oubliée" : "déjà absente"}`, m);
     return raw(res, JSON.stringify({ removed, set: false }));
   }
 
@@ -5595,7 +5715,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ ok: true, ...(await checkCloudOta(m, token)) }));
     } catch (e) {
       // Le message vient de Gigya/Ayla et ne contient aucun identifiant.
-      L("sys", `OTA : vérification impossible (${e.message})`, m);
+      L("sys", "OTA", `vérification impossible (${e.message})`, m);
       return raw(res, JSON.stringify({ error: e.message }), 502);
     }
   }
@@ -5652,7 +5772,7 @@ async function handleApi(req, res) {
       }));
     } catch (e) {
       // Le message d'erreur vient de Gigya/Ayla et ne contient pas d'identifiant.
-      L("sys", `clé LAN : échec de la découverte (${e.message})`, m);
+      L("sys", "clé LAN", `échec de la découverte (${e.message})`, m);
       return raw(res, JSON.stringify({ error: e.message }), 502);
     }
   }
@@ -5666,7 +5786,7 @@ async function handleApi(req, res) {
       m.lanKeySource = "inconnue";
       m.session = null;
     }
-    L("sys", `clé LAN : cache ${removed ? "supprimé" : "déjà absent"}`, m);
+    L("sys", "clé LAN", `cache ${removed ? "supprimé" : "déjà absent"}`, m);
     return raw(res, JSON.stringify({ removed, set: m.lanKey.length > 0, source: m.lanKeySource }));
   }
 
@@ -5748,7 +5868,7 @@ async function handleApi(req, res) {
       return raw(res, JSON.stringify({ error: "adresse invalide : attendu une IPv4 ou un nom d'hôte, sans schéma ni port ni chemin." }), 400);
     }
     if (envForced(m, "ip") && ip !== ENV_MACHINE.ip) {
-      L("sys", `⚠ adresse saisie (${ip}) différente de MACHINE_IP (${ENV_MACHINE.ip}) — le réglage explicite reste prioritaire au redémarrage`, m);
+      L("sys", "adresse", `saisie (${ip}) différente de MACHINE_IP (${ENV_MACHINE.ip}) — le réglage explicite reste prioritaire au redémarrage`, m);
     }
     const changed = applyMachineIp(m, ip);
     // On vérifie immédiatement : une adresse enregistrée mais muette doit être signalée comme
@@ -5782,7 +5902,7 @@ async function handleApi(req, res) {
       m.ipSource = "inconnue";
       m.session = null;
     }
-    L("sys", `adresse de la machine : cache ${had ? "supprimé" : "déjà absent"}`, m);
+    L("sys", "adresse", `cache ${had ? "supprimé" : "déjà absent"}`, m);
     return raw(res, JSON.stringify({ removed: had, ip: m.ip, source: m.ipSource }));
   }
 
@@ -5835,7 +5955,7 @@ await app.prepare();
 // Le registre est bâti AVANT d'écouter : une requête ne doit jamais arriver alors que l'état
 // persistant n'est pas encore repris — sinon une commande partirait avec une clé LAN « absente »
 // qui n'attendait que d'être relue.
-for (const msg of storeBootMessages) L("sys", msg);
+for (const msg of storeBootMessages) L("sys", "base", msg);
 for (const m of loadMachines()) {
   restoreActiveProfile(m);
   restoreMachineIp(m);
@@ -5845,8 +5965,8 @@ for (const m of loadMachines()) {
   // Après les reprises : le modèle est connu (variable, cache) ou non, et dans les deux cas c'est
   // ici que le catalogue et la génération sont arrêtés — et que leurs limites sont annoncées.
   applyCatalog(m);
-  if (!m.ip) L("sys", "adresse de la machine inconnue : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local", m);
-  if (!m.lanKey.length) L("sys", "clé LAN absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Machines » (compte De'Longhi)", m);
+  if (!m.ip) L("sys", "adresse", "inconnue : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local", m);
+  if (!m.lanKey.length) L("sys", "clé LAN", "absente : la renseigner dans .env.local, ou la faire découvrir depuis la page « Machines » (compte De'Longhi)", m);
 }
 
 createServer((req, res) => {
@@ -5861,7 +5981,7 @@ createServer((req, res) => {
       m.otaRequests.unshift({ at: Date.now(), url: u, method: req.method, from: peerAddress(req) });
       if (m.otaRequests.length > 20) m.otaRequests.pop();
     }
-    L("in", `requête OTA${m ? "" : ` d'un appareil non reconnu (${peerAddress(req)})`} : ${req.method} ${u}`, m);
+    L("in", "OTA", `${m ? "" : ` d'un appareil non reconnu (${peerAddress(req)})`} : ${req.method} ${u}`, m);
     return raw(res, JSON.stringify({ ota: "none" }), 404);
   }
   // Les deux endpoints que sert une VRAIE machine à un client local. Ils n'existent que si le
@@ -5878,16 +5998,16 @@ createServer((req, res) => {
     console.log(`  ${m.id}${m.label ? ` « ${m.label} »` : ""} : adresse ${m.ip ?? "à configurer"}, DSN ${m.dsn ?? "à découvrir"}, clé LAN ${m.lanKey.length ? `key_id ${m.lanKeyId}` : "absente"}`);
   }
   if (PROXY.actif) {
-    L("sys", `multiplexeur d'applications ACTIF : ce serveur répond à /regtoken.json et /local_reg.json comme le ferait la machine`);
+    L("sys", "multiplexeur", `ACTIF : ce serveur répond à /regtoken.json et /local_reg.json comme le ferait la machine`);
     if (CFG.port !== PORT_ATTENDU_PAR_APP) {
       // Dit une fois, fort : sans cela on cherche longtemps pourquoi aucune application ne vient.
-      L("sys", `⚠ nous écoutons sur ${CFG.port}, or une application construit ses URL en http://<ip>/ — donc port ${PORT_ATTENDU_PAR_APP}, et nulle part ailleurs. Écouter sur ${PORT_ATTENDU_PAR_APP} (SERVER_PORT) ou rediriger, sinon aucune app ne nous trouvera.`);
+      L("sys", "multiplexeur", `nous écoutons sur ${CFG.port}, or une application construit ses URL en http://<ip>/ — donc port ${PORT_ATTENDU_PAR_APP}, et nulle part ailleurs. Écouter sur ${PORT_ATTENDU_PAR_APP} (SERVER_PORT) ou rediriger, sinon aucune app ne nous trouvera.`);
     }
   }
   const problemeServerIp = serverIpProblem();
   if (problemeServerIp) {
     const vues = candidateServerIps();
-    L("sys", `⚠ ${problemeServerIp} — or c'est l'adresse que nous ANNONÇONS à la machine : en mode LAN, c'est elle qui se connecte à nous. Aucune session ne pourra s'établir. Adresses non locales vues d'ici : ${vues.length ? vues.join(", ") : "aucune"}. En conteneur bridge, annoncer l'adresse de l'HÔTE, pas celle du conteneur.`);
+    L("sys", "réseau", `${problemeServerIp} — or c'est l'adresse que nous ANNONÇONS à la machine : en mode LAN, c'est elle qui se connecte à nous. Aucune session ne pourra s'établir. Adresses non locales vues d'ici : ${vues.length ? vues.join(", ") : "aucune"}. En conteneur bridge, annoncer l'adresse de l'HÔTE, pas celle du conteneur.`);
   }
   // `compare` : on interroge la machine même quand le DSN est déjà connu, pour signaler une
   // divergence au démarrage plutôt que de la découvrir au premier échec de commande.

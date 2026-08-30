@@ -17,6 +17,40 @@ import { MachineSummary, currentMachine } from "./machine";
  * machine peut changer — et qu'une deuxième copie de la logique d'abonnement aurait divergé au
  * premier correctif.
  */
+/**
+ * Un lot de lignes de journal — l'amorce (`complet`) ou un ajout.
+ *
+ * La forme est la même sur le fil et sur `GET /api/journal` : c'est ce qui permet au repli par
+ * minuteur de repasser exactement par le même code de fusion que le flux.
+ */
+export interface LotJournal {
+  lignes: LigneJournal[];
+  complet: boolean;
+  jusqu: number;
+}
+
+/**
+ * Une ligne, telle que `L()` / `LA()` l'écrivent dans `server.mjs`.
+ *
+ * `id` identifie la ligne pour toujours ; `n` date sa dernière touche. Un repli de répétitions
+ * mute la ligne en place côté serveur et lui donne un `n` neuf : c'est pour ça que la fusion se
+ * fait par `id` et jamais par rang. Voir l'en-tête de `journalSeq` dans `server.mjs`.
+ */
+export interface LigneJournal {
+  id: number;
+  n: number;
+  t: number;
+  source: "machine" | "apps";
+  dir: "in" | "out" | "sys";
+  sujet: string;
+  resume: string;
+  m: string | null;
+  app: string | null;
+  repetitions: number;
+  /** La valeur base64 telle qu'elle a circulé, ou `null`. Décodée à l'ouverture du tiroir. */
+  trame: string | null;
+}
+
 export interface PushState {
   machines: MachineSummary[];
   defaultId: string;
@@ -30,10 +64,15 @@ export interface PushState {
  * Le rappel est gardé dans une **référence** : passé en dépendance de l'effet, une fonction
  * recréée à chaque rendu ferait fermer et rouvrir la connexion en boucle.
  */
-export function useMachineEvents(onPush: (p: PushState) => void): { live: boolean } {
+export function useMachineEvents(
+  onPush: (p: PushState) => void,
+  onJournal?: (lot: LotJournal) => void,
+): { live: boolean } {
   const [live, setLive] = useState(true);
   const cb = useRef(onPush);
   cb.current = onPush;
+  const cbJ = useRef(onJournal);
+  cbJ.current = onJournal;
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
@@ -49,6 +88,21 @@ export function useMachineEvents(onPush: (p: PushState) => void): { live: boolea
         /* une trame illisible ne doit pas casser l'abonnement */
       }
     };
+    /**
+     * Le journal voyage sur le MÊME flux, dans un évènement **nommé**.
+     *
+     * `onmessage` ci-dessus ne reçoit que les évènements anonymes : ajouter celui-ci ne change
+     * donc rien pour les six pages qui ne demandent que l'état, et surtout n'ouvre pas une
+     * seconde connexion. Une page qui veut le journal passe un second rappel, c'est tout.
+     */
+    es.addEventListener("journal", (e) => {
+      if (!cbJ.current) return;
+      try {
+        cbJ.current(JSON.parse((e as MessageEvent).data) as LotJournal);
+      } catch {
+        /* idem : un lot illisible ne doit pas casser l'abonnement */
+      }
+    });
     es.onerror = () => setLive(false);
     return () => es.close();
   }, []);

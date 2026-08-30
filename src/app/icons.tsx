@@ -75,7 +75,10 @@ export type NomIcone =
   | "retourner"
   | "appareil"
   | "copier"
-  | "reglages";
+  | "reglages"
+  | "entrant"
+  | "sortant"
+  | "systeme";
 
 /** La tasse, dessinée une fois : c'est l'objet du produit et la marque, et c'est aussi l'action. */
 const TASSE = (
@@ -262,6 +265,33 @@ const TRACES: Record<NomIcone, React.ReactNode> = {
       <path d="M4.4 16.4h15.2" />
       <circle cx="9.2" cy="7.6" r="2.5" />
       <circle cx="15.2" cy="16.4" r="2.5" />
+    </>
+  ),
+  /* **Les trois directions du journal, et pourquoi elles sont dessinees.** La couleur seule les
+     distinguait — vert, ambre, gris — ce qui ne laisse rien a qui les confond, et rien du tout
+     dans une capture en noir et blanc. Meme grammaire pour les trois : une ligne de seuil, et ce
+     qui la franchit. La machine nous parle (fleche qui descend vers le seuil), nous lui parlons
+     (fleche qui monte depuis le seuil), et le serveur se parle a lui-meme (rien ne franchit :
+     un jalon pose sur la ligne). */
+  entrant: (
+    <>
+      <path d="M12 4v10" />
+      <path d="M7.5 9.5 12 14l4.5-4.5" />
+      <path d="M4.5 19h15" />
+    </>
+  ),
+  sortant: (
+    <>
+      <path d="M12 20V10" />
+      <path d="M7.5 14.5 12 10l4.5 4.5" />
+      <path d="M4.5 5h15" />
+    </>
+  ),
+  systeme: (
+    <>
+      <path d="M4.5 12h4.2" />
+      <path d="M15.3 12h4.2" />
+      <path d="M12 9.2 14.8 12 12 14.8 9.2 12Z" />
     </>
   ),
   /* **Modifier : le crayon.** Distinct de la disquette parce que les deux vivent sur la même page :

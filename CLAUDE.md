@@ -103,7 +103,7 @@ type-check, so they look alive. The live implementations are the `.mjs` siblings
 | Module | Role |
 |---|---|
 | `tasks.mjs` | the scheduler (pure: the instant is always a parameter) |
-| `ecam-args.mjs` | the ECAM protocol reference: op table, frame reading, argument decoding. Anything that *names* a command reads this table |
+| `ecam-args.mjs` | the ECAM protocol reference: op table, frame reading, argument decoding. Anything that *names* a command reads this table. **Isomorphic** — no `Buffer`, because `/pilotage`'s journal decodes frames in the browser |
 | `beverages.mjs` | per-model beverage catalog, Ayla property namespace, recipe bounds |
 | `ingredients.mjs` + `transfert.mjs` | what actually goes into a persistent recipe write |
 | `trame-bornes.mjs` | bounds-frame encoding |
@@ -132,6 +132,41 @@ a task may be suspended *at a step boundary* by a strictly higher rank. Three wa
 `device_connected` is served first and then every fifth visit, or the machine stops considering us
 present. Presence-sustaining frames must be side-effect free: **`0xA9` selects a profile**, so using
 it as a heartbeat silently forces profile 1.
+
+### The journal — an append-only stream, not a list that gets re-downloaded
+
+`L()` / `LA()` take a **subject and a summary as two arguments**, not one sentence: the subject is a
+*column* in `/pilotage`, and that alignment is what lets you scan a journal instead of re-reading
+fifty phrases. Deducing it at render time — cut at the first `:` — worked on the messages that
+follow the convention and left an empty column on the others, silently. The signature makes it
+impossible to add a line without one. A line also carries the **frame as base64**, never a decode.
+
+Each entry is `{id, n, t, source, dir, sujet, resume, m, app, repetitions, trame}`, and **`id` and
+`n` are two different things**. `id` names the line forever; `n` dates its last touch. Folding a
+consecutive repetition mutates the head in place (`repetitions++`) and gives it a fresh `n` so it
+travels again — but its `id` does not move, so the browser **replaces** the line it already has
+instead of stacking a twenty-fourth copy. Without that split, repetition folding — the one thing
+that keeps a journal readable when everything is on fire — is exactly what the stream would break.
+The sequence is shared by both journals: the browser holds one cursor.
+
+The transport: `GET /api/journal` once at mount, then a **named SSE event** (`event: journal`) on
+the connection that is already open. `EventSource.onmessage` only receives *anonymous* events, so
+the six pages on `useMachineEvents` see nothing new — by construction, not by care. Each frame
+carries an `id:`, so the browser sends `Last-Event-ID` on reconnect and the server replays from
+there; a cursor older than the last evicted line gets the whole window back, marked `complet`, and
+the client replaces rather than appending to a holed timeline.
+
+Measured on the test machine before this: `/api/status` weighed **8 185 bytes, of which 5 685
+(69 %) was journal** — 50 lines re-downloaded whole on every SSE push, i.e. every 250 ms during a
+preparation, for ~114 bytes of new information. The journal has left that response. A push now
+carries **~400 bytes for two lines**; the initial window is 3 152 bytes, once. And filters work on
+the full 400-line window the client holds, so "no result" can never mean "only the last fifty".
+
+⚠️ **`ecam-args.mjs` no longer knows `Buffer`, and that is what makes it usable in a browser.** It
+ran one at *load* time (the `0x37` constant), so importing it from a page threw before the first
+line of render and `/pilotage` came up blank with nothing saying why. The journal's drawer decodes
+a frame client-side, and it must do it with *that* table, not a copy — hence `Uint8Array` and
+`atob`, available on both sides. The server keeps its `Buffer`s everywhere else; they index alike.
 
 ### Storage
 
@@ -233,6 +268,20 @@ Three native elements were deliberately reversed in that migration — `<select>
 `<input type="range">`. Each was rendering a real service the component now owes:
 `scripts/verif-surfaces.mjs` checks all three in a real browser (focus trap, Escape, background
 inertness, the `--crans` graduation, the profile listbox). Do not weaken those assertions.
+
+⚠️ **The layer cascade bites hardest on a bare `<button>`, and it bit three times in one block.**
+`globals.css` declares `@layer theme, base, surfaces, facade, components, utilities`, and
+`surfaces.css` is imported into `surfaces` — so anything in `facade` or above wins over it
+**whatever the specificity**. The journal's rows are `<button>` when they have a frame and `<div>`
+when they do not, which made every one of these visible side by side: `button:not([data-slot])` in
+`surfaces` (0,1,1) beat `.journalBascule` (0,1,0) on `padding`, so rows came out 4 px wider than
+their own header; and `button, input, select, textarea { font: inherit; line-height: 1.2 }` in
+**`facade`** beat even `button.journalBascule:not([data-slot])` (0,2,1) on `font-size`, so lines
+with a drawer rendered at 16 px next to their neighbours at 12. Specificity cannot answer the
+second one — only moving the matter onto the component can, which is why `CORPS_LIGNE` in
+`Journal.tsx` carries the size and leading as utilities. Both are measured in `verif-surfaces.mjs`.
+And a bare `<select>` / `<input>` inherits **nothing** here: the repo dresses its fields through
+shadcn's `[data-slot]`, so use `Input` and `Select` or they ship transparent and 44 px tall.
 
 ⚠️ **Two faces in one DOM is two sets of tab stops.** `/beans` cards flip (`src/app/CarteGrain.tsx`):
 a poster on the front, everything editable on the back. `backface-visibility` hides a face from the

@@ -3,6 +3,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
 import { useMachineEvents } from "../events";
+import { useJournal } from "../journalFlux";
+import Journal from "../Journal";
 import { useConfirm } from "../confirm";
 import ConfirmSettings from "../ConfirmSettings";
 import { cleAnnonce, echecAnnonce } from "../register";
@@ -118,14 +120,22 @@ export default function Dashboard() {
    * que le minuteur cherchait à imiter. Relire `/api/status` ne journalise rien, donc pas de
    * boucle (vérifié : dix appels, zéro évènement provoqué).
    */
-  const { live } = useMachineEvents(refresh);
+  /**
+   * Le journal ne passe plus par `refresh()` : il s'amorce une fois puis n'arrive que par ajouts,
+   * sur le MEME flux (evenement nomme `journal`). Mesure d'avant : `/api/status` pesait 8 185
+   * octets dont 5 685 de journal, releus en entier a chaque poussee. Voir `useJournal`.
+   */
+  const journal = useJournal();
+  const { live } = useMachineEvents(refresh, journal.recevoir);
 
   // Repli, et seulement là : si le flux ne s'établit pas, on revient au minuteur, et on le dit.
   useEffect(() => {
     if (live) return;
-    const t = setInterval(refresh, 3000);
+    // Le journal repasse par le meme minuteur, et par le meme code de fusion : `rattraper()` ne
+    // redemande que ce qui a paru depuis le curseur, jamais la fenetre entiere.
+    const t = setInterval(() => { refresh(); journal.rattraper(); }, 3000);
     return () => clearInterval(t);
-  }, [live, refresh]);
+  }, [live, refresh, journal]);
 
   const send = async (scope: Scope, bodyObj: any, ok?: (r: any) => string) => {
     setBusy(true);
@@ -1033,23 +1043,7 @@ export default function Dashboard() {
         <section className="pleine" aria-labelledby="titre-journal-apps">
         <h2 id="titre-journal-apps">{tapps("journalHeading")}</h2>
         <Card className="log">
-          {!apps.journal?.length ? (
-            <p className="sub">{tapps("journalNone")}</p>
-          ) : (
-            apps.journal.map((e: any, i: number) => (
-              <div key={e.n ?? i} className={e.dir}>
-                [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
-                {/* L'identifiant est une COLONNE, pas un préfixe de message : c'est ce qui permet
-                    de suivre un téléphone parmi trois. Pour un refus, il n'y a pas encore d'entrée
-                    au registre, et c'est l'adresse qui tient la place. */}
-                {e.app ? ` · ${e.app}` : ""} · {e.msg}
-                {/* Le serveur replie les lignes consécutives identiques (voir `LA()`), et une
-                    rediffusion d'état se répète toutes les 1 à 3 s pendant une préparation : sans
-                    ce compte, vingt envois se liraient comme un seul. */}
-                {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
-              </div>
-            ))
-          )}
+          <Journal lignes={journal.lignes} source="apps" />
         </Card>
         </section>
       )}
@@ -1057,18 +1051,10 @@ export default function Dashboard() {
       <section className="pleine" aria-labelledby="titre-journal">
       <h2 id="titre-journal">{t("journal")}</h2>
       <Card className="log">
-        {status?.log?.map((e: any, i: number) => (
-          <div key={e.n ?? i} className={e.dir}>
-            [{new Date(e.t).toLocaleTimeString()}] {e.dir.toUpperCase()}
-            {/* Le journal est unique, toutes machines confondues : sans cette étiquette, deux
-                cafetières produiraient une chronologie indéchiffrable. Elle n'apparaît qu'à partir
-                de deux machines, sinon elle se répéterait à chaque ligne pour rien. */}
-            {(status?.machines?.length ?? 0) > 1 && e.m ? ` · ${e.m}` : ""} · {e.msg}
-            {/* Le serveur replie les répétitions consécutives (voir `L()`) : sans ce compte, une
-                ligne repliée ferait croire à un incident isolé là où il y en a eu vingt-quatre. */}
-            {e.repetitions > 1 ? ` (×${e.repetitions})` : ""}
-          </div>
-        ))}
+        {/* L'étiquette de machine n'apparaît qu'à partir de DEUX machines, comme avant : le
+            journal est unique, toutes machines confondues, et la répéter à chaque ligne quand il
+            n'y en a qu'une occuperait une colonne pour ne rien distinguer. */}
+        <Journal lignes={journal.lignes} source="machine" multiMachine={(status?.machines?.length ?? 0) > 1} />
       </Card>
       </section>
       </div>
