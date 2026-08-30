@@ -310,6 +310,21 @@ const BRUIT_ATTENDU = [
   { motif: /\/api\/presence/, raison: "409 attendu : ni clé LAN ni adresse dans la base semée" },
 ];
 
+/**
+ * Les visuels sont GITIGNORÉS (`public/boissons/`, `public/grains/` — œuvres De'Longhi, le dépôt
+ * ne transporte que les tables de correspondance). Un clone neuf — la CI, donc — n'en a aucun, et
+ * chaque vignette y répond 404 : la page d'accueil à elle seule en produit dix-sept.
+ *
+ * ⚠️ **On excuse ces 404 quand le dossier est ABSENT, jamais parce que l'URL ressemble à un
+ * visuel.** Un motif inconditionnel rendrait l'assertion aveugle là où elle sert le plus : chez qui
+ * a les images, une empreinte qui dérive (`?v=…` désaccordé de la table) est exactement un 404 sur
+ * cette route, et c'est la seule chose qui le dise. Le dossier présent, le contrôle reste entier ;
+ * le dossier absent, il n'y a rien à prouver — `verif-images.mjs` couvre déjà les accords de code.
+ */
+const VISUELS_ABSENTS = ["boissons", "grains"]
+  .filter((d) => !existsSync(join(RACINE_DEPOT, "public", d)))
+  .map((d) => ({ motif: new RegExp(`/${d}/[^/]+\\.webp`), raison: `public/${d}/ absent de ce clone` }));
+
 /** Les trois redirections : elles doivent RESTER des redirections, c'est leur seule fonction. */
 const REDIRECTIONS = [
   { url: "/boissons", vers: "/" },
@@ -327,7 +342,9 @@ if (!chrome) {
   console.log("Pointer CHROME_PATH sur un binaire Chrome ou Chromium pour l'exécuter.");
   process.exit(0);
 }
-console.log(`Chrome : ${chrome}\n`);
+console.log(`Chrome : ${chrome}`);
+for (const v of VISUELS_ABSENTS) console.log(`⚠ ${v.raison} — ses 404 ne seront pas comptés.`);
+console.log("");
 
 const dir = mkdtempSync(join(tmpdir(), "verif-surfaces-"));
 const cible = await semer(dir);
@@ -369,7 +386,8 @@ try {
         vrai(trouve, `repère « ${nom} » absent`);
       }
       // Les avertissements de développement de React ne sont pas des erreurs ; les erreurs, si.
-      const restants = echecs.filter((e) => !BRUIT_ATTENDU.some((b) => b.motif.test(e)));
+      const excuses = [...BRUIT_ATTENDU, ...VISUELS_ABSENTS];
+      const restants = echecs.filter((e) => !excuses.some((b) => b.motif.test(e)));
       vrai(restants.length === 0, `requête(s) en échec : ${restants.join(" | ")}`);
       // Une erreur de script n'a pas de réponse HTTP : elle se compte à part, et rien ne l'excuse.
       const scripts = erreurs.filter((e) => !/Failed to load resource/.test(e));
