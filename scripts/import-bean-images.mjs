@@ -15,7 +15,8 @@
  *
  * - **`src/lib/bean-images.json`** — la CORRESPONDANCE, versionnée : des rôles, des noms de
  *   fichiers, une empreinte. Aucune œuvre graphique.
- * - **`public/grains/*.png`** — les IMAGES, dans un répertoire **gitignoré**.
+ * - **`public/grains/*.png`** — les IMAGES. Le répertoire était gitignoré ; il est versionné
+ *   depuis le 2026-09-01, sur décision explicite du propriétaire du dépôt.
  * - **`public/grains/questions.json`** — la réponse du service, telle quelle, à côté des images.
  *   C'est elle qui rend `--json` possible, donc le script rejouable **sans réseau**.
  *

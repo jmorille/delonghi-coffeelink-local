@@ -13,19 +13,13 @@ next-env.d.ts
 # de previsualisation avec son jeton). Local, jamais publie.
 .impeccable/
 
-# Visuels de boissons extraits de l'APK par scripts/extract-images.mjs. Le dépôt transporte la
-# CORRESPONDANCE (src/lib/beverage-images.json, une table de noms dérivée par analyse), jamais les
-# images : elles appartiennent à De'Longhi, et lan-server est publié — image GHCR, archive de
-# release, dépôt public. Même règle que apk/ et decompiled/, dont elles sortent.
-public/boissons/
+# ⚠️ `public/boissons/` et `public/grains/` sont désormais VERSIONNÉS, sur décision explicite du
+# propriétaire du dépôt (2026-09-01). Ce sont des visuels De'Longhi — extraits de l'APK pour les
+# boissons, tirés du seau S3 du questionnaire pour les grains — et le dépôt est public : ils sont
+# donc redistribués. Les tables de correspondance (src/lib/beverage-images.json,
+# src/lib/bean-images.json) et les scripts qui les régénèrent restent en place ; ils ne sont plus
+# la seule façon d'obtenir les fichiers.
 
-
-# Visuels de GRAINS importés par scripts/import-bean-images.mjs — les quatre niveaux de
-# torréfaction et les trois aspects de crema, plus la copie du questionnaire qui les nomme. Même
-# règle que public/boissons/ ci-dessus, et le fait qu'ils viennent d'un seau S3 ouvert n'y change
-# rien : un seau public autorise à lire, pas à republier. Le dépôt transporte la table
-# (src/lib/bean-images.json), jamais les images.
-public/grains/
 
 # Conversions SVG de ces mêmes visuels (scripts de test). Une œuvre dérivée reste l'œuvre : les
 # vectoriser ne les rend pas redistribuables. Elles suivent donc public/boissons/ ci-dessus.

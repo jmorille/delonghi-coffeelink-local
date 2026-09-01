@@ -25,10 +25,10 @@ import { RadioGroup, RadioGroupCran } from "@/ui/radio-group";
  * copies de « photo sinon torréfaction sinon initiales » divergeraient au premier ajustement, et
  * divergeraient en silence : chaque grille afficherait quelque chose de plausible.
  *
- * ⚠️ **`public/grains/` est gitignoré et le Dockerfile ne copie pas `public/`.** Ni un clone frais
- * ni l'image publiée n'ont un seul de ces visuels — les images appartiennent à De'Longhi (voir
- * l'en-tête de `scripts/import-bean-images.mjs`). L'absence est donc le cas MAJORITAIRE, pas le cas
- * limite : le `onError` ci-dessous et le `repli` de l'appelant sont ce qui la rend normale plutôt
+ * ⚠️ **Le Dockerfile ne copie pas `public/`.** Les visuels sont versionnés depuis le 2026-09-01,
+ * donc un clone frais les a ; l'image publiée, elle, n'en a pas un seul — et ils appartiennent à
+ * De'Longhi (voir l'en-tête de `scripts/import-bean-images.mjs`). L'absence reste donc un état
+ * courant : le `onError` ci-dessous et le `repli` de l'appelant sont ce qui la rend normale plutôt
  * que visible. Même discipline que `BeverageImage.tsx`, et pour la même raison.
  */
 
@@ -166,8 +166,9 @@ export function VignetteGrains({
  *
  * Les trois états d'un visuel passent par le même cadre — photo, sinon dessin de torréfaction,
  * sinon initiales gravées — et c'est `VignetteGrains` qui tranche, comme partout ailleurs.
- * **L'absence est le cas majoritaire** (`public/grains/` est gitignoré, le Dockerfile ne copie pas
- * `public/`) : les initiales à la taille de l'affiche ne sont donc pas un pis-aller, c'est l'état
+ * **L'absence reste un état courant** (le Dockerfile ne copie pas `public/`, donc l'image publiée
+ * n'emporte aucun visuel) : les initiales à la taille de l'affiche ne sont pas un pis-aller, c'est
+ * l'état
  * normal du produit, et le cadre doit y être aussi juste qu'avec une photo. D'où le fond brossé —
  * un creux usiné, et non un rectangle uni qui se lirait « image manquante ».
  *

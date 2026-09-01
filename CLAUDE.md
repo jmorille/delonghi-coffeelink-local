@@ -325,11 +325,18 @@ the first line of TSX. The full reasoning is in the header of `eslint.config.mjs
 ## Secrets and data hygiene
 
 Never commit, publish, or attach to a report: `.env.local`; `data/lan-server.db` (LAN keys, serial
-numbers, profile names — treat it as a password file); `public/boissons*` and `public/grains/`
-(De'Longhi artwork — the repo ships the *mappings* `src/lib/beverage-images.json` and
-`src/lib/bean-images.json`, never the images; that the bean visuals come from an open S3 bucket
-changes nothing — a public bucket grants permission to read, not to republish); the workspace's `apk/`,
-`decompiled/` and `docs/`. `src/lib/cloud-app.json` is committed on purpose and is not secret.
+numbers, profile names — treat it as a password file); the workspace's `apk/`, `decompiled/` and
+`docs/`. `src/lib/cloud-app.json` is committed on purpose and is not secret.
+
+⚠️ **`public/boissons/` and `public/grains/` were versioned on 2026-09-01, by an explicit decision
+of the repository's owner, and that reverses what this section used to forbid.** They are
+De'Longhi artwork — extracted from the APK for the beverages, pulled from the questionnaire's S3
+bucket for the beans — and this repository is public, so they are now redistributed. The mappings
+(`src/lib/beverage-images.json`, `src/lib/bean-images.json`) and the scripts that regenerate them
+stay exactly as they were; they are simply no longer the only way to obtain the files. The other
+derivations remain ignored (`public/boissons-*/`, `public/boissons-svg/`) — the decision covered
+the two directories named above, not every variant one may extract. Removing the images later
+takes a history rewrite, not a `git rm`.
 
 Device-specific values in any documentation are written as markers (`IP_MACHINE`,
 `AC000W0XXXXXXXX`, `VLAN_IOT`, "Grain A/B"). `scripts/faux-app.mjs` is deliberately incapable of

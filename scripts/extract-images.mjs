@@ -10,7 +10,8 @@
  * - **`src/lib/beverage-images.json`** — la CORRESPONDANCE, versionnée. C'est une table de noms
  *   dérivée par analyse, au même titre que `machine-catalogs.json` : elle ne contient aucune
  *   œuvre graphique, seulement des identifiants et des noms de fichiers.
- * - **`public/boissons/*.webp`** — les IMAGES elles-mêmes, dans un répertoire **gitignoré**.
+ * - **`public/boissons/*.webp`** — les IMAGES elles-mêmes. Le répertoire était gitignoré ; il est
+ *   versionné depuis le 2026-09-01, sur décision explicite du propriétaire du dépôt.
  *
  * ⚠️ **Cette séparation est délibérée.** Les visuels appartiennent à De'Longhi, et `lan-server`
  * est publié — image GHCR, archive de release, dépôt public. Les committer les redistribuerait.

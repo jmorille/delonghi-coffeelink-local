@@ -1,0 +1,99 @@
+{
+  "questions": [
+    {
+      "answers": [
+        {
+          "id": "1",
+          "id_answer": "prequestion_1_answer_1",
+          "type": 1
+        },
+        {
+          "id": "2",
+          "id_answer": "prequestion_1_answer_2",
+          "type": 1
+        }
+      ],
+      "id_title": "prequestion_1_title",
+      "id_question": "prequestion_1_paragraph",
+      "id": 1
+    },
+    {
+      "answers": [
+        {
+          "id": "1",
+          "id_answer": "prequestion_2_answer_1",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans1.png",
+          "type": 1
+        },
+        {
+          "id": "2",
+          "id_answer": "prequestion_2_answer_2",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans2.png",
+          "type": 1
+        },
+        {
+          "id": "3",
+          "id_answer": "prequestion_2_answer_3",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans3.png",
+          "type": 1
+        },
+        {
+          "id": "4",
+          "id_answer": "prequestion_2_answer_4",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/basic/q2/Beans4.png",
+          "type": 1
+        }
+      ],
+      "id_title": "prequestion_2_title",
+      "id_question": "prequestion_2_paragraph",
+      "id": 2
+    },
+    {
+      "answers": [
+        {
+          "id": "2",
+          "id_answer": "question_1_answer_1",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/dark.png",
+          "type": 1
+        },
+        {
+          "id": "1",
+          "id_answer": "question_1_answer_2",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/light.png",
+          "type": 1
+        },
+        {
+          "id": "3",
+          "id_answer": "question_1_answer_3",
+          "img": "https://delonghibe.s3-eu-west-1.amazonaws.com/CoffeeLink/BS/img/adv/q2/no_crema.png",
+          "type": 1
+        }
+      ],
+      "id_title": "question_1_title",
+      "id_question": "question_1_paragraph",
+      "id": 11
+    },
+    {
+      "answers": [
+        {
+          "id": "1",
+          "id_answer": "question_2_answer_1",
+          "type": 1
+        },
+        {
+          "id": "2",
+          "id_answer": "question_2_answer_2",
+          "type": 1
+        },
+        {
+          "id": "3",
+          "id_answer": "question_2_answer_3",
+          "type": 1
+        }
+      ],
+      "id_title": "question_2_title",
+      "id_question": "question_2_paragraph",
+      "id": 12
+    }
+  ]
+}

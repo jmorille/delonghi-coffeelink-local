@@ -1341,12 +1341,12 @@ function profileLabel(profiles: ProfileInfo[], id: number): string {
 /**
  * **Le visuel d'une boisson — ou rien du tout, et c'est le point.**
  *
- * Les images viennent de l'APK et sont la propriété de De'Longhi : `public/boissons/` est
- * **gitignoré** (voir `scripts/extract-images.mjs`). Une installation qui n'a pas lancé
- * l'extraction n'en a donc aucune — c'est le cas d'un clone neuf, de l'image Docker et de
- * l'archive de release, c'est-à-dire du cas NORMAL. Une carte qui afficherait alors l'icône de
- * lien brisé du navigateur, vingt-huit fois, serait une régression pour tout le monde sauf pour
- * celui qui possède l'application.
+ * Les images viennent de l'APK et sont la propriété de De'Longhi. Elles sont **versionnées depuis
+ * le 2026-09-01** (décision explicite du propriétaire du dépôt), donc un clone neuf en a — mais le
+ * **Dockerfile ne copie pas `public/`**, et l'archive de release non plus. L'image publiée, et
+ * toute installation qui n'a pas lancé l'extraction, n'en ont aucune : l'absence reste un état
+ * courant, pas un cas limite. Une carte qui afficherait alors l'icône de lien brisé du navigateur,
+ * vingt-huit fois, serait une régression pour tout le monde sauf pour qui a fait un clone.
  *
  * D'où `onError` : la vignette se retire, la carte reprend exactement l'allure qu'elle avait
  * avant. L'absence d'image n'est pas une erreur à signaler, c'est l'état par défaut.

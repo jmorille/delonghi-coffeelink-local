@@ -47,8 +47,9 @@ export function useImageLabel() {
  * tant qu'elles n'ont pas été nommées, auquel cas il n'y a ni nom ni index, et les initiales
  * prennent le relais.
  *
- * Le cas majoritaire est pourtant l'autre : `public/boissons/` est gitignoré ET le Dockerfile ne
- * copie pas `public/`, donc l'installation par défaut n'a **aucun** dessin. Une affiche dont l'image
+ * Le cas majoritaire est pourtant l'autre : le Dockerfile ne copie pas `public/` (les images sont
+ * versionnées depuis le 2026-09-01, mais l'image publiée ne les emporte pas), donc l'installation
+ * par défaut n'a **aucun** dessin. Une affiche dont l'image
  * fait le tiers de la hauteur ne peut pas y laisser un trou : ce serait vingt-huit trous.
  *
  * D'où les initiales, dans le registre gravé — le seul endroit de ce produit où les capitales
