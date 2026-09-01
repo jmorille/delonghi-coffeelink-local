@@ -225,12 +225,59 @@ async function semer(dir) {
      Valeurs fabriquées, comme les bornes ci-dessus — aucune ne sort d'une vraie machine. */
   s.putBeanSystem({ index: 0, name: "Bean Adapt (ON/OFF)", grinder: 0, temperature: 0, aroma: 0, visible: true, active: false });
   s.putBeanSystem({ index: 3, name: "Grain de banc", grinder: 4, temperature: 2, aroma: 3, visible: true, active: true });
+  /* **Deux compteurs `0xA2`, pour que les deux familles de paramètres coexistent à l'écran.**
+     Sans eux `/statistiques` reste sur « aucun compteur lu » et le bloc des mots 500-509 serait le
+     seul de la page : l'ancrer par sa section ne prouverait rien, et « les deux relevés sont datés »
+     n'aurait qu'une date. 3000 est un compteur au sens établi, 101 est l'inconnu dont le relevé
+     différentiel du 2026-08-20 dit seulement qu'il n'est ni de l'eau ni un nombre de boissons —
+     c'est lui que le mot 502 est censé permettre d'élucider. Valeurs fabriquées, comme le reste. */
+  s.putStats([{ id: 101, value: 4321 }, { id: 3000, value: 9105 }]);
+  /* **Le relevé de la machine, sans lequel « Affiner » n'a rien à montrer.** `d260` porte
+     l'écoulement mesuré (mot 2, en ms) et le compteur d'espressos (mot 5) : sans lui, la carte du
+     grain actif retomberait sur « Déjà actif » et l'assistant n'aurait aucune mesure à reprendre —
+     affirmer l'un ou l'autre reviendrait à constater une absence.
+
+     Valeurs FABRIQUÉES, comme tout ce qui est semé ici : 12 345 ms donne 12 s tronquées — dans la
+     fenêtre acceptable, et surtout différent du 15 par défaut du champ, sans quoi « la mesure a
+     bien été reprise » serait vrai par coïncidence. 9 espressos passent le seuil de 5.
+     La branche VERROUILLÉE n'est pas semée ici : elle est pure, et `verif-beansync.mjs` la couvre
+     sur les deux générations — un navigateur n'y ajouterait rien. */
+  const { BEAN_SYNC_PROP } = await import("../src/lib/profiles.mjs");
+  s.putProp(BEAN_SYNC_PROP, {
+    at: Date.now(), kind: "beanSync",
+    selected: 3, ecoulementMs: 12345, espressos: 9,
+    mots: [0, 0, 12345, 0, 3, 9, 0, 0, 0, 0], hex: "",
+  });
   /* **Une photo d'UN pixel sur l'emplacement 3, et elle est nécessaire.** Elle ne montre rien : elle
      fait exister l'état « cet emplacement a une photo », donc la commande de retrait, qui n'a aucun
      endroit où apparaître sans elle. Affirmer son absence n'aurait rien vérifié du tout.
      `s3` et non `b3` — l'espace de noms des emplacements de la machine, distinct de celui des fiches
      mémorisées ; c'est le préfixe qui les tient séparés dans la même colonne. */
   s.putBeanImage("s3", "image/png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64"));
+  /**
+   * **Les compteurs NOMMÉS — le second canal, celui des propriétés Ayla (`compteurs.mjs`).**
+   *
+   * Cinq entrées choisies pour couvrir les cinq états que la carte doit savoir distinguer, parce
+   * que chacun se rend différemment et qu'aucun ne se déduit des autres :
+   *
+   *   - `d553` : le SEUL converti. 387 213 demi-millilitres → 194 L. C'est la valeur qui prouve
+   *     qu'on divise par 2000 et non par 1000 : à /1000 la page afficherait 387, plausible et faux
+   *     — exactement ce que publie l'intégration Home Assistant dont la table vient ;
+   *   - `d733` : un compteur en OBJET JSON (Striker), dont la ventilation doit descendre à l'écran ;
+   *   - `d705` : un compteur PAR BOISSON, étiqueté par le catalogue et non par une clé — et
+   *     `source: eletta`, donc porteur de la marque « relevé Eletta » ;
+   *   - `d556` : ABSENTE. Elle ne doit pas compter comme une valeur, et elle doit être nommée en
+   *     bas de carte : « absente sur ce modèle » et « jamais lue » sont deux choses différentes ;
+   *   - `d512` : de la famille ENTRETIEN, donc dans son propre groupe nommé, et en pourcentage.
+   *
+   * Valeurs fabriquées, comme tout le reste ici — aucune ne sort d'une vraie machine.
+   */
+  const at = Date.now();
+  s.putProp("d553_water_tot_qty", { at, kind: "counter", value: 387213, breakdown: null, brut: "387213" });
+  s.putProp("d733_tot_bev_counters", { at, kind: "counter", value: 49, breakdown: { tot_bev_bw: "40", tot_bev_w: "9" }, brut: "{}" });
+  s.putProp("d705_tot_id1_espr", { at, kind: "counter", value: 1234, breakdown: null, brut: "1234" });
+  s.putProp("d556_water_hardness", { at, kind: "counter", absent: true });
+  s.putProp("d512_percentage_to_deca", { at, kind: "counter", value: 62, breakdown: null, brut: "62" });
   return cible;
 }
 
@@ -598,6 +645,46 @@ try {
   });
 
   /**
+   * ── CE QUE LE PROFIL PORTE QUAND MÊME ──────────────────────────────────────────────────────
+   *
+   * La trame `0xA6` de ce profil A ÉTÉ LUE, et elle donne 0 pour les trois quantités — hors des
+   * bornes que la trame `0xB0` déclare (40-240, 60-460, 50-260). `valeurProfil` l'écarte, et il a
+   * raison : 0 ml est une quantité que la boisson refuse. Mais l'écarter EN SILENCE produit une
+   * carte où rien ne distingue « pas encore lu » de « lu, et inutilisable » — c'est exactement la
+   * lecture qui a été rapportée : « d058_1_rec_mug_to_go ne propage pas ses valeurs ».
+   *
+   * Deux affirmations, et la seconde est celle qui compte : le nombre est MONTRÉ, et il n'entre
+   * dans aucune commande. Un test qui vérifierait seulement la phrase resterait vert le jour où
+   * quelqu'un déciderait de « réparer » le curseur en y poussant le 0.
+   */
+  await test("une valeur de profil hors bornes est DITE, sur la ligne comme dans le curseur", async () => {
+    const page = await navigateur.newPage();
+    await ouvrirMug(page);
+    const lignes = await page.$$eval(".quantiteDecochee", (e) => e.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
+    eq(lignes.length, 3, "les trois lignes d'étendue ne sont pas là");
+    for (const l of lignes) {
+      vrai(/porte 0, hors de ces bornes/.test(l), `une ligne tait ce que le profil porte : « ${l} »`);
+    }
+
+    /* Et sur la ligne du curseur, une fois l'ingrédient coché. La mention porte le nombre reçu ;
+       le curseur, lui, doit rester au minimum des bornes — 40, jamais 0. */
+    await page.click('.blocIngredient [role=checkbox][aria-label="Café"]');
+    await page.waitForSelector(".blocEditeur [role=slider]", { timeout: 5000 });
+    const ligne = await page.evaluate(() => {
+      const rang = document.querySelector(".blocEditeur [role=slider]").closest(".paramRow");
+      return {
+        texte: (rang?.textContent ?? "").replace(/\s+/g, " ").trim(),
+        valeur: document.querySelector(".blocEditeur [role=slider]").getAttribute("aria-valuenow"),
+        champ: rang?.querySelector('input[type="number"]')?.value ?? null,
+      };
+    });
+    vrai(/profil : 0, hors bornes/.test(ligne.texte), `la ligne du curseur tait la valeur écartée : « ${ligne.texte} »`);
+    eq(ligne.valeur, "40", "le curseur a repris la valeur écartée au lieu du minimum");
+    eq(ligne.champ, "40", "le champ a repris la valeur écartée au lieu du minimum");
+    await page.close();
+  });
+
+  /**
    * **Une trame lue que la carte ne montre pas est une lecture perdue.** Le panneau technique lisait
    * `bev.bounds ?? bev.values` : dès que les bornes étaient là, la trame de VALEURS (`0xA6`) — la
    * recette du profil, lue et enregistrée — n'apparaissait nulle part. Invisible à `tsc` comme à
@@ -748,6 +835,189 @@ try {
     await page.waitForSelector("#dos-emplacement-3", { timeout: 5000 });
     await page.waitForSelector(RAIL, { timeout: 5000 });
   };
+
+  /**
+   * ── « AFFINER VOS PARAMÈTRES DE GRAINS » — LE PARCOURS EN DIALOGUE ─────────────────────────
+   *
+   * L'assistant était déplié en bas de page : trois champs visibles d'un coup, donc aucun ordre.
+   * Il est devenu un dialogue en quatre étapes, celles de `NewCreationBeanAdaptRefineFragment`.
+   * Ce déménagement met en jeu tout ce qu'un dialogue doit rembourser et qu'une section ne devait
+   * pas — le piège de focus, Échap, l'inertie du fond — plus deux choses propres au parcours : la
+   * mesure reprise à l'ouverture, et un groupe de boutons radio écrit à la main.
+   *
+   * Aucune de ces affirmations n'est visible de `tsc` ni d'ESLint : ce sont des états d'exécution.
+   */
+  console.log("\nAffiner les paramètres — la commande, puis le parcours en quatre étapes");
+
+  /** Ouvre le dialogue par la commande de l'affiche du grain actif. */
+  const ouvrirAffinage = async (page) => {
+    await page.goto(BASE + "/beans", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(DOS_BANC, { timeout: 5000 });
+    await page.evaluate(() => {
+      const carte = [...document.querySelectorAll(".grainFace:not(.grainDos)")]
+        .find((c) => c.querySelector("h3")?.textContent?.includes("Grain de banc"));
+      [...carte.querySelectorAll("button")].find((b) => !b.hasAttribute("aria-expanded")).click();
+    });
+    await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  };
+  /**
+   * Le bouton d'avancement du dialogue, quel que soit son libellé selon l'étape.
+   *
+   * ⚠️ Repéré par `data-nav`, JAMAIS par position. `DialogContent` rend sa croix de fermeture
+   * après ses enfants : « le dernier bouton du dialogue » est donc la croix, et un helper
+   * positionnel fermait le dialogue en croyant avancer — l'échec ne ressemblait à rien.
+   */
+  const avancer = async (page) => {
+    await page.evaluate(() => document.querySelector('[role="dialog"] [data-nav="suivant"]').click());
+  };
+  const etapeCourante = (page) => page.evaluate(() =>
+    document.querySelector('[role="dialog"] h3')?.textContent?.trim() ?? null);
+
+  await test("le grain actif porte « Affiner », les autres gardent « Activer »", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/beans", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(DOS_BANC, { timeout: 5000 });
+    const libelles = await page.evaluate(() => {
+      const out = {};
+      for (const carte of document.querySelectorAll(".grainFace:not(.grainDos)")) {
+        const titre = carte.querySelector("h3")?.textContent?.trim() ?? "?";
+        const cmd = [...carte.querySelectorAll("button")].find((b) => !b.hasAttribute("aria-expanded"));
+        out[titre] = { texte: cmd?.textContent?.trim() ?? null, off: cmd?.disabled ?? null };
+      }
+      return out;
+    });
+    const actif = libelles["Grain de banc"];
+    vrai(actif, `la carte du grain actif est introuvable parmi : ${Object.keys(libelles).join(" | ")}`);
+    vrai(/Affiner/.test(actif.texte ?? ""), `le grain actif porte « ${actif.texte} » au lieu d'« Affiner »`);
+    vrai(actif.off === false, "« Affiner » est désactivé alors que le compteur passe le seuil");
+    const bascule = libelles["Bean Adapt (ON/OFF)"];
+    if (bascule) vrai(!/Affiner/.test(bascule.texte ?? ""), "l'interrupteur Bean Adapt propose un affinage");
+    await page.close();
+  });
+
+  await test("le dialogue s'ouvre sur la mesure de la machine, pas sur le défaut", async () => {
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    /* 12 345 ms → 12 s tronquées. Un 15 dirait que la mesure n'est pas reprise ; un 12,3 que la
+       troncature entière de l'app n'est pas respectée. Les deux compileraient sans un mot. */
+    eq(await page.$eval("#ft", (e) => e.value), "12", "écoulement à l'ouverture");
+    vrai(await page.evaluate(() => document.body.textContent.includes("Mesuré par la machine")),
+      "le dialogue ne dit pas que l'écoulement vient de la machine");
+    // Le compte d'étapes est écrit, pas seulement dessiné : la barre de progression est aria-hidden.
+    vrai(await page.evaluate(() => document.querySelector('[role="dialog"]').textContent.includes("Étape 1 sur 4")),
+      "l'étape courante n'est pas annoncée en toutes lettres");
+    await page.close();
+  });
+
+  await test("une saisie manuelle offre le retour à la mesure, et il la restaure", async () => {
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    const reprise = () => page.evaluate(() =>
+      [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Reprendre la mesure")));
+    vrai(!(await reprise()), "« Reprendre la mesure » s'affiche alors que le champ porte déjà la mesure");
+    await page.click("#ft", { clickCount: 3 });
+    await page.type("#ft", "17");
+    vrai(await reprise(), "après une saisie manuelle, « Reprendre la mesure » n'apparaît pas");
+    await page.evaluate(() =>
+      [...document.querySelectorAll("button")].find((b) => b.textContent.includes("Reprendre la mesure")).click());
+    eq(await page.$eval("#ft", (e) => e.value), "12", "écoulement après reprise");
+    await page.close();
+  });
+
+  await test("les quatre étapes s'enchaînent, et la dernière porte le résultat", async () => {
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    eq(await etapeCourante(page), "Ce que la machine a mesuré", "étape 1");
+    await avancer(page);
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] [role="radiogroup"]'), { timeout: 5000 });
+    eq(await etapeCourante(page), "Aspect de la crema", "étape 2");
+    await avancer(page);
+    eq(await etapeCourante(page), "Goût", "étape 3");
+    /* Le passage de la dernière question au résultat DÉCLENCHE le calcul serveur : sans attente,
+       on mesurerait l'étape 3 encore affichée. */
+    await avancer(page);
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] table'), { timeout: 8000 });
+    eq(await etapeCourante(page), "Ce que la règle propose", "étape 4");
+    /* Le tableau porte les trois réglages : un résultat qui n'en montrerait que deux passerait
+       inaperçu, la ligne manquante n'étant signalée par rien. */
+    const lignes = await page.$$eval('[role="dialog"] tbody tr td:first-child', (c) => c.map((x) => x.textContent.trim()));
+    eq(lignes.join("|"), "Mouture|Température|Arôme", "lignes du tableau de résultat");
+    await page.close();
+  });
+
+  await test("les réponses sont un vrai groupe de boutons radio, pilotable aux flèches", async () => {
+    // Trois `<button>` côte à côte se lisent « bouton, bouton, bouton » : ni groupe, ni nombre
+    // d'options, ni celui qui est choisi. C'est ce que `<input type="radio">` donnait gratuitement.
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    await avancer(page);
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] [role="radiogroup"]'), { timeout: 5000 });
+    const groupe = await page.evaluate(() => {
+      const g = document.querySelector('[role="dialog"] [role="radiogroup"]');
+      return {
+        nomme: !!(g.getAttribute("aria-label") || g.getAttribute("aria-labelledby")),
+        options: [...g.querySelectorAll('[role="radio"]')].map((r) => ({
+          coche: r.getAttribute("aria-checked"), tab: r.tabIndex, choix: r.dataset.choix,
+        })),
+      };
+    });
+    vrai(groupe.nomme, "le groupe de réponses n'a pas de nom accessible");
+    eq(groupe.options.length, 3, "nombre de réponses");
+    eq(groupe.options.filter((o) => o.coche === "true").length, 1, "réponses cochées");
+    /* Tabulation « roving » : une seule option dans l'ordre de tabulation, sinon un groupe de trois
+       réponses coûte trois arrêts au clavier au lieu d'un. */
+    eq(groupe.options.filter((o) => o.tab === 0).length, 1, "options atteignables à la tabulation");
+    // La flèche déplace le choix — sans elle, le groupe n'est pilotable qu'à la souris.
+    await page.focus('[role="dialog"] [role="radio"][aria-checked="true"]');
+    await page.keyboard.press("ArrowRight");
+    const apres = await page.evaluate(() =>
+      document.querySelector('[role="dialog"] [role="radio"][aria-checked="true"]').dataset.choix);
+    eq(apres, "crema-3", "réponse cochée après une flèche droite");
+    await page.close();
+  });
+
+  await test("le dialogue piège le focus, Échap le ferme, le fond est retiré de l'arbre", async () => {
+    /* Ces trois garanties venaient du `<dialog>` natif et viennent maintenant de Radix — donc du
+       code. Sur un parcours qui peut lancer une préparation, la différence n'est pas théorique. */
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    for (let i = 0; i < 12; i++) await page.keyboard.press("Tab");
+    vrai(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
+      "la tabulation sort du dialogue — le focus n'est pas piégé");
+    // Le fond doit être retiré de l'arbre : sinon un lecteur d'écran lit la page sous le dialogue.
+    vrai(await page.evaluate(() => document.querySelectorAll('body > [aria-hidden="true"]').length > 0),
+      "rien n'est retiré de l'arbre d'accessibilité sous le dialogue");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 5000 });
+    await page.close();
+  });
+
+  await test("préparer un espresso passe par la garde, PAR-DESSUS le dialogue", async () => {
+    /* L'empilement de deux dialogues Radix est exactement le genre de chose qui compile, s'affiche,
+       et laisse le clavier dans la mauvaise couche. La garde doit être devant ET tenir le focus. */
+    const page = await navigateur.newPage();
+    await ouvrirAffinage(page);
+    await page.evaluate(() => {
+      const d = document.querySelector('[role="dialog"]');
+      [...d.querySelectorAll("button")].find((b) => b.textContent.includes("Préparer un espresso")).click();
+    });
+    await page.waitForFunction(
+      () => document.querySelectorAll('[role="dialog"], [role="alertdialog"]').length >= 2, { timeout: 5000 });
+    const garde = await page.evaluate(() => {
+      const tous = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')];
+      const dessus = tous.at(-1);
+      return {
+        texte: dessus.textContent,
+        estLeDessus: document.activeElement?.closest('[role="dialog"], [role="alertdialog"]') === dessus,
+      };
+    });
+    vrai(/espresso/i.test(garde.texte), "la garde ne nomme pas ce qu'elle va faire couler");
+    vrai(/tasse/i.test(garde.texte), "la garde ne prévient pas que la machine va réellement couler");
+    vrai(garde.estLeDessus, "le focus n'est pas dans la garde mais dans le dialogue du dessous");
+    // On ANNULE : ce script ne doit jamais mettre une commande de préparation en file.
+    await page.keyboard.press("Escape");
+    await page.close();
+  });
 
   /**
    * ── LE DEMI-TOUR D'UNE CARTE DE GRAIN ──────────────────────────────────────────────────────
@@ -1362,6 +1632,351 @@ try {
       await page.close();
     });
   }
+
+  /**
+   * **Le vidage passe EN DERNIER, et ce n'est pas un détail d'ordonnancement.** Il détruit
+   * exactement la matière sur laquelle les vérifications ci-dessus travaillent — les lignes semées
+   * par `fausse-machine.mjs`. Placé plus haut, il ferait échouer les colonnes, le filtre et le
+   * tiroir sans qu'aucun d'eux ne soit en cause. Ne pas le remonter.
+   *
+   * Ce dont seul un navigateur peut répondre : que le bouton passe par la confirmation PARTAGÉE
+   * (`window.confirm` rend `false` dans une iframe en bac à sable — le bouton serait inerte sans un
+   * mot), et surtout que l'écran suive vraiment. Le serveur ne peut pas décrire une suppression par
+   * un ajout : il pousse la fenêtre entière marquée `complet`, et si le client la traitait comme un
+   * ajout — c'est le comportement par défaut de `fusionner()` — les lignes effacées resteraient
+   * affichées sous un compte rendu qui affirme le contraire. Cette assertion est la seule qui le
+   * dise.
+   */
+  await test("vider le journal l'efface VRAIMENT à l'écran, et passe par le dialogue partagé", async () => {
+    const page = await ouvrirJournal();
+    let natif = false;
+    page.on("dialog", async (d) => { natif = true; await d.dismiss(); });
+    /* Le texte des lignes, pas leur nombre : ce journal est VIVANT — la fausse machine est partie
+       mais les annonces `local_reg` continuent de journaliser toutes les 2,5 s. Une assertion sur un
+       compte comparerait deux instants différents et rougirait au hasard. On garde donc de quoi
+       reconnaître une ligne d'AVANT, ce qui ne bouge pas. */
+    const avant = await page.$$eval(`${J} .journalLigne`, (els) => els.map((x) => x.textContent ?? ""));
+    vrai(avant.length > 1, `le journal ne porte que ${avant.length} ligne — le vidage ne prouverait rien`);
+    const doyenne = avant[avant.length - 1];
+
+    // Le libellé est recopié en clair, même discipline que les autres repères de ce script.
+    const cliquerVider = () => page.evaluate((sel) => {
+      const b = [...document.querySelectorAll(`${sel} .journalFiltres button`)]
+        .find((x) => ((x.getAttribute("aria-label") ?? x.textContent) ?? "").trim().startsWith("Vider"));
+      if (!b) throw new Error("aucun bouton « Vider » dans la barre de filtres du journal");
+      b.click();
+    }, J);
+    await cliquerVider();
+    await page.waitForSelector("dialog[open], [role=dialog], [role=alertdialog]", { timeout: 5000 });
+    vrai(!natif, "un window.confirm natif s'est ouvert — inerte dans une iframe en bac à sable");
+    /* La question doit dire COMBIEN part : « vider ? » tout seul ne donne pas de quoi décider entre
+       trois lignes et quatre cents. Le NOMBRE exact n'est pas exigible — il peut avoir bougé d'une
+       unité entre la mesure et le clic — mais sa présence, si. */
+    const texte = await page.$eval("dialog[open], [role=dialog], [role=alertdialog]", (d) => d.textContent ?? "");
+    vrai(/\d+\s+lignes?\s+seront effacées/i.test(texte), `le dialogue ne dit pas combien de lignes partent : « ${texte.slice(0, 160)} »`);
+
+    await page.evaluate(() => {
+      const d = document.querySelector("dialog[open], [role=dialog], [role=alertdialog]");
+      [...d.querySelectorAll("button")].find((b) => /confirmer|valider/i.test(b.textContent ?? ""))?.click();
+    });
+    /* **Le cœur de l'assertion : la doyenne a DISPARU de l'écran.** Le serveur ne peut pas décrire
+       une suppression par un ajout — il pousse la fenêtre entière marquée `complet`. Si le client la
+       traitait comme un lot ordinaire, il l'AJOUTERAIT à ce qu'il tient déjà : le compte rendu
+       s'afficherait en tête et les lignes effacées resteraient dessous, intactes. C'est exactement
+       ce que cette attente refuse. */
+    await page.waitForFunction(
+      (sel, vieille) => ![...document.querySelectorAll(`${sel} .journalLigne`)].some((e) => (e.textContent ?? "") === vieille),
+      { timeout: 8000 }, J, doyenne,
+    ).catch(() => { throw new Error(`une ligne d'avant le vidage est restée à l'écran : « ${doyenne.slice(0, 120)} »`); });
+    /* Et le journal DIT ce qui vient de lui arriver : un journal vidé et un journal muet sont deux
+       situations opposées, et seule la seconde doit inquiéter. */
+    const apres = await page.$$eval(`${J} .journalLigne`, (els) => els.map((x) => x.textContent ?? ""));
+    vrai(
+      apres.some((l) => /effacée/i.test(l)),
+      `aucune ligne ne dit que le journal a été vidé : « ${apres.slice(0, 2).join(" | ").slice(0, 160)} »`,
+    );
+    await page.close();
+  });
+
+  /* ───────────────────────────────────────────────────────────────────────────────────────────
+     LES DEUX ESPACES DE PARAMÈTRES SUR UNE MÊME PAGE
+     ───────────────────────────────────────────────────────────────────────────────────────────
+
+     **Ce qui ne se prouve qu'ici.** Que les mots du paramètre 500 arrivent jusqu'à l'écran traverse
+     toute la chaîne : `decodeBeanSync` → la propriété en base → `vueParamsSync` → `GET /api/stats`
+     → le rendu. Chaque maillon est couvert ailleurs, la CHAÎNE ne l'est nulle part, et c'est elle
+     qui casse — un `sync` oublié dans la charge utile ne lève rien, il retire une carte de la page.
+
+     Deux affirmations portent une décision de produit, pas une mise en forme :
+     - les trois mots nommés portent une étiquette, **les sept autres pas**. Une étiquette inventée
+       sur un mot anonyme est exactement ce que ce dépôt refuse partout ailleurs ;
+     - la carte tient debout alors qu'aucun compteur IDENTIFIÉ n'a été lu — elle est délibérément
+       hors du bloc conditionnel des compteurs, parce qu'elle ne vient pas du même balayage, et
+       rien d'autre ne remarquerait qu'on l'y a rangée par mégarde. */
+  console.log("\nLes deux espaces de paramètres — 0xA2 et 0xA1, sur la même page");
+
+  const S = 'section[aria-labelledby="titre-sync"]';
+
+  /** Le texte d'une ligne du bloc, espaces fines de `toLocaleString` ramenées à des espaces. */
+  const lisible = (txt) => (txt ?? "").replace(/\u202f|\u00a0/g, " ");
+
+  await test("les dix mots du paramètre 500 arrivent jusqu'à l'écran, dans l'ordre", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${S} .kv`, { timeout: 10000 });
+    const ids = await page.$$eval(`${S} .kv .k`, (els) => els.map((e) => (e.textContent ?? "").match(/\d{3}/)?.[0] ?? ""));
+    eq(ids.join(","), "500,501,502,503,504,505,506,507,508,509", "les identifiants affichés");
+    await page.close();
+  });
+
+  await test("trois mots sont nommés, les sept autres restent des nombres nus", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${S} .kv`, { timeout: 10000 });
+    const nommes = await page.$$eval(`${S} .kv .k`, (els) => els
+      .map((e) => (e.textContent ?? "").trim())
+      .filter((txt) => /[a-zà-ÿ]/i.test(txt)));
+    eq(nommes.length, 3, `mots portant une étiquette : ${JSON.stringify(nommes)}`);
+    vrai(nommes.some((x) => x.includes("écoulement") && x.includes("502")), `502 n'est pas nommé : ${JSON.stringify(nommes)}`);
+    vrai(nommes.some((x) => x.includes("grain") && x.includes("504")), `504 n'est pas nommé : ${JSON.stringify(nommes)}`);
+    vrai(nommes.some((x) => x.includes("espressos") && x.includes("505")), `505 n'est pas nommé : ${JSON.stringify(nommes)}`);
+    await page.close();
+  });
+
+  await test("l'écoulement se lit en millisecondes ET en secondes tronquées", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${S} .kv`, { timeout: 10000 });
+    /* 12 345 ms semés → « 12 s », la division ENTIÈRE de l'app. La valeur brute est lue à côté :
+       sans elle, une seconde arrondie passerait pour la seconde tronquée. */
+    const ligne = await page.$$eval(`${S} .kv`, (els) => {
+      const e = els.find((x) => (x.textContent ?? "").includes("502"));
+      return e?.textContent ?? "";
+    }).then(lisible);
+    vrai(/12 345 ms/.test(ligne), `les millisecondes ne sont pas affichées : « ${ligne} »`);
+    vrai(/\(12 s\)/.test(ligne), `la seconde tronquée de l'app manque : « ${ligne} »`);
+    await page.close();
+  });
+
+  await test("la carte tient debout sans compteur identifié, et date les DEUX relevés", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${S} .kv`, { timeout: 10000 });
+    /* Les deux compteurs semés (101, 3000) n'ont aucune étiquette dans cette base : ce que ce test
+       demande est que la section 500 existe indépendamment d'eux, et que la légende porte bien les
+       DEUX heures — c'est elle qui dit si un relevé différentiel compare un état ou deux. */
+    const legende = lisible(await page.$eval(`${S} .legende`, (e) => e.textContent));
+    const heures = legende.match(/\d{2}:\d{2}:\d{2}/g) ?? [];
+    eq(heures.length, 2, `la légende doit dater les deux relevés : « ${legende} »`);
+    await page.close();
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────────────────────────
+     LE SECOND CANAL DE COMPTEURS — des propriétés Ayla NOMMÉES, pas des identifiants nus
+
+     Ancré par sa section (`titre-nommes`) comme le bloc précédent, et pour la même raison : la page
+     porte maintenant trois familles de nombres qui ne viennent pas du même endroit, et un test qui
+     compterait des `.kv` sur la page entière mesurerait leur somme sans jamais s'en apercevoir.
+
+     Ce qui se joue ici et que `verif-compteurs.mjs` ne peut PAS voir : la table est pure et prouvée,
+     mais rien n'y dit que la valeur convertie arrive à l'écran plutôt que la brute, qu'une absente
+     ne se rend pas comme un zéro, ou qu'un compteur par boisson trouve bien son libellé au
+     catalogue. Ce sont trois façons d'afficher un nombre plausible et faux.
+     ───────────────────────────────────────────────────────────────────────────────────────────── */
+  console.log("\nLes compteurs nommés — le canal des propriétés Ayla");
+
+  const N = 'section[aria-labelledby="titre-nommes"]';
+  /** Le texte de la ligne dont le nom de propriété est donné. */
+  const ligneCompteur = async (page, prop) => lisible(await page.$$eval(`${N} .kv`, (els, p) => {
+    const e = els.find((x) => (x.textContent ?? "").includes(p));
+    return e?.textContent ?? "";
+  }, prop));
+
+  await test("l'eau est convertie par 2000, pas par 1000, et le brut reste lisible à côté", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} .kv`, { timeout: 10000 });
+    const ligne = await ligneCompteur(page, "d553_water_tot_qty");
+    vrai(/194 L/.test(ligne), `les litres attendus manquent : « ${ligne} »`);
+    // Le défaut visé nommément : la valeur que donnerait le diviseur 1000 de l'intégration HA.
+    vrai(!/\b387 L\b/.test(ligne), `la conversion /1000 de Home Assistant a été reprise : « ${ligne} »`);
+    vrai(/387 213/.test(ligne), `la valeur brute doit rester lisible : « ${ligne} »`);
+    await page.close();
+  });
+
+  await test("un compteur par boisson porte le nom du catalogue, et sa source est signalée", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} .kv`, { timeout: 10000 });
+    const ligne = await ligneCompteur(page, "d705_tot_id1_espr");
+    vrai(/Espresso/.test(ligne), `la boisson n'est pas nommée par le catalogue : « ${ligne} »`);
+    vrai(/1 234/.test(ligne), `la valeur manque : « ${ligne} »`);
+    // Un nom qui ne vient pas du binaire ne doit pas se présenter comme s'il en venait.
+    vrai(/relevé Eletta/.test(ligne), `la source n'est pas signalée : « ${ligne} »`);
+    // Et l'inverse : les quatorze de l'APK ne portent PAS la marque, sinon elle ne dit plus rien.
+    const apk = await ligneCompteur(page, "d553_water_tot_qty");
+    vrai(!/relevé Eletta/.test(apk), `un nom de l'APK porte la marque à tort : « ${apk} »`);
+    await page.close();
+  });
+
+  await test("la ventilation d'un compteur en objet JSON descend à l'écran", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} .kv`, { timeout: 10000 });
+    const ligne = await ligneCompteur(page, "d733_tot_bev_counters");
+    vrai(/49/.test(ligne), `le total sommé manque : « ${ligne} »`);
+    // La somme n'est qu'un résumé : perdre les sous-compteurs, c'est jeter ce que la machine envoie.
+    vrai(/tot_bev_bw = 40/.test(ligne), `la ventilation manque : « ${ligne} »`);
+    vrai(/tot_bev_w = 9/.test(ligne), `la ventilation est incomplète : « ${ligne} »`);
+    await page.close();
+  });
+
+  await test("une propriété absente n'est pas une valeur, et elle est nommée comme absente", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} .kv`, { timeout: 10000 });
+    // Elle ne doit PAS figurer parmi les lignes de valeurs — une case vide se lit comme un zéro.
+    const props = await page.$$eval(`${N} .kv .mono`, (els) => els.map((e) => (e.textContent ?? "").trim()));
+    vrai(!props.includes("d556_water_hardness"), `l'absente est rendue comme une valeur : ${JSON.stringify(props)}`);
+    const note = lisible(await page.$eval(`${N} .note`, (e) => e.textContent));
+    vrai(/d556_water_hardness/.test(note), `l'absente n'est pas nommée en bas de carte : « ${note} »`);
+    await page.close();
+  });
+
+  await test("l'entretien est un groupe NOMMÉ, pas un titre décoratif", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} .kv`, { timeout: 10000 });
+    /* Un pourcentage avant détartrage n'est pas un total à vie : la distinction doit s'entendre
+       autant qu'elle se voit, donc `role="group"` + nom accessible, pas un paragraphe en gras. */
+    const groupe = await page.$(`${N} [role="group"][aria-label="Entretien"]`);
+    vrai(groupe, "le groupe « Entretien » n'existe pas comme région nommée");
+    const dedans = await groupe.$$eval(".kv .mono", (els) => els.map((e) => (e.textContent ?? "").trim()));
+    vrai(dedans.includes("d512_percentage_to_deca"), `le pourcentage n'est pas dans le groupe : ${JSON.stringify(dedans)}`);
+    vrai(!dedans.includes("d553_water_tot_qty"), `un compteur d'usage a atterri dans l'entretien : ${JSON.stringify(dedans)}`);
+    await page.close();
+  });
+
+  await test("les deux boutons de lecture existent et sont atteignables", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/statistiques", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(`${N} button`, { timeout: 10000 });
+    /* La carte est montée HORS du bloc conditionnel des compteurs : sans ses deux boutons sur une
+       page vierge, il n'existerait aucun moyen de lire ce canal — le défaut serait une page sans
+       issue, pas une carte manquante. */
+    const libelles = await page.$$eval(`${N} .barreActions button`, (els) => els.map((e) => (e.textContent ?? "").trim()));
+    eq(libelles.length, 2, `deux boutons attendus : ${JSON.stringify(libelles)}`);
+    vrai(libelles.some((x) => x.includes("Lire les compteurs nommés")), `portée APK absente : ${JSON.stringify(libelles)}`);
+    vrai(libelles.some((x) => x.includes("Tous les noms connus")), `portée large absente : ${JSON.stringify(libelles)}`);
+    for (const b of await page.$$(`${N} .barreActions button`)) {
+      eq(await b.evaluate((e) => e.disabled), false, "un bouton de lecture ne doit pas être inerte au repos");
+    }
+    await page.close();
+  });
+
+  /* ───────────────────────────────────────────────────────────────────────────────────────────
+     LES RÉGLAGES MACHINE — UNE ÉCHELLE SE MANŒUVRE, ELLE NE SE SAISIT PAS
+     ───────────────────────────────────────────────────────────────────────────────────────────
+
+     **Ce qui ne se prouve qu'ici.** Un curseur Radix est un `<button>` portant `role="slider"` :
+     ni son libellé, ni sa manœuvre au clavier, ni la graduation que `surfaces.css` imprime sur sa
+     piste ne se vérifient hors d'un navigateur. Trois affirmations, et chacune a déjà eu son
+     défaut ailleurs dans ce dépôt :
+
+     - **le libellé va sur la POIGNÉE**, pas sur la racine — un curseur nommé par sa racine
+       s'annonce « curseur » et rien d'autre, sur une page qui en aligne trois ;
+     - **la graduation vient des bornes**, et son nombre de crans avec : `--crans` absent dirait
+       qu'on ne connaît pas les bornes, `--crans` faux dirait que la machine en autorise d'autres ;
+     - **le curseur et le champ éditent le même brouillon**, et c'est lui qui arme « Écrire ». Deux
+       états séparés donneraient une ligne où le patin dit 2 et le champ 3, sans que rien ne
+       tranche — et c'est la valeur du CHAMP qui partirait dans la trame. */
+  console.log("\nLes réglages machine — un curseur par échelle, et une seule valeur par ligne");
+
+  const DURETE = '[role="slider"][aria-label^="Dureté de l\'eau"]';
+
+  await test("chaque réglage numérique a un curseur, et la poignée dit lequel", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/reglages", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector('[role="slider"]', { timeout: 10000 });
+    const noms = await page.$$eval('[role="slider"]', (els) => els.map((e) => e.getAttribute("aria-label") ?? ""));
+    /* Trois échelles sur ce modèle — dureté, température, arrêt automatique. Les deux réglages
+       d'heure de démarrage ne sont pas supportés ici et vivent dans la liste des absents, où ils
+       n'ont aucune commande : les compter serait vérifier autre chose que ce qui est à l'écran. */
+    eq(noms.length, 3, `curseurs trouvés : ${JSON.stringify(noms)}`);
+    vrai(noms.every((n) => /\(\d+–\d+\)$/.test(n)), `un libellé ne porte pas ses bornes : ${JSON.stringify(noms)}`);
+    vrai(noms.some((n) => n.startsWith("Dureté de l'eau")), `la dureté n'est pas nommée : ${JSON.stringify(noms)}`);
+    await page.close();
+  });
+
+  await test("la piste est graduée par les bornes du réglage, pas au hasard", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/reglages", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(DURETE, { timeout: 10000 });
+    /* 1..4 → trois intervalles, donc trois crans. L'arrêt automatique va de 0 à 255 : au-delà de
+       40 traits la bande devient grise, la règle retombe sur un cran tous les dix pas → 26. */
+    const crans = await page.evaluate((sel) => {
+      const lu = (s2) => {
+        const poignee = document.querySelector(s2);
+        const ctl = poignee?.closest(".ctl");
+        return ctl ? (ctl.getAttribute("style") ?? "").match(/--crans:\s*(\d+)/)?.[1] ?? null : null;
+      };
+      return { durete: lu(sel), arret: lu('[role="slider"][aria-label^="Arrêt automatique"]') };
+    }, DURETE);
+    eq(crans.durete, "3", "crans de la dureté (1–4)");
+    eq(crans.arret, "26", "crans de l'arrêt automatique (0–255)");
+    /* Et la graduation est bien IMPRIMÉE : la règle CSS se déclenche sur la présence de la
+       variable, donc lire la variable sans lire le fond laisserait passer un sélecteur cassé. */
+    const fond = await page.$eval(DURETE, (e) => {
+      const piste = e.closest('[data-slot="slider"]')?.querySelector('[data-slot="slider-track"]');
+      return piste ? getComputedStyle(piste).backgroundImage : "none";
+    });
+    vrai(/repeating-linear-gradient/.test(fond), `la piste n'est pas gravée : ${fond}`);
+    await page.close();
+  });
+
+  await test("le curseur au clavier écrit dans le MÊME brouillon que le champ, et arme l'écriture", async () => {
+    const page = await navigateur.newPage();
+    await page.goto(BASE + "/reglages", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(DURETE, { timeout: 10000 });
+    /* Rien n'a été lu sur cette machine de banc : le bouton « Écrire » doit donc partir DÉSARMÉ —
+       un brouillon vide n'est pas une valeur à envoyer à un appareil. */
+    const carte = await page.evaluateHandle((sel) => document.querySelector(sel).closest('[data-slot="card"]'), DURETE);
+    const boutonEcrire = await carte.evaluateHandle((c) => [...c.querySelectorAll("button")].find((b) => /Écrire/.test(b.textContent ?? "")));
+    eq(await boutonEcrire.evaluate((b) => b.disabled), true, "« Écrire » avant toute manœuvre");
+
+    await page.focus(DURETE);
+    await page.keyboard.press("ArrowRight");
+    const apres = await carte.evaluate((c) => ({
+      poignee: c.querySelector('[role="slider"]').getAttribute("aria-valuenow"),
+      champ: c.querySelector('input[type="number"]').value,
+      legende: [...c.querySelectorAll("p")].map((x) => x.textContent ?? "").find((x) => /À écrire/.test(x)) ?? "",
+    }));
+    /* Le patin part du plancher (1) faute de lecture : une flèche donne 2, et le champ doit dire 2
+       lui aussi — c'est toute la question, puisque c'est le champ qui alimente la trame. */
+    eq(apres.poignee, "2", "position de la poignée après une flèche");
+    eq(apres.champ, "2", "valeur du champ après la même flèche");
+    vrai(/moyenne/.test(apres.legende), `l'échelle ne suit pas le patin : « ${apres.legende} »`);
+    eq(await boutonEcrire.evaluate((b) => b.disabled), false, "« Écrire » après la manœuvre");
+    await page.close();
+  });
+
+  await test("sur 380 px la ligne se replie, et la page ne defile pas lateralement", async () => {
+    const page = await navigateur.newPage();
+    await page.setViewport({ width: 380, height: 800 });
+    await page.goto(BASE + "/reglages", { waitUntil: "networkidle2", timeout: 30000 });
+    await page.waitForSelector(DURETE, { timeout: 10000 });
+    /* Une ligne de réglage empile quatre commandes — deux bornes, un curseur, un champ — dans une
+       carte de 340 px utiles. `.paramRow` se replie, `.ctl` non : c'est la piste qui doit céder,
+       et son `min-width: 0` est ce qui le permet. Sans lui la ligne pousse la carte et la PAGE
+       défile latéralement, ce qu'aucune largeur de composant ne signale. */
+    const m = await page.evaluate(() => ({
+      page: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      piste: Math.round(document.querySelector('[data-slot="slider"]').getBoundingClientRect().width),
+    }));
+    vrai(m.page, "la page defile lateralement sur 380 px");
+    vrai(m.piste >= 40, `la piste est ecrasee a ${m.piste} px : le curseur n'est plus manoeuvrable`);
+    await page.close();
+  });
 
 } finally {
   if (navigateur) await navigateur.close().catch(() => {});

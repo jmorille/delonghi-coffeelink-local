@@ -46,6 +46,7 @@ node scripts/verif-lansession.mjs  # both LAN-session roles talking to each othe
 node scripts/verif-apps.mjs        # app registry + payload parsing
 node scripts/verif-args.mjs        # ECAM frame table / argument decoding (byte offsets)
 node scripts/verif-transfert.mjs   # writing a local recipe into a machine slot
+node scripts/verif-compteurs.mjs   # named-counter table: beverage ids read back out of the property names, water divisor
 node scripts/verif-messages.mjs    # literal next-intl keys exist in messages/fr.json
 node scripts/verif-contraste.mjs   # WCAG + ΔL* of both finishes, read back out of globals.css
 node scripts/verif-images.mjs      # both artwork fingerprint chains — beverages AND beans (producer → table → URL → cache rule)
@@ -108,6 +109,7 @@ type-check, so they look alive. The live implementations are the `.mjs` siblings
 | `ingredients.mjs` + `transfert.mjs` | what actually goes into a persistent recipe write |
 | `trame-bornes.mjs` | bounds-frame encoding |
 | `monitor.mjs` | real-time state / sensor / alarm decoding |
+| `compteurs.mjs` | the named-counter table: which Ayla property counts what, and how to read its value |
 | `profiles.mjs` | profile names, favourites, checksums, Bean System |
 | `bean-adapt.mjs` | the grind/temp/aroma adjustment rule, re-implemented locally |
 | `lansession.mjs` | LAN session crypto, both roles (client *and* device) |
@@ -167,6 +169,35 @@ ran one at *load* time (the `0x37` constant), so importing it from a page threw 
 line of render and `/pilotage` came up blank with nothing saying why. The journal's drawer decodes
 a frame client-side, and it must do it with *that* table, not a copy — hence `Uint8Array` and
 `atob`, available on both sides. The server keeps its `Buffer`s everywhere else; they index alike.
+
+### Statistics come down TWO channels, and they do not overlap
+
+`0xA2 0x0F` returns bare parameter ids (100, 3000, 23004…) — 62 of them on the reference machine,
+ten with an established meaning. That is `STAT_MEANINGS` + `STAT_RANGES` in `server.mjs`.
+
+The other channel is **named Ayla properties** (`src/lib/compteurs.mjs`): `d553_water_tot_qty`,
+`d701_tot_bev_bw`, `d705_tot_id1_espr`… The official app reads both — `p258z7/w.java` has one method
+per channel — and this server now does too. Six of those names carry the same quantity as an
+already-identified `0xA2` parameter, which is what makes the pairing checkable on a single reading;
+that is the cheapest remaining lever on the 52 nameless ids.
+
+⚠️ **`d553_water_tot_qty` divides by 2000, not 1000.** The unit is the half-millilitre, same as
+parameter 106: the app does `u.a(v) = v × 0.5` then `/1000`, and writes `parseInt(str) / 2000`
+outright in its datapoint branch. The Home Assistant integration `actabi/delonghi_coffeelink`
+divides by 1000 — its litres are twice too large. Do not import that value from it; part of the
+name table does come from that project, and this is the one number in it that is wrong.
+
+⚠️ **Two sources, and they do not carry the same weight.** `source: "apk"` means the name is written
+in the app binary — 14 names. `source: "eletta"` means it comes from a real Ayla property dump of an
+Eletta Explore 450.65.G published by that HA integration: it proves the property exists on *that*
+appliance, nothing more. The distinction travels all the way to the screen, and only the non-binary
+ones are marked there. A name that answers empty once is recorded `absent` and never asked again —
+without that, the wide scope would send 40 steps per click to bring back the same 14 answers.
+
+⚠️ **The Eletta dump also bounds a claim this UI makes.** `d705_tot_id1_espr` … `d730_tot_id27_…`
+are **per-beverage** counters, and the id in the name is this repo's own catalogue id. "The machine
+counts by category, not by beverage" is true of the `0xA2` space on the ECAM 610.75.MB; it is not
+true of the range.
 
 ### Storage
 

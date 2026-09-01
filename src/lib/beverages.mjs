@@ -80,6 +80,16 @@ const LABELS = {
 };
 
 /**
+ * L'identité d'une boisson par son id, **hors de tout catalogue de modèle**.
+ *
+ * `catalogFor(...).byId` ne connaît que les recettes du modèle en place, ce qui est juste pour
+ * piloter. Mais un compteur par boisson (`d730_tot_id27_brew_over_ice`, voir `compteurs.mjs`) peut
+ * nommer une boisson que le catalogue courant n'a pas : c'est alors l'id du protocole qui parle,
+ * pas la machine du banc. D'où cet accès direct — et pas une seconde copie de la table.
+ */
+export const beverageMeta = (id) => LABELS[Number(id)] ?? null;
+
+/**
  * **Le créneau de chaque boisson standard dans l'espace de noms De'Longhi.** Fixe, global, relevé
  * dans l'app — jamais dérivé du catalogue d'un modèle.
  *

@@ -277,8 +277,22 @@ export function decodeBeanSystem(b64) {
  *   6..    mots de 32 bits big-endian — dix sur cette machine
  *   −2..   CRC16
  *
- * **Seul le mot 4 est établi : c'est l'index du grain sélectionné.** Mesuré le 2026-08-26 par
- * contraste, en changeant le grain sur l'écran de la machine puis en relisant :
+ * **Les mots sont les paramètres 500 + rang.** Le mot n porte le paramètre `500 + n` : c'est
+ * l'identifiant de l'en-tête qui donne le premier, et la suite est consécutive. L'app le dit
+ * elle-même dans son journal (`getParametersFromByte = 502 value 9071`), et c'est ce qui permet de
+ * nommer un mot par ce qu'il EST plutôt que par ce qu'on l'a vu faire.
+ *
+ * **Trois mots sur dix sont établis. Les autres voyagent bruts, et c'est délibéré.**
+ *
+ * ```
+ *   mot 2 = paramètre 502   temps d'écoulement du dernier espresso, en MILLISECONDES
+ *   mot 4 = paramètre 504   index du grain sélectionné
+ *   mot 5 = paramètre 505   espressos tirés depuis la dernière écriture de profil
+ * ```
+ *
+ * ### Le mot 4 — établi par contraste, le 2026-08-26
+ *
+ * En changeant le grain sur l'écran de la machine puis en relisant :
  *
  * ```
  * grain 3 « Borbone »  …  00 00 24 54 | 00 00 00 03 | 00 00 00 07 | 0 0 0 0
@@ -286,12 +300,32 @@ export function decodeBeanSystem(b64) {
  *                          mot 3        mot 4 ←       mot 5
  * ```
  *
- * Le mot 4 a suivi la sélection, et **rien d'autre n'a bougé** hormis le mot 5, tombé de 7 à 0 au
- * même instant — vraisemblablement les tasses tirées avec le grain courant, remises à zéro à la
- * sélection, mais c'est une seule observation et ça reste une lecture, pas un fait.
+ * Le mot 4 a suivi la sélection, et rien d'autre n'a bougé hormis le mot 5.
  *
- * Les autres mots ne sont **pas** nommés, délibérément — et une quatrième lecture, une heure plus
- * tard, montre bien pourquoi. Sur trois relevés les mots 0 à 3 semblaient avoir chacun un sens :
+ * ### Les mots 2 et 5 — établis le 2026-08-31, par la SOURCE et non par corrélation
+ *
+ * Une capture `adb logcat` de l'app officielle pendant un affinage (« Affiner vos paramètres de
+ * grains ») donne, sur la trame que ce décodeur reçoit **octet pour octet** :
+ *
+ * ```
+ * readBeanSystemPar  d0 2f a1 0f 01 f4 … 00 00 23 6f … 00 00 00 1f …
+ * getParametersFromByte = 502 value 9071      →  BeanAdaptDetailViewModel: FlowTime is 9
+ * getParametersFromByte = 505 value 31        →  BeanAdaptDetailViewModel: EspressoCounter is 31
+ * ```
+ *
+ * Un café plus tard : 502 passe à 8627 et l'app affiche `FlowTime is 8` — division ENTIÈRE par
+ * 1000, `parameter.b() / 1000` dans `L6/k.java`. Le mot 5 passe de 31 à 32. Après l'écriture du
+ * profil affiné, il retombe à **0**.
+ *
+ * C'est ce qui transforme l'ancienne lecture du mot 5 — « vraisemblablement les tasses tirées,
+ * remises à zéro à la sélection » — en fait, et qui en précise la cause : la remise à zéro suit
+ * **l'écriture d'un profil**, pas seulement le changement de sélection. Les deux observations sont
+ * cohérentes, une écriture et une sélection touchant toutes deux au profil courant.
+ *
+ * ### Les mots 0, 1, 3, 6 à 9 restent anonymes
+ *
+ * Une quatrième lecture, une heure plus tard, montre pourquoi. Sur trois relevés, les mots 0 à 3
+ * semblaient avoir chacun une direction :
  *
  * ```
  * 07:11  42, 6513, 9312,  9300, 3, 6      le 0 monte, les 1 et 2 descendent,
@@ -300,14 +334,11 @@ export function decodeBeanSystem(b64) {
  * 09:36  41, 6630, 9558, 10200, 2, 2      les quatre repartent dans l'AUTRE sens
  * ```
  *
- * Le mot 0 a baissé, les mots 1 et 2 ont monté, et le mot 3 — le seul qu'on croyait figé — a pris
- * 900. Aucune direction n'est donc tenable, et trois relevés concordants n'auraient pas suffi à en
- * conclure une. Seul le mot 4 a tenu sur les quatre lectures. Les mots 6 à 9 sont restés nuls.
- * Nommer les autres produirait exactement ce que ce projet cherche à éviter : une valeur plausible
- * et fausse. Ils voyagent donc bruts, dans `mots`.
- *
- * Le mot 5, lui, reste cohérent avec « tasses tirées depuis la sélection » : 0 juste après le
- * changement de grain, 2 une heure plus tard. Cohérent ne veut pas dire établi.
+ * Le mot 0 a baissé, les 1 et 2 ont monté, et le mot 3 — le seul qu'on croyait figé — a pris 900.
+ * Aucune direction n'est tenable, et trois relevés concordants n'auraient pas suffi à en conclure
+ * une : c'est le journal de l'app, et lui seul, qui a fini par nommer le mot 2. Les mots 6 à 9 sont
+ * restés nuls sur toutes les lectures. Nommer les autres produirait exactement ce que ce projet
+ * cherche à éviter — une valeur plausible et fausse.
  *
  * ⚠️ Ne pas confondre avec le paramètre 3009, qui vaut 3 lui aussi : il n'a **pas** suivi le
  * changement de grain (toujours 3 avec « Sakura » sélectionné). C'était une coïncidence de valeur,
@@ -315,8 +346,16 @@ export function decodeBeanSystem(b64) {
  */
 export const BEAN_SYNC_PROP = "d260_beansystem_sync_par";
 export const BEAN_SYNC_PARAM = 500;
-/** Rang du mot portant l'index du grain sélectionné. Le seul champ nommé de la charge utile. */
+/**
+ * Les trois rangs nommés. Le rang EST le décalage du paramètre : `500 + rang`.
+ *
+ * `BEAN_SYNC_MOT_GRAIN` reste le seul dont la présence est EXIGÉE — il commande l'affichage du
+ * grain actif sur toute l'interface. Les deux autres servent l'affinage, qui sait se taire quand
+ * la machine ne les donne pas ; les exiger ferait échouer un décodage par ailleurs valide.
+ */
+const BEAN_SYNC_MOT_ECOULEMENT = 2;
 const BEAN_SYNC_MOT_GRAIN = 4;
+const BEAN_SYNC_MOT_ESPRESSOS = 5;
 
 export function decodeBeanSync(b64) {
   const buf = Buffer.from(b64, "base64");
@@ -337,6 +376,19 @@ export function decodeBeanSync(b64) {
   return {
     param,
     selected: mots[BEAN_SYNC_MOT_GRAIN],
+    /**
+     * Le dernier écoulement mesuré PAR LA MACHINE, en millisecondes — et en secondes tronquées
+     * comme l'app le fait (`/ 1000` entier). On garde les deux : les millisecondes sont la valeur
+     * reçue, les secondes celle que le questionnaire d'affinage attend. Convertir à l'affichage
+     * seulement, c'est se condamner à refaire la troncature à chaque appelant.
+     *
+     * `null` quand la trame est trop courte pour porter le mot : cette famille de paramètres est
+     * dimensionnée par le modèle, et une valeur absente doit se lire « absente », jamais « 0 ».
+     */
+    ecoulementMs: mots.length > BEAN_SYNC_MOT_ECOULEMENT ? mots[BEAN_SYNC_MOT_ECOULEMENT] : null,
+    ecoulementS: mots.length > BEAN_SYNC_MOT_ECOULEMENT ? Math.trunc(mots[BEAN_SYNC_MOT_ECOULEMENT] / 1000) : null,
+    /** Espressos tirés depuis la dernière écriture de profil — le verrou de l'affinage. */
+    espressos: mots.length > BEAN_SYNC_MOT_ESPRESSOS ? mots[BEAN_SYNC_MOT_ESPRESSOS] : null,
     mots,
     hex: buf.subarray(0, len).toString("hex").replace(/(..)/g, "$1 ").trim(),
   };

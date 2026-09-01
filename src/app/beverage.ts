@@ -139,6 +139,27 @@ export function valeurProfil(bev: Beverage, b: Param): number | undefined {
   return v >= (b.min as number) && v <= (b.max as number) ? v : undefined;
 }
 
+/**
+ * **La valeur que le profil porte alors qu'on ne peut pas la reprendre, ou `null`.**
+ *
+ * `valeurProfil` écarte en silence une valeur qui sort des bornes du modèle, et il a raison de le
+ * faire : la machine signale un réglage jamais configuré en y mettant 0 ou 0xFF, deux nombres que
+ * la boisson refuserait si on les lui renvoyait. Mais écarter sans le dire produit exactement la
+ * lecture qui a motivé cette fonction — « la recette du mug de voyage ne se propage pas dans les
+ * curseurs » — alors que la trame a bien été lue, et que c'est SA valeur qui est inutilisable.
+ *
+ * Mesuré sur `d058_1_rec_mug_to_go` : café 0 pour des bornes 40-240, lait 0 pour 60-460, eau 0 pour
+ * 50-260, longueur 255 pour 0-4. Les six autres paramètres de la même trame, eux, sont repris.
+ *
+ * Rendre le nombre plutôt qu'un booléen : l'interface doit pouvoir montrer CE QUE la machine a
+ * répondu, sans jamais le proposer comme valeur.
+ */
+export function profilEcarte(bev: Beverage, b: Param): number | null {
+  const brut = bev.values?.params.find((p) => p.id === b.id)?.value;
+  if (brut === undefined) return null;
+  return valeurProfil(bev, b) === undefined ? brut : null;
+}
+
 /** Valeur de départ d'un réglage : celle du profil, sinon celle du modèle, sinon le minimum. */
 export function valeurDepart(bev: Beverage, b: Param): number {
   return valeurProfil(bev, b) ?? defautModele(b) ?? (b.min as number);

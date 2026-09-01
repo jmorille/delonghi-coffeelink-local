@@ -3,9 +3,10 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBeverageLabel, useParamLabel, useUnitLabel } from "@/i18n/labels";
 import { CROISES, INGREDIENTS, composable, croiseDe, groupeDe, presenceInitiale, valeurAbsente } from "@/lib/ingredients.mjs";
-import { beverageParams, defautModele, valeurDepart, type Beverage, type Param, type RecipeParam } from "./beverage";
+import { beverageParams, defautModele, profilEcarte, valeurDepart, type Beverage, type Param, type RecipeParam } from "./beverage";
 import Icone from "./icons";
 import Alerte from "./Alerte";
+import { styleCrans } from "./crans";
 import { Slider } from "@/ui/slider";
 import { Input } from "@/ui/input";
 import { Badge } from "@/ui/badge";
@@ -349,6 +350,18 @@ export default function RecipeEditor({
             aria-label={paramLabel(b)}
             onCheckedChange={(c) => set(b, c ? 1 : 0)}
           />
+          {/* **Le profil a répondu, et sa réponse est inutilisable — le dire sur la ligne même.**
+              Un réglage qui affiche 40 alors que la machine a renvoyé 0 n'a l'air d'un défaut que tant
+              que personne n'écrit pourquoi. Le nombre est montré, jamais proposé : il n'entre ni dans
+              la commande ni dans le champ, parce que la boisson le refuserait. */}
+          {profilEcarte(bev, b) !== null && (
+            <span
+              className="sub"
+              title={t("profileRejectedHint", { value: profilEcarte(bev, b) as number, min: b.min as number, max: b.max as number })}
+            >
+              {t("profileRejected", { value: profilEcarte(bev, b) as number })}
+            </span>
+          )}
           {defOf(b) !== null ? (
             <Button type="button" variant="neutre" size="coquille"
               
@@ -368,27 +381,17 @@ export default function RecipeEditor({
   };
 
   /**
-   * **Les crans que la commande imprime, et la seule condition pour qu'elle en imprime.**
+   * **La seule condition qui appartienne à CETTE page : d'où viennent les bornes.**
    *
-   * La graduation sérigraphiée autour d'une commande est la pièce qui rend ce monde visuel propre
-   * à ce produit : ses crans ne sont pas décoratifs, ce sont les valeurs que la MACHINE autorise
-   * pour ce paramètre. D'où la condition — une déclaration `calculee` est assemblée ici, pas lue
-   * sur l'appareil (c'est le cas d'une composition libre de `/recipes`), et graduer une piste avec
-   * des crans qu'aucune lecture ne fonde reviendrait à afficher comme lu ce qui ne l'a pas été.
-   * Sans crans, la piste reste un creux nu : elle dit qu'on ne connaît pas les bornes.
-   *
-   * Le plafond à 40 n'est pas une limite de dessin mais de lisibilité : au-delà, des traits d'un
-   * pixel espacés de moins de trois se fondent en une bande grise, qui ne porte plus rien. On
-   * retombe alors sur un cran tous les dix pas, ce qui reste vrai.
+   * Le barème lui-même (combien de traits pour quelle étendue, et le plafond de lisibilité) vit
+   * dans `crans.ts`, parce que `/reglages` gradue les siens avec exactement la même règle et que
+   * deux copies d'une décision visuelle divergent en silence. Ce qui reste ici est ce que la page
+   * est seule à savoir : une déclaration `calculee` est assemblée par nous, pas lue sur l'appareil
+   * (composition libre de `/recipes`), et graduer une piste avec des crans qu'aucune lecture ne
+   * fonde reviendrait à afficher comme lu ce qui ne l'a pas été. Sans crans, la piste reste un
+   * creux nu : elle dit qu'on ne connaît pas les bornes.
    */
-  const cransDe = (b: Param): number | null => {
-    if (bev.bounds?.calculee) return null;
-    const min = b.min ?? 0;
-    const max = b.max ?? 0;
-    const etendue = max - min;
-    if (etendue < 2) return null;
-    return etendue <= 40 ? etendue : Math.max(Math.round(etendue / 10), 1);
-  };
+  const styleDe = (b: Param) => (bev.bounds?.calculee ? undefined : styleCrans(b.min ?? 0, b.max ?? 0));
 
   const slider = (b: Param) => (
     <div className="paramRow" key={b.id}>
@@ -396,10 +399,7 @@ export default function RecipeEditor({
         {paramLabel(b)}
         {b.unit ? ` (${unitLabel(b.unit)})` : ""}
       </span>
-      <div
-        className="ctl"
-        style={cransDe(b) !== null ? ({ "--crans": cransDe(b) } as React.CSSProperties) : undefined}
-      >
+      <div className="ctl" style={styleDe(b)}>
         <span className="sub mono">
           {b.min}
         </span>
@@ -423,6 +423,18 @@ export default function RecipeEditor({
           value={vals[b.id] ?? seedFor(b)}
           onChange={(e) => set(b, Number(e.target.value))}
         />
+        {/* **Le profil a répondu, et sa réponse est inutilisable — le dire sur la ligne même.**
+            Un réglage qui affiche 40 alors que la machine a renvoyé 0 n'a l'air d'un défaut que tant
+            que personne n'écrit pourquoi. Le nombre est montré, jamais proposé : il n'entre ni dans
+            la commande ni dans le champ, parce que la boisson le refuserait. */}
+        {profilEcarte(bev, b) !== null && (
+          <span
+            className="sub"
+            title={t("profileRejectedHint", { value: profilEcarte(bev, b) as number, min: b.min as number, max: b.max as number })}
+          >
+            {t("profileRejected", { value: profilEcarte(bev, b) as number })}
+          </span>
+        )}
         {defOf(b) !== null ? (
           /* **Cette puce reste sans icone.** C'est le seul emploi de `.mini` conforme a sa
              definition — une puce qui AFFICHE une valeur, « defaut 40 », dans une ligne de reglage
@@ -554,6 +566,17 @@ export default function RecipeEditor({
                    */
                   <p className="quantiteDecochee">
                     {t("groupUnset", { min: qte.min ?? 0, max: qte.max ?? 0, unit: unitLabel(qte.unit) })}
+                    {/* **Et ce que le profil porte QUAND MÊME.** La trame `0xA6` de ce profil a bien
+                        été lue ; elle donne 0 pour cette quantité, hors des bornes annoncées juste
+                        au-dessus. Sans cette phrase, la carte laissait croire que la lecture n'avait
+                        rien ramené — c'est la lecture même de ce défaut qui a été rapportée comme
+                        « les valeurs ne se propagent pas dans les curseurs ». */}
+                    {profilEcarte(bev, qte as Param) !== null && (
+                      <>
+                        {" "}
+                        {t("groupUnsetWhy", { value: profilEcarte(bev, qte as Param) as number })}
+                      </>
+                    )}
                   </p>
                 )}
               </div>

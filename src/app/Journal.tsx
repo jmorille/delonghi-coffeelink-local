@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import Icone from "./icons";
+import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import type { LigneJournal } from "./events";
@@ -175,10 +176,21 @@ export default function Journal({
   lignes,
   source,
   multiMachine = false,
+  vider,
 }: {
   lignes: LigneJournal[];
   source: LigneJournal["source"];
   multiMachine?: boolean;
+  /**
+   * Vider CE journal. Le geste est confié à la page plutôt qu'exécuté ici, et pour une raison
+   * précise : il passe par la confirmation partagée, et `/pilotage` monte DEUX journaux. Un
+   * `useConfirm()` par bloc poserait deux dialogues dans le même DOM pour un geste qui n'en demande
+   * qu'un — la page en tient déjà un, elle le réutilise.
+   *
+   * Facultatif : un journal peut être affiché sans être effaçable, et l'absence du bouton est alors
+   * la vérité — mieux qu'un bouton désactivé dont rien ne dirait pourquoi.
+   */
+  vider?: () => void;
 }) {
   const t = useTranslations("journal");
   /* Les deux blocs coexistent dans la même page : un `id` fixe en ferait deux, et un `htmlFor`
@@ -281,6 +293,31 @@ export default function Journal({
         <p className="journalCompte" aria-live="polite">
           {filtre ? t("compteFiltre", { n: vues.length, total: miennes.length }) : t("compte", { total: miennes.length })}
         </p>
+
+        {/* **Le vidage vit DANS la barre de filtres, et c'est ce qui le rend inoffensif au repos.**
+            La barre n'existe pas au-dessus d'un journal vide (voir la condition plus haut) : il n'y
+            a donc jamais de bouton « Vider » à côté de « Rien de journalisé pour l'instant », c'est
+            à dire d'une commande qui ne peut rien faire. Il est aussi à sa place logique — filtrer
+            et vider répondent à la même question, « comment je ne vois plus que ce qui m'intéresse »,
+            à ceci près que l'un est réversible et l'autre non.
+
+            Il porte le rouge en contour, le traitement que le produit réserve à ce qui détruit, et
+            son libellé reste visible : `iconSeul` ne se justifie que sur une ligne répétée, ce qui
+            n'est pas le cas ici — le bouton est unique dans la carte. `title` dit ce que le libellé
+            ne peut pas tenir : que la portée est le SERVEUR, donc tous les onglets. */}
+        {vider && (
+          <Button
+            type="button"
+            variant="discret-arret"
+            size="coquille"
+            className="iconBtn"
+            onClick={vider}
+            title={t("viderTitre")}
+          >
+            <Icone nom="corbeille" taille={15} />
+            <span className="lbl">{t("vider")}</span>
+          </Button>
+        )}
       </div>
       )}
 

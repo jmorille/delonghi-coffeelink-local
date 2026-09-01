@@ -17,7 +17,8 @@ import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import next from "next";
-import { CATEGORIES, PARAMS, catalogFor, customSlotOf, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { CATEGORIES, PARAMS, beverageMeta, catalogFor, customSlotOf, decodeRecipeProperty, modelSheet } from "./src/lib/beverages.mjs";
+import { COMPTEURS, PORTEES as PORTEES_COMPTEURS, compteurInfo, estCompteur, lireCompteur, nomsARelire, valeurAffichee } from "./src/lib/compteurs.mjs";
 // Le report d'une recette locale dans un emplacement perso : module PUR, prouvé sans machine par
 // `scripts/verif-transfert.mjs`. C'est lui qui décide de ce qui part dans une écriture persistante.
 import { planTransfert } from "./src/lib/transfert.mjs";
@@ -33,8 +34,8 @@ import {
 // boisson en montre le résultat à chaque cran de curseur, et une seconde implémentation côté
 // navigateur aurait dérivé en silence. Voir l'en-tête de `trame-boisson.mjs`.
 import { encodeDispense, MODE, ACT, actionPreparer } from "./src/lib/trame-boisson.mjs";
-import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX } from "./src/lib/bean-adapt.mjs";
-import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, decodeBeanSync, BEAN_SYNC_PROP, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
+import { computeBeanAdapt, encodeBeanName, GRINDER_MIN, GRINDER_MAX, AROMA_MIN, AROMA_MAX, TEMPERATURE_MIN, TEMPERATURE_MAX, seuilAffinage, affinagePermis } from "./src/lib/bean-adapt.mjs";
+import { ALL_PROFILE_PROPS, PROFILE_NAME_PROPS, CUSTOM_NAME_PROPS, PRIORITY_PROPS, profilePropInfo, isProfileProp, decodeNames, decodePriorities, decodeChecksums, decodeBeanSystem, decodeBeanSync, BEAN_SYNC_PROP, BEAN_SYNC_PARAM, STRIDE_CLASSIC } from "./src/lib/profiles.mjs";
 import { decodeMonitor } from "./src/lib/monitor.mjs";
 import { makeLanSession, token } from "./src/lib/lansession.mjs";
 // Multiplexeur : lan-server joue la machine auprès de N applications. Voir doc/spec-proxy-multi-app.md.
@@ -2303,6 +2304,17 @@ function handleProperty(m, name, value) {
     // Une propriété qui répond vide n'existe pas sur ce modèle (typiquement les variantes
     // Striker) : on le note pour ne pas la confondre avec « pas encore lue ».
     if (isProfileProp(name)) m.store.putProp(name, { at: Date.now(), kind: profilePropInfo(name).kind, absent: true });
+    /**
+     * **Même note pour un compteur nommé, et ici elle porte plus loin qu'un libellé.**
+     *
+     * La table de `compteurs.mjs` contient quarante noms dont vingt-six viennent d'un relevé fait
+     * sur une AUTRE machine (une Eletta Explore) : sur l'ECAM 610.75.MB, la majorité répondra vide.
+     * Sans cette marque, « Tous les noms connus » renverrait quarante pas à chaque clic pour
+     * ramener les mêmes quatorze réponses — et un pas coûte une visite de la machine, qui n'en
+     * accorde qu'une commande à la fois. Notée une fois, l'absente est sautée ensuite
+     * (`nomsARelire`), et la page peut dire « absente sur ce modèle » plutôt que « jamais lue ».
+     */
+    if (estCompteur(name)) m.store.putProp(name, { at: Date.now(), kind: "counter", absent: true });
     // Une propriété absente du modèle a bel et bien RÉPONDU : le pas est fait, pas manqué. La
     // confondre avec un échec relancerait une lecture qui n'a aucune chance d'aboutir.
     apparier(m.file, { prop: name }, Date.now());
@@ -2329,13 +2341,58 @@ function handleProperty(m, name, value) {
   if (name === BEAN_SYNC_PROP) {
     try {
       const sy = decodeBeanSync(value);
-      m.store.putProp(name, { at: Date.now(), kind: "beanSync", selected: sy.selected, mots: sy.mots, hex: sy.hex });
-      L("in", `${name}`, `grain sélectionné ${sy.selected} · mots ${sy.mots.join(", ")}`, m, value);
+      m.store.putProp(name, { at: Date.now(), kind: "beanSync", selected: sy.selected, ecoulementMs: sy.ecoulementMs, espressos: sy.espressos, mots: sy.mots, hex: sy.hex });
+      // Les trois mots nommés se lisent en clair, les sept autres restent des nombres nus : le
+      // journal ne doit jamais donner à un mot anonyme l'air d'avoir un sens.
+      const nommes = [
+        `grain ${sy.selected}`,
+        sy.ecoulementMs === null ? null : `écoulement ${sy.ecoulementMs} ms`,
+        sy.espressos === null ? null : `${sy.espressos} espresso(s)`,
+      ].filter(Boolean).join(" · ");
+      L("in", `${name}`, `${nommes} · mots ${sy.mots.join(", ")}`, m, value);
     } catch (e) {
       // La machine a répondu : le pas est FAIT, pas manqué — le redemander rendrait les mêmes
       // octets. On garde la trame brute, seule chose qui permettra de comprendre l'échec.
       m.store.putProp(name, { at: Date.now(), kind: "unknown", cmd: 0xa1, hex: Buffer.from(value, "base64").toString("hex").replace(/(..)/g, "$1 ").trim() });
       L("in", `${name}`, `décodage impossible (${e.message})`, m, value);
+    }
+    apparier(m.file, { prop: name }, Date.now());
+    return;
+  }
+
+  /**
+   * **Les compteurs nommés — troisième routage par NOM, et le seul qui ne porte pas de trame.**
+   *
+   * `d553_water_tot_qty`, `d701_tot_bev_bw`, `d705_tot_id1_espr`… : ces propriétés ne transportent
+   * pas d'ECAM du tout, mais un nombre, ou un objet JSON de sous-compteurs sur les Striker. Elles
+   * arrivaient donc dans `default`, rangées en `kind: "unknown"` avec leur valeur mot pour mot —
+   * conservées, jamais lues. Voir `src/lib/compteurs.mjs` pour ce que chaque nom compte et d'où
+   * vient la table.
+   *
+   * ⚠️ **Avant l'aiguillage par octet de commande, et c'est nécessaire.** Une valeur numérique est
+   * du texte : `octetsEcam` refuse déjà `"1787407876"`, mais rien ne garantit qu'aucun compteur ne
+   * ressemblera jamais à du base64 de longueur multiple de quatre. Router par nom exact ferme la
+   * question au lieu de la parier. Nom EXACT, jamais un motif — c'est le routage par motif
+   * (`_beansystem`) qui avait produit un désalignement silencieux quelques lignes plus haut.
+   *
+   * La valeur BRUTE est conservée à côté de la valeur lue : c'est elle qu'on recompare à un relevé
+   * ultérieur, et c'est elle qui prouve la conversion quand il y en a une (l'eau, en demi-ml).
+   */
+  if (estCompteur(name)) {
+    const info = compteurInfo(name);
+    const lu = lireCompteur(value);
+    if (lu === null) {
+      // La machine a RÉPONDU, avec quelque chose que nous ne savons pas lire. Le pas est fait ; la
+      // valeur repart brute, seule chose qui permettra de comprendre l'échec.
+      m.store.putProp(name, { at: Date.now(), kind: "counter", illisible: true, brut: String(value) });
+      L("in", `${name}`, `compteur illisible : ${String(value).slice(0, 120)}`, m);
+    } else {
+      m.store.putProp(name, {
+        at: Date.now(), kind: "counter", value: lu.value, breakdown: lu.breakdown, brut: String(value),
+      });
+      const converti = info.divisor ? ` (${valeurAffichee(name, lu.value)} ${info.unit})` : "";
+      const detail = lu.breakdown ? ` · ${Object.entries(lu.breakdown).map(([k, v]) => `${k}=${v}`).join(", ")}` : "";
+      L("in", `${name}`, `${lu.value}${converti}${detail}`, m);
     }
     apparier(m.file, { prop: name }, Date.now());
     return;
@@ -2646,6 +2703,56 @@ const STAT_MEANINGS = {
   3021: { key: "choco" },
   3025: { key: "tea" },
 };
+
+/**
+ * **Le second espace de paramètres : celui de `0xA1`, que le balayage `0xA2` n'atteindra jamais.**
+ *
+ * Les 62 compteurs ci-dessus se lisent par `0xA2 0x0F`, qui ÉNUMÈRE — demander un id inexistant
+ * renvoie les suivants qui existent. On pourrait donc croire qu'il suffit d'élargir `STAT_RANGES`
+ * pour finir par ramener les paramètres 500 et suivants. **Non : les deux espaces sont disjoints.**
+ * Le numéro de série est le paramètre 205, il se lit par `0xA1 0x0F`, et 205 n'apparaît dans
+ * AUCUNE énumération `0xA2` — dont le bloc `1xx` s'arrête à 116 et saute directement à 3000.
+ *
+ * D'où ce second tableau. `d260_beansystem_sync_par` porte dix mots de 32 bits qui SONT les
+ * paramètres 500 à 509 (voir `decodeBeanSync`), dont trois ont un sens établi — par le journal de
+ * l'app, pas par corrélation. La page des statistiques les montre à côté des autres parce que
+ * c'est la même question posée à la même machine, et surtout parce que **502 est un instrument** :
+ * c'est la seule durée que l'appareil mesure et publie. Le relevé différentiel du 2026-08-20
+ * laisse le paramètre 101 en « autre nature (durée ? mouture ?) » ; 502 est la seule référence
+ * contre laquelle cette hypothèse-là peut être testée, et c'est ce que la lecture conjointe
+ * (`sync` dans `scanStats`) rend possible.
+ *
+ * Les sept autres mots restent nus, ici comme ailleurs : trois relevés concordants leur avaient
+ * donné une direction, un quatrième les a tous démentis (voir `decodeBeanSync`).
+ */
+const SYNC_MEANINGS = {
+  502: { key: "flowMs", unit: "ms" },
+  504: { key: "beanIndex" },
+  505: { key: "espressosSinceWrite" },
+};
+
+/**
+ * Les dix mots du paramètre 500, tels que `/statistiques` les affiche : **le rang EST le décalage**
+ * (`500 + rang`), donc l'identifiant se calcule et ne se recopie pas.
+ *
+ * `null` quand la propriété n'a jamais été poussée, ou qu'elle l'a été sous une forme indécodable
+ * (`kind: "unknown"`, où `mots` n'existe pas) : la page doit pouvoir dire « pas encore lu » plutôt
+ * que d'afficher dix cases vides qui ressemblent à dix zéros.
+ */
+function vueParamsSync(m) {
+  const sync = m.store.machineView().props?.[BEAN_SYNC_PROP];
+  if (!Array.isArray(sync?.mots) || !sync.mots.length) return null;
+  return {
+    prop: BEAN_SYNC_PROP,
+    param: BEAN_SYNC_PARAM,
+    at: sync.at ?? null,
+    words: sync.mots.map((value, rang) => {
+      const id = BEAN_SYNC_PARAM + rang;
+      const sens = SYNC_MEANINGS[id] ?? null;
+      return { id, rang, value, key: sens?.key ?? null, unit: sens?.unit ?? null };
+    }),
+  };
+}
 
 /**
  * Compteur à rattacher à une boisson. C'est celui de sa **catégorie**, pas de la tasse : voir
@@ -3746,21 +3853,106 @@ function scanBeans(m, from, to) {
 }
 
 /** Lecture des statistiques : une tâche, un pas `0xA2` par requête. Même raison qu'au-dessus. */
-function scanStats(m, requetes) {
+function scanStats(m, requetes, { sync = false } = {}) {
   // Même remarque que pour `scanBeans` : `pasPourTrame` est le seul endroit qui sache déduire la
   // nature d'une trame ET y joindre sa commande. Ici le trou était latent — 0xA2 répond bien en
   // `data_response`, qui apparie sans qualifier la commande — mais un pas sans `cmd` reste un pas
   // qu'aucun appariement étroit ne pourra jamais satisfaire.
   const pas = requetes.map((r) => pasPourTrame(`Paramètres ${r.id}${r.qty > 1 ? `+${r.qty - 1}` : ""}`, datapointValue(frameParamRead(r.id, r.qty)), DELAIS.reponse, "monitor"));
+  /**
+   * **`sync` met le paramètre 500 dans la MÊME tâche que les compteurs, et c'est tout l'intérêt.**
+   *
+   * Les deux familles se lisent par deux commandes différentes (`0xA2` ici, `0xA1` pour la
+   * propriété), donc rien n'oblige à les demander ensemble — sauf l'usage qu'on en fait. Un relevé
+   * différentiel compare deux instants : si les compteurs viennent d'un passage et l'écoulement
+   * mesuré d'un autre, quatre minutes plus loin et une tasse plus tard, la comparaison porte sur
+   * deux états de la machine et non sur un. Une tâche, une file, des pas consécutifs : les deux
+   * relevés se suivent dans le même passage, et leurs horodatages le disent.
+   *
+   * En queue plutôt qu'en tête : la propriété est bon marché et les compteurs sont la demande.
+   */
+  if (sync) pas.push(pasLecture(BEAN_SYNC_PROP));
   return enfilerTache(m, tache({
     label: requetes.length > 1 ? `Statistiques (${requetes.length} requêtes)` : `Statistiques ${requetes[0].id}`,
     // Fond de file : voir `RANG.LECTURE_BASSE`. Les compteurs ne périment pas, tout le reste est
     // ce qu'on attend devant l'écran — un balayage de huit requêtes ne doit pas le faire patienter.
     rang: RANG.LECTURE_BASSE,
     pas,
-    cle: `stats:${requetes.map((r) => `${r.id}+${r.qty}`).join(",")}`,
-    meta: { scan: "stats", total: requetes.length },
-  }), `statistiques, ${pas.length} requête(s) 0xA2`);
+    // Le pas de synchronisation entre dans la clé : sans lui, une demande AVEC compagnon fusionnerait
+    // avec une demande SANS, et la propriété ne serait jamais lue — silencieusement, la fusion étant
+    // un succès du point de vue de l'appelant.
+    cle: `stats:${requetes.map((r) => `${r.id}+${r.qty}`).join(",")}${sync ? "+sync" : ""}`,
+    // `total` compte les PAS, pas les requêtes : `statScan.remaining` se mesure sur `pas.length`
+    // (voir `machineActivity`), et un total plus petit que le restant afficherait « 9 requêtes
+    // restantes sur 8 ».
+    meta: { scan: "stats", total: pas.length },
+  }), `statistiques, ${requetes.length} requête(s) 0xA2${sync ? ` + ${BEAN_SYNC_PROP}` : ""}`);
+}
+
+/**
+ * **Lecture des compteurs NOMMÉS — l'autre canal de statistiques, celui des propriétés Ayla.**
+ *
+ * Rien de commun avec `scanStats` côté protocole : pas de trame, un pas de LECTURE de propriété
+ * par nom (`pasLecture`), donc `startImport` et pas `pasPourTrame`. Ce qui est commun, c'est le
+ * rang : `LECTURE_BASSE`, pour la même raison qu'au balayage `0xA2` — un compteur ne périme pas, et
+ * quarante pas ne doivent pas faire patienter ce que quelqu'un attend devant l'écran.
+ *
+ * ⚠️ **Les noms déjà notés absents sont retirés ici, pas au moment de servir.** Sur cette machine
+ * la portée large en perdra la majorité dès le premier passage : les garder ferait une tâche de
+ * quarante pas qui en réussit quatorze, donc une tâche que le planificateur déclare échouée alors
+ * qu'elle a ramené tout ce qui existe. Une portée entièrement épuisée ne met rien en file du tout
+ * et le dit — c'est un résultat, pas une panne.
+ */
+function scanCompteurs(m, portee) {
+  const noms = nomsARelire(portee, m.store.machineView().props ?? {});
+  const total = (PORTEES_COMPTEURS[portee] ?? []).length;
+  if (!noms.length) return { ok: false, raison: total ? "tous absents sur ce modèle" : "portée inconnue", vide: true, total };
+  const r = startImport(m, noms, 120000, {
+    label: `Compteurs nommés (${noms.length})`,
+    rang: RANG.LECTURE_BASSE,
+    cle: `compteurs:${portee}`,
+    meta: { scan: "compteurs", portee, total: noms.length },
+    i18n: { k: "namedCounters", p: { count: noms.length } },
+  });
+  return { ...r, sautes: total - noms.length, total };
+}
+
+/**
+ * Les compteurs nommés tels que `/statistiques` les affiche.
+ *
+ * Construite depuis `props` : cet endpoint ne demande jamais rien à la machine, comme
+ * `vueParamsSync`. Une propriété jamais lue **n'apparaît pas** — elle n'est ni absente ni à zéro,
+ * elle n'a pas été demandée, et les trois états doivent rester distincts à l'écran.
+ *
+ * `slug` plutôt qu'un libellé pour un compteur de boisson : rien de traduisible ne traverse l'API,
+ * la page l'étiquette avec le catalogue (`useBeverageLabel`). `label` est le secours d'usine, pour
+ * une boisson que le catalogue du modèle en place ne connaît pas — le cas de la moitié des
+ * compteurs Eletta sur cette machine.
+ */
+function vueCompteurs(m) {
+  const props = m.store.machineView().props ?? {};
+  return Object.entries(COMPTEURS)
+    .filter(([nom]) => props[nom])
+    .map(([nom, info]) => {
+      const p = props[nom];
+      const bev = Number.isInteger(info.beverageId) ? beverageMeta(info.beverageId) : null;
+      return {
+        prop: nom,
+        key: info.key ?? null,
+        beverageId: info.beverageId ?? null,
+        slug: bev?.slug ?? null,
+        label: bev?.label ?? null,
+        source: info.source,
+        famille: info.famille,
+        absent: p.absent === true,
+        illisible: p.illisible === true,
+        raw: p.value ?? null,
+        value: p.value === undefined ? null : valeurAffichee(nom, p.value),
+        unit: info.unit ?? null,
+        breakdown: p.breakdown ?? null,
+        at: p.at ?? null,
+      };
+    });
 }
 
 // La persistance vit maintenant dans `src/lib/store.mjs` (SQLite). Les écritures sont ciblées
@@ -3802,6 +3994,24 @@ const NEEDS_MACHINE = [
   "/api/profiles/favorites",
   "/api/monitormode",
 ];
+
+/**
+ * **Les POST qui vivent SOUS un préfixe de `NEEDS_MACHINE` sans jamais parler à la machine.**
+ *
+ * Le garde-fou ci-dessus raisonne par préfixe, ce qui est le bon défaut : une entrée ajoutée sous
+ * `/api/beanadapt/` demain sera protégée sans que personne y pense. Mais il attrape au passage un
+ * calcul PUR — `simulate` rejoue la règle Bean Adapt en mémoire, ne construit aucune trame, ne met
+ * rien en file. Le refuser ne protège de rien, et son message ne serait même pas vrai : « la
+ * commande n'atteindrait jamais la machine » décrit un envoi, or il n'y en a pas.
+ *
+ * Concrètement, cela rendait le questionnaire d'affinage inutilisable tant qu'une adresse et une
+ * clé LAN n'étaient pas configurées — alors que c'est précisément le moment où l'on veut pouvoir
+ * essayer la règle sans appareil. Trouvé par `verif-surfaces.mjs`, qui démarre sans machine.
+ *
+ * ⚠️ Liste d'exceptions EXACTES, jamais de préfixes : une exemption qui s'étendrait à ce qui vient
+ * après elle finirait par dispenser une écriture, et le ferait en silence.
+ */
+const SANS_MACHINE = new Set(["/api/beanadapt/simulate"]);
 
 /**
  * Autres entrées qui désignent visiblement le MÊME appareil.
@@ -4179,6 +4389,53 @@ function sseTouch() {
 }
 
 /**
+ * **Vider un journal — et le DIRE aux navigateurs déjà branchés.**
+ *
+ * Le journal est l'instrument de diagnostic de ce serveur, et sa fenêtre est bornée : quatre cents
+ * lignes pour la machine, deux cents pour les applications. Quand on part sur une piste, ce qui
+ * gêne n'est pas ce que le serveur garde, c'est ce qu'on a déjà lu — un coupe-circuit replié en une
+ * ligne, un import de la veille. Repartir d'une page blanche AVANT le geste qu'on veut observer
+ * vaut mieux que chercher à l'horodatage la frontière entre l'avant et l'après.
+ *
+ * Rien n'atteint l'appareil et rien n'est persistant : les deux bacs vivent en mémoire de
+ * processus. C'est néanmoins irréversible, et cela vaut pour TOUS les onglets branchés — d'où la
+ * confirmation côté page, même règle que « Vider la file ».
+ *
+ * ⚠️ **Un ajout ne peut pas décrire une suppression.** Le fil ne transporte que des lignes NEUVES
+ * et le navigateur tient les anciennes par `id` : lui pousser la seule ligne « journal vidé » le
+ * laisserait avec quatre cents lignes que le serveur ne possède plus, sous un message qui affirme
+ * le contraire. On pousse donc la fenêtre entière marquée `complet` — la seule forme que
+ * `fusionner()` traite en REMPLAÇANT au lieu d'ajouter.
+ *
+ * ⚠️ **`journalEvince` est recalé APRÈS la ligne de compte rendu, pas avant.** Ces lignes-là n'ont
+ * pas été évincées par l'âge, elles ont été supprimées : un navigateur dont le curseur vaut le `n`
+ * de la dernière d'entre elles l'a bien reçue, mais il l'AFFICHE toujours. La règle habituelle
+ * (`depuis >= journalEvince` ⇒ delta) lui répondrait « rien de neuf » et laisserait la chronologie
+ * effacée à l'écran. En calant la borne sur `journalSeq`, tout curseur antérieur à ce vidage reçoit
+ * la fenêtre entière et remplace ; ceux qui viennent de recevoir le cadre `complet` ci-dessous sont
+ * déjà à `journalSeq` et repassent en delta dès la ligne suivante, ce qui est exact.
+ */
+function viderJournal(source) {
+  const bac = source === "apps" ? LOG_APPS : LOG;
+  const efface = bac.length;
+  if (!efface) return 0;
+  bac.length = 0;
+  // Le journal dit ce qui vient de lui arriver : un journal VIDÉ et un journal MUET sont deux
+  // situations opposées, et seule la seconde doit inquiéter. La ligne part dans le bac qu'elle
+  // décrit, jamais dans l'autre.
+  const resume = `${efface} ligne${efface > 1 ? "s" : ""} effacée${efface > 1 ? "s" : ""} à la demande`;
+  if (source === "apps") LA("sys", "Journal", resume);
+  else L("sys", "Journal", resume);
+  journalEvince = journalSeq;
+  const cadre = cadreJournal(journalComplet(), true);
+  for (const res of [...SSE]) sseEcrire(res, cadre);
+  // La fenêtre entière vient de partir : le prochain lot d'ajouts repart d'ici, sans quoi il
+  // relivrerait ce qu'on vient de livrer.
+  sseJournalCurseur = journalSeq;
+  return efface;
+}
+
+/**
  * Fait avancer les échéances de toutes les machines et journalise ce qui en sort.
  *
  * **Le temps ne passe pas tout seul dans l'ordonnanceur** : il est pur, l'instant lui est fourni.
@@ -4389,6 +4646,28 @@ const ID_VISUEL_EMPLACEMENT = (index) => `s${Number(index)}`;
  * dépend l'URL de la vignette. Une photo importée que la liste ne signale pas ne s'afficherait
  * jamais, et rien ne dirait pourquoi.
  */
+/**
+ * Ce que `d260_beansystem_sync_par` apporte à l'affinage : l'écoulement mesuré et le verrou.
+ *
+ * Le seuil voyage AVEC le compteur, et pas seulement le booléen : « encore 2 cafés » ne se dit pas
+ * avec un `false`. Et `permis` reste distinct de `espressos >= seuil` calculé côté navigateur —
+ * c'est la règle de l'app, elle appartient au serveur, qui est le seul à savoir si la machine est
+ * une Striker.
+ */
+function vueBeanSync(m) {
+  const sync = m.store.machineView().props?.[BEAN_SYNC_PROP];
+  const espressos = Number.isInteger(sync?.espressos) ? sync.espressos : null;
+  return {
+    at: sync?.at ?? null,
+    ecoulementMs: Number.isInteger(sync?.ecoulementMs) ? sync.ecoulementMs : null,
+    // La troncature de l'app, refaite ici plutôt qu'au rendu : `L6/k.java` divise en entier.
+    ecoulementS: Number.isInteger(sync?.ecoulementMs) ? Math.trunc(sync.ecoulementMs / 1000) : null,
+    espressos,
+    seuil: seuilAffinage(m.gen),
+    permis: affinagePermis(espressos, m.gen),
+  };
+}
+
 function vueBeansMachine(m) {
   const beanSystems = m.store.machineView().beanSystems ?? {};
   /* Deux lectures locales — une clé de `meta`, une requête de dates — faites une fois pour toute
@@ -4468,6 +4747,18 @@ async function handleApi(req, res) {
     return raw(res, JSON.stringify({ lignes, complet: !rattrape, jusqu: lignes.length ? lignes[lignes.length - 1].n : journalSeq }));
   }
   /**
+   * Le vidage, et il NOMME sa cible. `source` est obligatoire et sans valeur par défaut : les deux
+   * bacs sont sur la même page, côte à côte, et retomber en silence sur `machine` parce qu'un
+   * paramètre a été mal écrit effacerait l'instrument à la place du bavardage.
+   */
+  if (url.split("?")[0] === "/api/journal" && req.method === "DELETE") {
+    const source = new URL(req.url, "http://x").searchParams.get("source");
+    if (source !== "machine" && source !== "apps") {
+      return raw(res, JSON.stringify({ error: `source de journal inconnue : ${source ?? "(absente)"}` }), 400);
+    }
+    return raw(res, JSON.stringify({ source, efface: viderJournal(source) }));
+  }
+  /**
    * Les applications branchées sur ce serveur. Global comme la liste des machines, et traité
    * ici pour la même raison : une application n'appartient pas à la machine qu'on regarde, et
    * surveiller des usurpations n'a de sens que si la vue est complète.
@@ -4502,7 +4793,7 @@ async function handleApi(req, res) {
   if (!m.dsn) await resolveDsn(m);
   // Refus franc plutôt qu'un succès trompeur (voir NEEDS_MACHINE). Les drapeaux permettent à une
   // interface de réagir sans analyser le texte du message.
-  if (req.method === "POST" && NEEDS_MACHINE.some((p) => url === p || url.startsWith(`${p}/`))) {
+  if (req.method === "POST" && !SANS_MACHINE.has(url.split("?")[0]) && NEEDS_MACHINE.some((p) => url === p || url.startsWith(`${p}/`))) {
     if (!m.ip) {
       return raw(res, JSON.stringify({
         error: "adresse de la machine non configurée : la renseigner sur la page « Machines », ou par MACHINE_IP dans .env.local.",
@@ -5178,6 +5469,18 @@ async function handleApi(req, res) {
       },
       activeProfile: m.activeProfile,
       scan: machineActivity(m).beanScan,
+      /**
+       * **Ce que la MACHINE mesure pour l'affinage** — et c'est la seule source honnête des deux.
+       *
+       * L'assistant demandait le temps d'écoulement au clavier. Or l'appareil le chronomètre
+       * lui-même et nous l'envoie déjà dans `d260_beansystem_sync_par` : le taper, c'est remplacer
+       * une mesure par un souvenir. Le compteur d'espressos qui l'accompagne est le verrou de
+       * l'app officielle (voir `affinagePermis`).
+       *
+       * `null` partout tant que la propriété n'est pas arrivée — l'interface dit « pas encore lu »,
+       * elle n'invente pas un zéro.
+       */
+      sync: vueBeanSync(m),
     }));
   }
 
@@ -5796,9 +6099,29 @@ async function handleApi(req, res) {
    * envoyé la commande (même piège que les Bean Systems).
    *
    * `ids` : liste d'identifiants. `from`+`qty` : une plage consécutive en une seule trame.
+   * `sync: true` : joindre à la MÊME tâche la lecture de `d260_beansystem_sync_par`, dont les dix
+   * mots sont les paramètres 500 à 509 — le seul moyen d'obtenir les deux familles dans un même
+   * passage de la machine (voir `scanStats`).
    */
   if (url === "/api/stats" && req.method === "POST") {
     const b = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    /**
+     * **Les compteurs nommés passent par le même endpoint, et c'est délibéré.**
+     *
+     * C'est la même page qui demande, la même question posée à la même machine — seul le canal
+     * change (des propriétés Ayla au lieu de trames `0xA2`). Un second endpoint aurait dédoublé la
+     * mise en file, la réponse et le suivi de tâche pour une différence qui tient au corps de la
+     * requête.
+     */
+    if (typeof b.named === "string") {
+      const portee = b.named;
+      if (!PORTEES_COMPTEURS[portee]) return raw(res, JSON.stringify({ error: `portée inconnue : ${portee}` }), 400);
+      const r = scanCompteurs(m, portee);
+      // Portée épuisée : tous les noms ont déjà répondu « absent ». Ce n'est pas un échec, et le
+      // dire comme tel évite de relancer indéfiniment une lecture qui n'a rien à ramener.
+      if (r.vide) return raw(res, JSON.stringify({ started: false, empty: true, portee, total: r.total, reason: r.raison }));
+      return raw(res, JSON.stringify({ started: r.ok, portee, requests: r.total - r.sautes, skipped: r.sautes, register: await postLocalReg(m), ...tacheRendue(r) }));
+    }
     // Même raison qu'au balayage des grains : la file encaisse au lieu d'écraser, donc plus de refus.
     let queue = [];
     if (Array.isArray(b.ids) && b.ids.length) {
@@ -5809,9 +6132,10 @@ async function handleApi(req, res) {
     }
     if (!queue.length) return raw(res, JSON.stringify({ error: "fournir ids[] ou from(+qty)" }), 400);
     const requests = queue.length;
-    const t = scanStats(m, queue);
+    const sync = b.sync === true;
+    const t = scanStats(m, queue, { sync });
     const reg = await postLocalReg(m);
-    return raw(res, JSON.stringify({ started: t.ok, requests, register: reg, ...tacheRendue(t) }));
+    return raw(res, JSON.stringify({ started: t.ok, requests, sync, register: reg, ...tacheRendue(t) }));
   }
 
   if (url === "/api/stats" && req.method === "GET") {
@@ -5828,6 +6152,17 @@ async function handleApi(req, res) {
       appIds: APP_STAT_IDS,
       // Publiées plutôt que recopiées dans la page : voir STAT_RANGES.
       ranges: STAT_RANGES,
+      /**
+       * Le second canal : des compteurs NOMMÉS, portés par des propriétés Ayla (`compteurs.mjs`).
+       * `named` ne liste que ce qui a été lu au moins une fois ; `namedScopes` dit ce qu'il y a à
+       * demander, pour que les deux boutons sachent leur étendue sans recopier la table côté page —
+       * même raison que `ranges` juste au-dessus.
+       */
+      named: vueCompteurs(m),
+      namedScopes: Object.fromEntries(Object.entries(PORTEES_COMPTEURS).map(([k, v]) => [k, v.length])),
+      // Le second espace de paramètres (`0xA1`, mots du paramètre 500) — voir SYNC_MEANINGS. Il
+      // vient de la propriété déjà en cache : cet endpoint ne demande jamais rien à la machine.
+      sync: vueParamsSync(m),
       // Les seuls dont la signification est établie. `raw` reste la valeur brute ; `value` est
       // convertie quand il y a une unité (eau : 0,5 ml → litres).
       known: Object.entries(STAT_MEANINGS)

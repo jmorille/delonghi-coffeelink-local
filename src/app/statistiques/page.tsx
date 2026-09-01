@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { mfetch } from "../machine";
+import { useBeverageLabel } from "@/i18n/labels";
 import Icone from "../icons";
 import { attendreLibre, useMachinePush } from "../events";
 import { TitreAlerte } from "../Alerte";
@@ -21,6 +22,59 @@ interface Known {
   at: number;
 }
 
+/**
+ * Un mot du paramètre 500 — le **second** espace de paramètres de la machine, lu par `0xA1` et non
+ * par le `0xA2` des compteurs. `key` est `null` tant qu'aucune source ne l'a nommé : la page affiche
+ * alors l'identifiant nu, jamais une étiquette de circonstance.
+ */
+interface SyncWord {
+  id: number;
+  rang: number;
+  value: number;
+  key: string | null;
+  unit: string | null;
+}
+
+interface SyncBlock {
+  prop: string;
+  param: number;
+  at: number | null;
+  words: SyncWord[];
+}
+
+/**
+ * Un compteur **nommé** : le second canal de statistiques, celui des propriétés Ayla (voir
+ * `src/lib/compteurs.mjs`). Il ne vient pas du balayage `0xA2` mais d'une propriété dont le nom dit
+ * ce qu'elle compte.
+ *
+ * `key` **ou** `slug`, jamais les deux : un compteur de catégorie s'étiquette par une clé de
+ * traduction, un compteur propre à une boisson par le catalogue — même règle que partout ici, rien
+ * de traduisible ne traverse l'API.
+ *
+ * Trois états distincts, et il faut qu'ils le restent : présent avec une valeur, `absent` (la
+ * machine a répondu vide, on ne redemandera plus), `illisible` (elle a répondu autre chose qu'un
+ * nombre). Une propriété jamais lue n'est simplement pas dans la liste.
+ */
+interface Named {
+  prop: string;
+  key: string | null;
+  beverageId: number | null;
+  slug: string | null;
+  label: string | null;
+  source: "apk" | "eletta";
+  famille: "usage" | "entretien";
+  absent: boolean;
+  illisible: boolean;
+  raw: number | null;
+  value: number | null;
+  unit: string | null;
+  breakdown: Record<string, unknown> | null;
+  at: number | null;
+}
+
+/** Les quatre tableaux copiables de la page. */
+type CleCopie = "known" | "unknown" | "sync" | "named";
+
 interface Payload {
   /** id brut → valeur, pour les 62 paramètres, connus ou non. */
   stats: Record<string, number>;
@@ -31,6 +85,12 @@ interface Payload {
   known: Known[];
   /** Plages de balayage publiées par le serveur (`STAT_RANGES`). */
   ranges?: { known: [number, number][]; all: [number, number][] };
+  /** Les dix mots du paramètre 500, ou `null` s'ils n'ont jamais été lus. */
+  sync?: SyncBlock | null;
+  /** Les compteurs nommés déjà lus au moins une fois — jamais ceux qui n'ont pas été demandés. */
+  named?: Named[];
+  /** Ce qu'il y a à demander dans chaque portée. Publié par le serveur, comme `ranges`. */
+  namedScopes?: Record<string, number>;
 }
 
 /**
@@ -116,6 +176,17 @@ export default function Statistiques() {
    * que perdre les 62 compteurs. Repli identique à `useCategoryLabel` / `useParamLabel`.
    */
   const statLabel = (key: string) => (tstat.has(key) ? tstat(key) : key);
+  const bevLabel = useBeverageLabel();
+  /**
+   * Le libellé d'un compteur nommé : par le catalogue quand il compte une boisson, par la clé de
+   * traduction sinon, et par le nom de la propriété quand il n'a ni l'un ni l'autre.
+   *
+   * Le repli final n'est pas décoratif : la table de `compteurs.mjs` peut gagner un nom avant que
+   * `messages/fr.json` ne gagne sa clé, et ce jour-là afficher `d738_cold_brew_bev` vaut mieux que
+   * faire tomber la page — `tstat` lève sur une clé absente. Même repli que `statLabel`.
+   */
+  const nomCompteur = (c: Named) =>
+    c.slug ? bevLabel({ slug: c.slug, label: c.label ?? undefined }) : c.key ? statLabel(c.key) : c.prop;
   const [d, setD] = useState<Payload | null>(null);
   /** Publiées par le serveur, plus recopiées ici — voir RANGES_VIDES. */
   const plages = d?.ranges ?? RANGES_VIDES;
@@ -125,7 +196,7 @@ export default function Statistiques() {
    * Le compte rendu de la dernière copie, et de LAQUELLE des deux — sans `cle`, copier un tableau
    * ferait apparaître le message sous les deux.
    */
-  const [copie, setCopie] = useState<{ cle: "known" | "unknown"; texte: string; ok: boolean } | null>(null);
+  const [copie, setCopie] = useState<{ cle: CleCopie; texte: string; ok: boolean } | null>(null);
   /* Le succès s'efface, l'échec reste. Un « copié » qui persiste devient du bruit au bout de deux
      clics ; un échec qui s'efface emporte la seule explication de ce qu'il faut faire à la place. */
   useEffect(() => {
@@ -176,11 +247,19 @@ export default function Statistiques() {
     setBusy(true);
     setMsg(t("reading", { what: label }));
     try {
-      for (const [from, qty] of ranges) {
+      for (const [i, [from, qty]] of ranges.entries()) {
+        /**
+         * **`sync` sur la DERNIÈRE plage seulement.** Le serveur joint alors la lecture de
+         * `d260_beansystem_sync_par` — les paramètres 500 à 509, dont l'écoulement mesuré — à la
+         * même tâche que les compteurs (voir `scanStats`). Le mettre sur chaque plage relirait la
+         * même propriété trois ou huit fois pour rien ; le mettre sur la première la daterait
+         * d'avant le balayage, donc d'un autre état de la machine que les compteurs qu'on veut lui
+         * comparer. La dernière est celle qui colle aux valeurs les plus fraîches.
+         */
         const r = await mfetch("/api/stats", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from, qty }),
+          body: JSON.stringify({ from, qty, sync: i === ranges.length - 1 }),
         }).then((x) => x.json());
         if (r.error) {
           setMsg(tc("error", { message: r.error }));
@@ -209,6 +288,36 @@ export default function Statistiques() {
   };
 
   /**
+   * **Lecture des compteurs nommés : un POST, pas de boucle sur des plages.**
+   *
+   * L'autre canal ne se balaye pas — il n'y a pas d'espace d'identifiants à parcourir, mais une
+   * liste de noms. Le serveur en fait UNE tâche d'autant de pas, et saute lui-même ceux qu'il sait
+   * absents : rien à enchaîner ici, donc rien de l'attente entre plages du bouton voisin.
+   *
+   * Le cas `empty` n'est pas une erreur : la portée est épuisée, tous ses noms ont déjà répondu
+   * vide. Le dire évite de relancer indéfiniment une lecture qui n'a rien à ramener.
+   */
+  const [msgNamed, setMsgNamed] = useState<string | null>(null);
+  const readNamed = async (portee: "app" | "tous", label: string) => {
+    setBusy(true);
+    setMsgNamed(t("reading", { what: label }));
+    try {
+      const r = await mfetch("/api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ named: portee }),
+      }).then((x) => x.json());
+      if (r.error) return setMsgNamed(tc("error", { message: r.error }));
+      if (r.empty) return setMsgNamed(t("namedNothingToRead", { total: r.total }));
+      setMsgNamed(r.skipped ? t("namedSkipped", { count: r.skipped }) : t("readDone"));
+      if (live) await attendreLibre(busyRef);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * Totaux dérivés. `boissons avec lait chaud` est bien la SOMME de 3001 et 3003 : c'est ce que
    * fait `p018b7/e.java` (méthode `m()`, `return iIntValue3 + iIntValue2`), et l'app n'ajoute 3003
    * que s'il est > 0. Le total général, lui, est notre propre addition — signalé comme tel.
@@ -216,7 +325,15 @@ export default function Statistiques() {
   const derived = useMemo(() => {
     if (!d) return null;
     const v = (id: number) => d.stats[String(id)];
-    const black = v(3000);
+    /**
+     * `boissons sans lait` est la SOMME de 3000 et 3077, exactement comme `l()` dans `p018b7/e.java`
+     * — et le second terme n'entre que s'il est > 0, comme là-bas.
+     *
+     * Ça ne change rien sur l'ECAM 610.75.MB, où 3077 n'existe pas : la lecture le montre en
+     * renvoyant le bloc 23xxx à sa place. Ça compte sur les Striker, où l'app le demande. Prendre
+     * 3000 seul y aurait donné un total franchement faux, sans rien qui le signale.
+     */
+    const black = v(3000) === undefined ? undefined : v(3000) + (v(3077) && v(3077) > 0 ? v(3077) : 0);
     const hot = v(3001) === undefined ? undefined : v(3001) + (v(3003) && v(3003) > 0 ? v(3003) : 0);
     const cold = v(3017);
     const tea = v(3025);
@@ -233,6 +350,11 @@ export default function Statistiques() {
   }, [d]);
 
   const fmt = (n: number) => n.toLocaleString("fr-FR");
+  /* Lues d'un côté, absentes de l'autre : les deux listes ne se rendent pas de la même façon et ne
+     se copient pas ensemble. L'ordre est celui du serveur, qui est celui de la table — l'APK
+     d'abord, le relevé Eletta ensuite. */
+  const nommesLus = useMemo(() => (d?.named ?? []).filter((c) => !c.absent), [d]);
+  const nommesAbsents = useMemo(() => (d?.named ?? []).filter((c) => c.absent), [d]);
   const unknownIds = useMemo(() => {
     if (!d) return [];
     const known = new Set(d.known.map((k) => k.id));
@@ -263,6 +385,36 @@ export default function Statistiques() {
     [t("colId"), t("colValue")],
     ...unknownIds.map((id) => [id, d?.stats[String(id)] ?? ""]),
   ];
+  /* Les dix mots dans l'ordre où la machine les envoie — le rang EST le décalage du paramètre, donc
+     un tri par valeur ou par nom ferait perdre la seule chose qui identifie un mot anonyme. */
+  const lignesSync = (): (string | number)[][] => [
+    [t("colId"), t("colCounter"), t("colValue"), t("colUnit")],
+    ...(d?.sync?.words ?? []).map((w) => [w.id, w.key ? statLabel(w.key) : "", w.value, w.unit ?? ""]),
+  ];
+  /**
+   * Les compteurs nommés, **avec leur source en colonne**.
+   *
+   * À l'écran seuls les noms venus d'un relevé tiers portent une marque : redire « APK » sur les
+   * quatorze autres serait du bruit. Dans un tableau collé dans une note, c'est l'inverse — une
+   * colonne ne coûte rien et c'est exactement ce qu'on cherchera six mois plus tard pour savoir
+   * lequel de ces noms est prouvé par le binaire. Les absents en sont exclus : leur valeur n'existe
+   * pas, et une ligne vide dans un tableur se lit comme un zéro.
+   */
+  const lignesNommes = (): (string | number)[][] => [
+    [t("colCounter"), t("colProp"), t("colValue"), t("colUnit"), t("colSource")],
+    ...(d?.named ?? [])
+      .filter((c) => !c.absent && c.value !== null)
+      .map((c) => [nomCompteur(c), c.prop, c.value ?? "", c.unit ?? "", c.source]),
+  ];
+
+  /** L'heure d'une lecture, en horloge et non en âge : c'est la comparaison de DEUX heures qui sert ici. */
+  const heure = (ms: number | null | undefined) =>
+    ms ? new Date(ms).toLocaleTimeString(undefined, { hour12: false }) : "—";
+  /* Le plus récent des horodatages de compteurs : c'est lui qui date le relevé `0xA2` face au `0xA1`. */
+  const compteursAt = useMemo(() => {
+    const v = Object.values(d?.readAt ?? {});
+    return v.length ? Math.max(...v) : null;
+  }, [d]);
 
   /**
    * Le bouton de copie d'un tableau : **une icône seule, et donc un `aria-label` obligatoire.**
@@ -277,7 +429,7 @@ export default function Statistiques() {
    * « Lire les compteurs », juste au-dessus, qui elle parle à l'appareil.
    */
   const boutonCopier = (
-    cle: "known" | "unknown",
+    cle: CleCopie,
     nom: string,
     produire: () => (string | number)[][],
     lignes: number,
@@ -307,7 +459,7 @@ export default function Statistiques() {
    * une région déjà présente l'est. `.enLigne:empty` le retire de la mise en page sans le démonter.
    * L'échec prend le pictogramme d'alerte, comme le bandeau en tête de cette page.
    */
-  const StatutCopie = ({ cle }: { cle: "known" | "unknown" }) => {
+  const StatutCopie = ({ cle }: { cle: CleCopie }) => {
     const r = copie?.cle === cle ? copie : null;
     return (
       <span className={"enLigne" + (r && !r.ok ? " alerte" : "")} role="status">
@@ -470,6 +622,156 @@ export default function Statistiques() {
 
           <p className="sub">{t("protocolNote", { count: d.count })}</p>
         </>
+      )}
+
+      {/* **Les compteurs nommés, hors du bloc conditionnel ci-dessus — même raison que le bloc
+          suivant.** Ils ne viennent pas du balayage `0xA2` : `d.count` peut valoir zéro alors que
+          quatorze propriétés ont répondu. Les ranger sous `d.count > 0` aurait rendu invisibles les
+          seuls compteurs lus, et surtout les DEUX BOUTONS qui permettent de les lire — la page
+          n'aurait alors offert aucun moyen d'en sortir. */}
+      <section aria-labelledby="titre-nommes">
+        <h2 id="titre-nommes">{t("namedHeading")}</h2>
+        <Card>
+          <div className="cardHead">
+            <p className="chapeau">{t("namedNote")}</p>
+            <div className="row actions flex-none ms-auto">
+              {boutonCopier("named", t("copyNamed"), lignesNommes, nommesLus.length)}
+            </div>
+          </div>
+          <StatutCopie cle="named" />
+          {/* Le même couple que la barre du haut, et pour la même raison : deux étendues d'une
+              seule et même demande. Le second en `coquille` + glyphe 14 px, comme « Tout balayer ». */}
+          <div className="row barreActions">
+            <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy || scanning} onClick={() => readNamed("app", t("scopeNamedApp"))}>
+              <Icone nom="lire" />
+              <span className="lbl">{t("readNamedApp")}</span>
+            </Button>
+            <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy || scanning} onClick={() => readNamed("tous", t("scopeNamedAll"))} title={t("readNamedAllTitle")}>
+              <Icone nom="lire" taille={14} />
+              <span className="lbl">{t("readNamedAll")}</span>
+            </Button>
+          </div>
+          {msgNamed && <p className="legende">{msgNamed}</p>}
+
+          {nommesLus.length === 0 ? (
+            <p className="sub">{t("namedEmpty")}</p>
+          ) : (
+            <>
+              {(["usage", "entretien"] as const).map((famille) => {
+                const lignes = nommesLus.filter((c) => c.famille === famille);
+                if (!lignes.length) return null;
+                /* L'entretien est un GROUPE NOMMÉ, pas un titre décoratif : un pourcentage avant
+                   détartrage n'est pas un total à vie, et la distinction doit s'entendre autant
+                   qu'elle se voit. Même motif que les sections de la carte de grain. */
+                const titre = famille === "entretien" ? t("namedMaintenance") : null;
+                return (
+                  <div key={famille} role={titre ? "group" : undefined} aria-label={titre ?? undefined}>
+                    {titre && <p className="etiquetteGroupe">{titre}</p>}
+                    {lignes.map((c) => (
+                      <div className="kv" key={c.prop}>
+                        <span className="k">
+                          {nomCompteur(c)} <span className="sub mono">{c.prop}</span>
+                          {/* Marqué uniquement quand le nom NE vient PAS du binaire. Redire « APK »
+                              sur les quatorze autres serait du bruit ; l'absence de marque est le
+                              cas ordinaire, et le chapeau le dit. La source part en colonne dans la
+                              copie, où elle ne coûte rien. */}
+                          {c.source === "eletta" && (
+                            <span className="sub" title={t("namedFromEletta_title")}> · {t("namedFromEletta")}</span>
+                          )}
+                        </span>
+                        <span className="num">
+                          {c.illisible || c.value === null ? (
+                            <span className="sub">{t("namedUnreadable")}</span>
+                          ) : (
+                            <>
+                              {fmt(c.value)}
+                              {c.unit ? ` ${c.unit}` : ""}
+                              {c.unit && c.raw !== null && (
+                                <span className="sub" title={t("rawHint")}> ({t("raw", { value: fmt(c.raw) })})</span>
+                              )}
+                            </>
+                          )}
+                        </span>
+                        {/* La ventilation des compteurs en objet JSON (Striker). C'est elle qui porte
+                            l'information ; la somme au-dessus n'en est qu'un résumé, et l'afficher
+                            seule reviendrait à jeter ce que la machine a pris la peine d'envoyer. */}
+                        {c.breakdown && (
+                          <p className="legende">
+                            {Object.entries(c.breakdown).map(([k, v]) => `${k} = ${String(v)}`).join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Les absentes en fin de carte, en clair : « absente sur ce modèle » et « jamais lue »
+              sont deux choses différentes, et seule la première se sait. */}
+          {nommesAbsents.length > 0 && (
+            <p className="note">
+              {t("namedAbsent", { props: nommesAbsents.map((c) => c.prop).join(", ") })} {t("namedAbsentNote")}
+            </p>
+          )}
+        </Card>
+      </section>
+
+      {/* **Le second espace de paramètres, hors du bloc conditionnel ci-dessus — et c'est voulu.**
+          Il ne vient pas du balayage `0xA2` mais de la propriété `d260_beansystem_sync_par`, qui a
+          pu être lue par `/beans` ou par « Tout lire » sans qu'aucun compteur ne le soit. Le ranger
+          sous `d.count > 0` l'aurait rendu invisible dans exactement ce cas-là. */}
+      {d?.sync && d.sync.words.length > 0 && (
+        /* Une `<section>` nommée plutôt qu'un `<h2>` nu comme ses voisines : c'est le seul bloc de
+           la page dont le contenu ne vient pas du balayage `0xA2`, et un lecteur d'écran comme un
+           test ont besoin de pouvoir le désigner. Même motif que les deux journaux de `/pilotage`,
+           où l'absence de nom faisait mesurer le mauvais des deux. */
+        <section aria-labelledby="titre-sync">
+          <h2 id="titre-sync">{t("syncHeading")}</h2>
+          <Card>
+            <div className="cardHead">
+              <p className="chapeau">{t("syncNote")}</p>
+              <div className="row actions flex-none ms-auto">
+                {boutonCopier("sync", t("copySync"), lignesSync, d.sync.words.length)}
+              </div>
+            </div>
+            <StatutCopie cle="sync" />
+            {/* Les deux heures côte à côte : c'est la seule chose qui dise si un relevé différentiel
+                porte sur un état de la machine ou sur deux. Aucun seuil n'est inventé ici — on
+                montre les deux valeurs et on laisse lire. */}
+            <p className="legende">
+              {t("syncReadAt", { mots: heure(d.sync.at), compteurs: heure(compteursAt) })}
+            </p>
+            <div className="grilleBrute">
+              {d.sync.words.map((w) => (
+                <div className="kv" key={w.id}>
+                  <span className={w.key ? "k" : "k mono"}>
+                    {w.key ? (
+                      <>
+                        {statLabel(w.key)} <span className="sub num">{w.id}</span>
+                      </>
+                    ) : (
+                      w.id
+                    )}
+                  </span>
+                  <span className="num">
+                    {fmt(w.value)}
+                    {w.unit ? ` ${w.unit}` : ""}
+                    {/* La seconde tronquée de l'app (`parameter.b() / 1000`, division ENTIÈRE) :
+                        c'est la valeur qu'attend le questionnaire d'affinage, donc celle qu'on
+                        compare à ce qu'il affiche. Sur l'unité, jamais sur la clé — toute durée en
+                        millisecondes se relit ainsi, celle-ci comme la prochaine. */}
+                    {w.unit === "ms" && (
+                      <span className="sub"> ({t("syncSeconds", { n: Math.trunc(w.value / 1000) })})</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="note">{t("syncSpaces")}</p>
+          </Card>
+        </section>
       )}
     </>
   );

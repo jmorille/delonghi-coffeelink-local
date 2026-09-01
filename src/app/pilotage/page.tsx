@@ -38,7 +38,12 @@ interface Monitor {
 }
 
 /** Le panneau qui a envoyé la commande : c'est là que son compte rendu s'affiche, pas en haut. */
-type Scope = "liaison" | "power" | "activite";
+/**
+ * Les deux journaux ont chacun LEUR portée, et pas une commune : ils sont montés dans deux cartes
+ * distinctes, et un compte rendu partagé s'afficherait sous les deux — dont celui qu'on n'a pas
+ * touché. C'est la même raison qui a fait éclater la portée unique de cette page en trois.
+ */
+type Scope = "liaison" | "power" | "activite" | "journalMachine" | "journalApps";
 
 export default function Dashboard() {
   const t = useTranslations("dashboard");
@@ -52,6 +57,7 @@ export default function Dashboard() {
   const tpw = useTranslations("profilesWhat");
   const tconf = useTranslations("confirmations");
   const tapps = useTranslations("apps");
+  const tj = useTranslations("journal");
   /**
    * **Le nom d'une tâche, dit par nous et non par le serveur.** Les libellés de tâches étaient la
    * dernière chose que le serveur envoyait en français pour affichage direct, et ce panneau était
@@ -484,6 +490,51 @@ export default function Dashboard() {
     demander({
       question: t("taskCancelAllConfirm", { count: attente.length + (encours ? 1 : 0) }),
       onConfirm: suite,
+    });
+  };
+
+  /**
+   * **Vider un journal — et c'est la page qui pose la question, pas le bloc.**
+   *
+   * Rien ne part vers la cafetière et rien n'est écrit sur disque : les deux bacs vivent en mémoire
+   * du serveur. Mais le geste est irréversible et sa portée n'est pas l'onglet — le serveur pousse
+   * la fenêtre entière marquée `complet` à TOUS les abonnés, donc le journal disparaît aussi de la
+   * tablette posée à côté. C'est le même critère que « Vider la file » juste au-dessus : une
+   * annulation qui n'emporte qu'une ligne part sans question, celle qui emporte tout en demande une.
+   *
+   * Aucun `geste` déclaré, donc aucune case « ne plus demander » : voir `Ask` dans `confirm.tsx` —
+   * l'absence est ce qui protège, et détruire un historique de diagnostic n'est pas un geste
+   * répétitif dont on veut se débarrasser de la garde.
+   *
+   * `rattraper()` derrière, pour le cas où le flux n'est pas établi : la page est alors sur son
+   * minuteur de repli, et sans ce rappel elle garderait les lignes effacées à l'écran jusqu'à la
+   * prochaine seconde ronde. Le curseur du navigateur est antérieur au vidage, donc le serveur
+   * répond par la fenêtre entière et le client REMPLACE. Voir `viderJournal` dans `server.mjs`.
+   */
+  const viderJournal = (source: "machine" | "apps") => {
+    const total = journal.lignes.filter((l) => l.source === source).length;
+    const scope: Scope = source === "apps" ? "journalApps" : "journalMachine";
+    demander({
+      question: tj("viderConfirme"),
+      detail: tj("viderDetail", { total }),
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          // Sans `mfetch` : le journal est unique, toutes machines confondues — c'est `?source=`
+          // qui nomme le bac, pas `?machine=`.
+          const r = await fetch(`/api/journal?source=${source}`, { method: "DELETE" }).then((x) => x.json());
+          setReport(
+            r.error
+              ? { scope, text: tc("error", { message: r.error }), kind: "err" }
+              : { scope, text: tj("videFait", { count: r.efface ?? 0 }), kind: "ok" },
+          );
+          journal.rattraper();
+        } catch (e) {
+          setReport({ scope, text: tc("error", { message: String(e) }), kind: "err" });
+        } finally {
+          setBusy(false);
+        }
+      },
     });
   };
 
@@ -1043,7 +1094,8 @@ export default function Dashboard() {
         <section className="pleine" aria-labelledby="titre-journal-apps">
         <h2 id="titre-journal-apps">{tapps("journalHeading")}</h2>
         <Card className="log">
-          <Journal lignes={journal.lignes} source="apps" />
+          <Journal lignes={journal.lignes} source="apps" vider={() => viderJournal("apps")} />
+          <Statut scope="journalApps" />
         </Card>
         </section>
       )}
@@ -1054,7 +1106,13 @@ export default function Dashboard() {
         {/* L'étiquette de machine n'apparaît qu'à partir de DEUX machines, comme avant : le
             journal est unique, toutes machines confondues, et la répéter à chaque ligne quand il
             n'y en a qu'une occuperait une colonne pour ne rien distinguer. */}
-        <Journal lignes={journal.lignes} source="machine" multiMachine={(status?.machines?.length ?? 0) > 1} />
+        <Journal
+          lignes={journal.lignes}
+          source="machine"
+          multiMachine={(status?.machines?.length ?? 0) > 1}
+          vider={() => viderJournal("machine")}
+        />
+        <Statut scope="journalMachine" />
       </Card>
       </section>
       </div>

@@ -114,6 +114,14 @@ jobs:
       - name: Vérifier le report d'une recette dans un emplacement
         run: node scripts/verif-transfert.mjs
 
+      # La table des compteurs nommés apparie à la main des noms de propriétés Ayla, des clés de
+      # traduction et des identifiants de boissons. Chacun de ses défauts est muet : un beverageId
+      # décalé d'un cran étiquette « cappuccino inversé » un compteur d'eau chaude, et le diviseur
+      # de l'eau vaut 2000 (l'app) et non 1000 (l'intégration Home Assistant dont vient une partie
+      # de la table) — s'y tromper affiche des litres deux fois trop grands, parfaitement plausibles.
+      - name: Vérifier la table des compteurs nommés
+        run: node scripts/verif-compteurs.mjs
+
       # Le catalogue de traduction est chargé par next-intl : un JSON invalide, ou un message
       # contenant des chevrons (lus comme des balises de texte enrichi), casse l'interface à
       # l'exécution sans casser le build.

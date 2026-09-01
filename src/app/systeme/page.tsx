@@ -17,7 +17,6 @@ interface Finding {
 interface Payload {
   deviceSheet: {
     _source: string;
-    _privacy: string;
     capturedAt: string;
     hardware: Record<string, string | null>;
     firmware: Record<string, string | boolean | null>;
@@ -525,7 +524,6 @@ export default function Systeme() {
                 {d.storage.file} ({Math.round(d.storage.sizeBytes / 1024)} ko)
               </span>
             </div>
-            <p className="note">{t("storageNote")}</p>
           </Card>
         </section>
         <section>
@@ -562,7 +560,6 @@ export default function Systeme() {
         </section>
       </div>
 
-      <p className="sub">{d.deviceSheet._privacy}</p>
       <p className="sub mono">
         {d.deviceSheet._source}
       </p>

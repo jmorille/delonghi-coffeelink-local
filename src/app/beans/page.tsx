@@ -7,10 +7,7 @@ import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import ReglagesGrains, { type Bound, type Brouillon } from "../ReglagesGrains";
 import CarteGrain from "../CarteGrain";
-import { ImageCrema } from "../VignetteGrains";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/ui/table";
-import { Input } from "@/ui/input";
+import AffinageDialog from "../AffinageDialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Card } from "@/ui/card";
@@ -76,23 +73,34 @@ function milieu(b?: Bound): number {
   return b ? Math.round((b.min + b.max) / 2) : 1;
 }
 
+/**
+ * Ce que la MACHINE mesure pour l'affinage — `d260_beansystem_sync_par`, mots 2 et 5.
+ *
+ * L'écoulement n'est pas une réponse au questionnaire : c'est un relevé de l'appareil. Le taper au
+ * clavier, comme cette page le demandait, revenait à remplacer une mesure par un souvenir. Le
+ * compteur d'espressos qui l'accompagne est le verrou de l'app officielle — sous le seuil, la
+ * mesure porte sur trop peu de tasses pour dire quoi que ce soit de la mouture.
+ *
+ * Tout est `null` tant que la propriété n'est pas arrivée : « pas encore lu » n'est pas « zéro ».
+ */
+interface Sync {
+  at: number | null;
+  ecoulementMs: number | null;
+  /** Les secondes tronquées, comme l'app les calcule. C'est l'unité du questionnaire. */
+  ecoulementS: number | null;
+  espressos: number | null;
+  seuil: number;
+  /** `null` quand le compteur est inconnu — ne pas savoir n'est pas refuser. */
+  permis: boolean | null;
+}
 interface Payload {
   beans: Bean[];
   presets: Preset[];
   bounds: { grinder: Bound; aroma: Bound; temperature: Bound };
   activeProfile: number;
   scan: { next: number; to: number } | null;
+  sync: Sync;
 }
-interface Simulation {
-  grinder: number;
-  temperature: number;
-  aroma: number;
-  deltas: { grinder: number; temperature: number; aroma: number };
-  changed: boolean;
-  notes: string[];
-  error?: string;
-}
-
 /**
  * Bean Adapt : les configurations de grains de la machine (mouture, température, arôme).
  *
@@ -123,6 +131,13 @@ interface Simulation {
  * partout ailleurs — une amélioration atterrissait sur l'un et pas sur l'autre. Il ne reste que
  * l'**assistant**, qui n'est pas un éditeur mais un calcul : il propose des valeurs, et elles
  * descendent dans le brouillon de la carte ouverte.
+ *
+ * ⚠️ **Cet assistant a quitté le bas de page à son tour, pour un dialogue** (`AffinageDialog`). La
+ * raison n'est pas la place : déplié, il montrait ses trois champs d'un coup, donc il ne disait
+ * pas dans quel ORDRE s'y prendre — or on ne juge pas le goût d'une tasse qu'on n'a pas tirée. Le
+ * parcours en quatre étapes est celui de l'application officielle. Et la règle du bloc précédent
+ * tient toujours : il n'existe qu'UNE implémentation du questionnaire, avec deux portes vers elle
+ * — la commande de l'affiche du grain actif, et un bouton au dos de chaque emplacement.
  */
 export default function Beans() {
   const t = useTranslations("beanAdapt");
@@ -145,15 +160,18 @@ export default function Beans() {
    * L'emplacement machine dont le dos est ouvert, et son brouillon.
    *
    * Les deux vont ensemble : `selected` sans `draft` serait une carte retournée sur un formulaire
-   * vide, `draft` sans `selected` un brouillon sans destination. Ils alimentent aussi l'assistant en
-   * bas de page — c'est le même grain qu'on règle.
+   * vide, `draft` sans `selected` un brouillon sans destination. C'est aussi `draft` qui reçoit ce
+   * que le dialogue d'affinage propose — d'où l'ouverture de la carte AVEC le dialogue.
    */
   const [selected, setSelected] = useState<number | null>(null);
   const [draft, setDraft] = useState<Brouillon | null>(null);
-  const [flowTime, setFlowTime] = useState(15);
-  const [crema, setCrema] = useState(2);
-  const [taste, setTaste] = useState(2);
-  const [sim, setSim] = useState<Simulation | null>(null);
+  /**
+   * L'emplacement dont le dialogue d'affinage est ouvert, `null` quand il est fermé.
+   *
+   * Un index et non un booléen : le dialogue doit savoir QUEL grain il règle, et le déduire de
+   * `selected` marcherait jusqu'au jour où l'on ouvrirait l'affinage sans ouvrir la carte.
+   */
+  const [affinage, setAffinage] = useState<number | null>(null);
   /** Création en cours dans la carte « + », `null` quand elle est fermée. */
   const [nouveau, setNouveau] = useState<Brouillon | null>(null);
   /**
@@ -454,35 +472,40 @@ export default function Beans() {
    * enregistrée ne doit pas bouger, et l'absence est ce que `PhotoGrains` et le serveur entendent
    * tous les deux par là.
    */
+  /** Le relevé de la machine, ou `null` avant la première arrivée de `d260`. */
+  const mesure = data?.sync ?? null;
+
   const pick = (b: Bean) => {
     setSelected(b.index);
     setDraft({ name: b.name ?? "", grinder: b.grinder, temperature: b.temperature, aroma: b.aroma, roast: b.roast });
-    setSim(null);
     setMsg(null);
   };
 
-  /** Rejoue la règle Bean Adapt côté serveur — aucune écriture, aucun appel au cloud. */
-  const simulate = async () => {
-    if (!draft) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r: Simulation = await mfetch("/api/beanadapt/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: draft.name, grinder: draft.grinder, temperature: draft.temperature, aroma: draft.aroma, flowTime, crema, taste }),
-      }).then((x) => x.json());
-      if (r.error) setMsg({ text: tc("error", { message: r.error }), kind: "err" });
-      else setSim(r);
-    } finally {
-      setBusy(false);
-    }
+  /**
+   * **« Affiner vos paramètres de grains » — la commande de l'app officielle, ouverte en dialogue.**
+   *
+   * Sur l'affiche du grain ACTIF, elle remplace « Déjà actif », qui était un bouton mort à cet
+   * endroit précis : la seule carte dont on ne pouvait rien faire depuis l'affiche était justement
+   * celle sur laquelle on veut agir. Le dos de n'importe quel emplacement porte la même commande.
+   *
+   * `pick` accompagne l'ouverture parce que le parcours se termine en versant ses valeurs dans un
+   * brouillon : sans carte ouverte, « Reprendre ces valeurs » n'aurait aucune destination.
+   */
+  const affiner = (b: Bean) => {
+    pick(b);
+    setAffinage(b.index);
   };
 
-  const applySim = () => {
-    if (!sim || !draft) return;
-    setDraft({ ...draft, grinder: sim.grinder, temperature: sim.temperature, aroma: sim.aroma });
-    setSim(null);
+  /**
+   * Ce que le parcours d'affinage rend, versé dans le brouillon ouvert.
+   *
+   * **Rien ne part vers la machine ici.** L'écriture reste au dos de la carte, derrière sa propre
+   * confirmation — un questionnaire qui finirait par écrire dans l'appareil ferait d'un calcul une
+   * action physique, sans que la dernière étape ne l'annonce jamais.
+   */
+  const appliquerAffinage = (v: { grinder: number; temperature: number; aroma: number }) => {
+    setDraft((d) => (d ? { ...d, ...v } : d));
+    setMsg({ text: t("refineApplied"), kind: "ok" });
   };
 
   /** Écrit le profil dans la machine (0xBB). Modification persistante. */
@@ -648,25 +671,49 @@ export default function Beans() {
                   if (ouvert) {
                     setSelected(null);
                     setDraft(null);
-                    setSim(null);
                   } else pick(bs);
                 }}
-                /* **L'unique commande de l'affiche, et c'est la seule qui agisse sur l'appareil sans
-                   rien écrire.** La coche, comme « Activer » sur /profils : le grain que la machine
-                   retient. C'est le même geste sur un autre objet, donc le même dessin. */
+                /* **L'unique commande de l'affiche — et elle n'est pas la même sur le grain actif.**
+                   Partout ailleurs c'est la coche, comme « Activer » sur /profils : le grain que la
+                   machine retient, le même geste sur un autre objet, donc le même dessin.
+
+                   Sur le grain ACTIF, cette coche n'était qu'un « Déjà actif » désactivé : la seule
+                   carte dont l'affiche n'offrait rien était justement celle qu'on veut régler. Elle
+                   porte donc « Affiner vos paramètres », la commande que l'app officielle met au
+                   même endroit — et sous le seuil d'espressos, elle porte le décompte plutôt qu'un
+                   refus muet. Voir `affinagePermis`. */
                 commande={
-                  <Button
-                    type="button"
-                    variant="neutre"
-                    size="commande"
-                    className="iconBtn"
-                    disabled={busy || bs.active === true}
-                    onClick={() => activate(bs.index)}
-                    title={t("activateTitle")}
-                  >
-                    <Icone nom="choisir" />
-                    <span className="lbl">{bs.active ? t("alreadyActive") : t("activate")}</span>
-                  </Button>
+                  bs.active === true && !bs.isToggle ? (
+                    <Button
+                      type="button"
+                      variant="neutre"
+                      size="commande"
+                      className="iconBtn"
+                      disabled={busy || mesure?.permis === false}
+                      onClick={() => affiner(bs)}
+                      title={mesure?.permis === false ? t("refineLockedHint", { seuil: mesure.seuil }) : t("refineTitle")}
+                    >
+                      <Icone nom="reglages" />
+                      <span className="lbl">
+                        {mesure?.permis === false
+                          ? t("refineLocked", { reste: Math.max(0, mesure.seuil - (mesure.espressos ?? 0)) })
+                          : t("refine")}
+                      </span>
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="neutre"
+                      size="commande"
+                      className="iconBtn"
+                      disabled={busy || bs.active === true}
+                      onClick={() => activate(bs.index)}
+                      title={t("activateTitle")}
+                    >
+                      <Icone nom="choisir" />
+                      <span className="lbl">{bs.active ? t("alreadyActive") : t("activate")}</span>
+                    </Button>
+                  )
                 }
                 dos={
                   ouvert &&
@@ -734,12 +781,24 @@ export default function Beans() {
                             <span className="lbl">{t("delete")}</span>
                           </Button>
                         </div>
-                        {/* **Le renvoi vers l'assistant a été retiré, et rien ne le remplace.** Une
-                            infobulle ne peut pas annoncer qu'une section vient d'apparaître ailleurs
-                            — personne ne survole pour découvrir. Or son titre de section la nomme
-                            déjà : « Assistant Bean Adapt — Grain de banc » porte le nom du grain
-                            ouvert, donc le lien se fait en la voyant. Une ligne de moins par carte
-                            retournée, et la même information là où on la lit. */}
+                        {/* **La seconde porte vers l'affinage, et elle est la raison pour laquelle
+                            le dialogue n'appartient pas au grain actif.**
+
+                            L'affiche ne porte « Affiner » que sur le grain sélectionné : partout
+                            ailleurs sa commande unique reste « Activer ». Sans ce bouton-ci, les
+                            cinq autres emplacements perdraient l'assistant qu'ils avaient quand il
+                            était déplié en bas de page — une fonctionnalité retirée par un
+                            déménagement, ce qui est la façon la plus discrète de casser une page.
+
+                            Le questionnaire y est le même à une chose près, dite dans le dialogue :
+                            l'écoulement mesuré ne décrit QUE la dernière tasse, donc que le grain
+                            actif. Sur un autre emplacement, il faut le saisir. */}
+                        <div className="row note">
+                          <Button type="button" variant="neutre" size="coquille" className="iconBtn" disabled={busy} title={t("refineTitle")} onClick={() => affiner(bs)}>
+                            <Icone nom="reglages" taille={14} />
+                            <span className="lbl">{t("refine")}</span>
+                          </Button>
+                        </div>
                       </div>
                     </>
                   )
@@ -880,123 +939,20 @@ export default function Beans() {
         </Card>
       </div>
 
-      {/* **L'assistant, et lui seul.** Le « Réglage manuel » qui vivait ici était un second éditeur
-          du même objet, avec ses propres curseurs : il est passé au dos des cartes. Ce qui reste
-          n'est pas un formulaire mais un CALCUL — un questionnaire, une règle rejouée en local, et
-          des valeurs qui descendent dans le brouillon ouvert. */}
-      {draft && bean && b && (
-        <>
-          <h2>{t("assistantHeading", { name: bean.name ?? t("unnamed") })}</h2>
-          <Card>
-            <p className="sub">
-              {t("assistantIntro")}
-            </p>
-
-            <div className="row">
-              <div>
-                <label htmlFor="ft">{t("flowTime")}</label>
-                <Input id="ft" className="w-[4.6rem] flex-none text-right" type="number" min={0} max={120} value={flowTime} onChange={(e) => setFlowTime(Number(e.target.value))} />
-              </div>
-              <div>
-                <label htmlFor="crema">{t("crema")}</label>
-                <Select value={String(crema)} onValueChange={(v) => setCrema(Number(v))}>
-                  <SelectTrigger id="crema" className="w-full"><SelectValue /></SelectTrigger>
-                  {/* **Les trois aspects de crema sont montrés, pas seulement nommés.** Ce sont les
-                      trois photos que l'application officielle pose sur cette même question
-                      (`question_1` du questionnaire, importée par `scripts/import-bean-images.mjs`)
-                      et les mêmes identifiants 1/2/3 que `bean-adapt.mjs` reçoit. « Crema foncée »
-                      décrit une nuance : la reconnaître dans sa tasse est plus sûr en comparant
-                      qu'en lisant. `ImageCrema` rend `null` sans les fichiers — le sélecteur reste
-                      donc utilisable sur une installation sans import. */}
-                  {/* Trois éléments écrits à la main plutôt qu'une boucle : `t("crema1")` littéral
-                      est ce que `scripts/verif-messages.mjs` sait voir. Un `t(\`crema${n}\`)` dans
-                      une boucle lui échappe, et une clé manquante s'afficherait telle quelle. */}
-                  <SelectContent>
-                    <SelectItem value="1"><ImageCrema niveau={1} className="h-5 w-auto" />{t("crema1")}</SelectItem>
-                    <SelectItem value="2"><ImageCrema niveau={2} className="h-5 w-auto" />{t("crema2")}</SelectItem>
-                    <SelectItem value="3"><ImageCrema niveau={3} className="h-5 w-auto" />{t("crema3")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label htmlFor="taste">{t("taste")}</label>
-                <Select value={String(taste)} onValueChange={(v) => setTaste(Number(v))}>
-                  <SelectTrigger id="taste" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">{t("taste1")}</SelectItem>
-                    <SelectItem value="2">{t("taste2")}</SelectItem>
-                    <SelectItem value="3">{t("taste3")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="button" variant="neutre" size="commande" className="iconBtn" disabled={busy} onClick={simulate}>
-                <Icone nom="reglages" />
-                <span className="lbl">{t("simulate")}</span>
-              </Button>
-            </div>
-
-            {flowTime >= 10 && flowTime < 20 ? (
-              <p className="sub">
-                {t("windowOk")}
-              </p>
-            ) : (
-              <p className="sub">
-                {t("windowOut")}
-              </p>
-            )}
-
-            {sim && (
-              <div className="blocSuite">
-                <div className="tableWrap">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("setting")}</TableHead>
-                      <TableHead>{t("current")}</TableHead>
-                      <TableHead>{t("delta")}</TableHead>
-                      <TableHead>{t("proposed")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell>{t("grinder")}</TableCell>
-                      <TableCell className="num">{draft.grinder}</TableCell>
-                      <TableCell className="num">{fmtDelta(sim.deltas.grinder)}</TableCell>
-                      <TableCell className="num">{sim.grinder}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>{t("temperature")}</TableCell>
-                      <TableCell className="num">{draft.temperature}</TableCell>
-                      <TableCell className="num">{fmtDelta(sim.deltas.temperature)}</TableCell>
-                      <TableCell className="num">{sim.temperature}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>{t("aroma")}</TableCell>
-                      <TableCell className="num">{draft.aroma}</TableCell>
-                      <TableCell className="num">{fmtDelta(sim.deltas.aroma)}</TableCell>
-                      <TableCell className="num">{sim.aroma}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-                </div>
-                {sim.notes.map((n) => (
-                  <p className="legende" key={n}>
-                    {t.has(`note_${n}`) ? t(`note_${n}`) : n}
-                  </p>
-                ))}
-                <div className="row note">
-                  {/* La coche, encore : retenir ce que la regle propose. Rien ne part vers la
-                      machine ici — les valeurs descendent dans le brouillon du dos ouvert. */}
-                  <Button type="button" variant="marche" size="commande" className="iconBtn" disabled={!sim.changed} onClick={applySim}>
-                    <Icone nom="choisir" />
-                    <span className="lbl">{sim.changed ? t("applyToDraft") : t("nothingToChange")}</span>
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+      {/* **Le parcours d'affinage, dans son propre dialogue.** Il vivait ici, dépliée en pleine
+          largeur : trois champs sur une rangée, un bouton, un tableau. Tout visible d'un coup, donc
+          rien ne disait dans quel ORDRE s'y prendre — or l'ordre est la moitié du sens ici. Le
+          composant porte le pourquoi en détail ; ce qui compte à cet endroit-ci, c'est qu'il n'y a
+          plus qu'UNE implémentation du questionnaire, et que la page n'en garde aucune copie. */}
+      <AffinageDialog
+        ouvert={affinage !== null}
+        onFermer={() => setAffinage(null)}
+        grain={data?.beans.find((x) => x.index === affinage) ?? null}
+        mesure={mesure}
+        profileId={data?.activeProfile ?? 1}
+        demander={demander}
+        onAppliquer={appliquerAffinage}
+      />
 
       {/* Permanent, jamais monté à la demande : un conteneur inséré en même temps que son texte
           n'est pas annoncé par les lecteurs d'écran. Vide, `.status:empty` le masque. */}
@@ -1008,4 +964,3 @@ export default function Beans() {
   );
 }
 
-const fmtDelta = (d: number) => (d === 0 ? "—" : d > 0 ? `+${d}` : String(d));

@@ -5,7 +5,9 @@ import { mfetch } from "../machine";
 import { useMachinePush } from "../events";
 import { useConfirm } from "../confirm";
 import Icone from "../icons";
+import { styleCrans } from "../crans";
 import { Input } from "@/ui/input";
+import { Slider } from "@/ui/slider";
 import { Switch } from "@/ui/switch";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
@@ -109,6 +111,27 @@ export default function Reglages() {
     return t.has(k) ? t(k) : null;
   };
 
+  /**
+   * **La valeur que les deux commandes d'une ligne partagent** — le curseur et le champ éditent le
+   * MÊME brouillon, sinon on obtient deux vérités sur une seule ligne.
+   *
+   * Le brouillon reste stocké en CHAÎNE : le champ numérique doit pouvoir être vidé le temps d'une
+   * frappe (`""` n'est pas `0`), ce qu'un nombre ne sait pas représenter. Le curseur, lui, exige un
+   * nombre, et il n'a aucune position qui veuille dire « rien » — d'où le repli en cascade :
+   * brouillon, sinon valeur lue, sinon le plancher du réglage.
+   *
+   * ⚠️ **Le curseur posé sur son plancher n'affirme donc PAS que la machine y est.** Sur un réglage
+   * jamais lu il n'y a pas de valeur, et c'est la ligne du dessus qui le dit — un tiret et la puce
+   * « non lu ». Le curseur est une commande d'écriture, pas un afficheur : le confondre avec une
+   * lecture serait exactement ce que cette page passe son temps à éviter, et c'est pourquoi la
+   * valeur lue garde son propre affichage au lieu d'être déduite de la position du patin.
+   */
+  const enCours = (r: Reglage) => {
+    const brut = brouillon[r.cle];
+    const n = brut === undefined || brut === "" ? r.value : Number(brut);
+    return Number.isFinite(n) ? Math.min(Math.max(n as number, r.min), r.max) : r.min;
+  };
+
   const reglages = d?.reglages ?? [];
   const dispo = reglages.filter((r) => r.supporte || r.bits?.some((b) => b.supporte));
   const absents = reglages.filter((r) => !r.supporte && !r.bits?.some((b) => b.supporte));
@@ -187,22 +210,60 @@ export default function Reglages() {
                       {echelle(r.cle, r.value) && <span className="sub">{echelle(r.cle, r.value)}</span>}
                       {r.value == null && <Badge variant="arret">{t("notRead")}</Badge>}
                     </div>
-                    <div className="row">
-                      <div className="champBloc">
-                        <label htmlFor={`v-${r.addr}`}>{t("newValue", { min: r.min, max: r.max })}</label>
+                    {/* **Un curseur, parce que ces réglages sont des ÉCHELLES et non des nombres
+                        libres.** Quatre duretés d'eau, quatre températures, vingt-quatre heures :
+                        le champ numérique demandait de connaître la borne avant de pouvoir viser,
+                        là où une piste graduée la montre. Même motif qu'ailleurs dans ce dépôt —
+                        `paramRow` + `ctl`, curseur puis champ — parce que celui qui a appris les
+                        réglages d'un grain ou d'une recette ne doit rien réapprendre ici.
+
+                        Le champ RESTE, et ce n'est pas un doublon : `autoOff` va jusqu'à 255 et les
+                        minutes jusqu'à 59, étendues sur lesquelles un patin ne vise pas la valeur
+                        exacte. Le curseur donne le geste, le champ donne le chiffre. */}
+                    <div className="paramRow">
+                      <label className="nom" htmlFor={`v-${r.addr}`}>
+                        {t("newValue", { min: r.min, max: r.max })}
+                      </label>
+                      <div className="ctl" style={styleCrans(r.min, r.max)}>
+                        <span className="sub mono">{r.min}</span>
+                        {/* La valeur est un tableau : Radix accepte plusieurs poignées, celui-ci
+                            n'en a qu'une. Le libellé va sur la POIGNÉE (voir `src/ui/slider.tsx`),
+                            et il nomme le réglage — « curseur » tout seul ne dit rien sur une page
+                            qui en aligne cinq. */}
+                        <Slider
+                          min={r.min}
+                          max={r.max}
+                          value={[enCours(r)]}
+                          disabled={busy}
+                          aria-label={`${nom(r.cle)} (${r.min}–${r.max})`}
+                          onValueChange={([v]) => setBrouillon({ ...brouillon, [r.cle]: String(v) })}
+                        />
+                        <span className="sub mono">{r.max}</span>
                         <Input
                           id={`v-${r.addr}`}
-                          className="champ"
+                          className="w-[4.6rem] flex-none text-right"
                           type="number"
                           min={r.min}
                           max={r.max}
                           value={brouillon[r.cle] ?? (r.value ?? "")}
+                          disabled={busy}
                           onChange={(e) => setBrouillon({ ...brouillon, [r.cle]: e.target.value })}
                         />
                       </div>
+                    </div>
+                    {/* Ce que la valeur en cours VEUT DIRE, quand le catalogue le sait : « dure »
+                        plutôt que « 3 ». Sous la commande et non à côté de la valeur lue, parce
+                        qu'elle suit le patin — c'est ce qui rend un glissement lisible sur une
+                        échelle dont les quatre positions n'ont aucun nom écrit sur la piste. */}
+                    {echelle(r.cle, enCours(r)) && (
+                      <p className="legende">
+                        {t("willWrite", { value: enCours(r), label: echelle(r.cle, enCours(r)) as string })}
+                      </p>
+                    )}
+                    <div className="row">
                       <Button type="button" variant="neutre" size="commande"
                         className="iconBtn"
-                        disabled={busy || !brouillon[r.cle]}
+                        disabled={busy || brouillon[r.cle] === undefined || brouillon[r.cle] === ""}
                         onClick={() =>
                           demander({
                             question: t("confirmWrite", { name: nom(r.cle), value: brouillon[r.cle] }),
